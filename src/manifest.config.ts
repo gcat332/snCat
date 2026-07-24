@@ -57,7 +57,10 @@ export default defineManifest({
 
   permissions: ['sidePanel', 'tabs', 'scripting', 'storage'],
 
-  host_permissions: ['https://*.service-now.com/*'],
+  host_permissions: [
+    'https://*.service-now.com/*',
+    'https://dev-agenthub.mfec.co.th/*', // MFEC AgentHub LLM endpoint
+  ],
 
   content_scripts: [
     {

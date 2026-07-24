@@ -9,7 +9,7 @@
  */
 import type { BrTiming, ScriptKind } from './lint'
 
-export type LlmFormat = 'anthropic' | 'openai'
+export type LlmFormat = 'anthropic' | 'openai' | 'agenthub'
 
 export interface LlmConfig {
   endpoint: string
@@ -42,8 +42,8 @@ export async function loadLlmConfig(): Promise<LlmConfig | null> {
       return {
         endpoint: cfg.endpoint,
         apiKey: cfg.apiKey,
-        model: cfg.model || 'claude-sonnet-4-5',
-        format: cfg.format === 'openai' ? 'openai' : 'anthropic',
+        model: cfg.model || 'claude-opus-4-8',
+        format: normalizeFormat(cfg.format),
       }
     }
   } catch {
@@ -54,6 +54,10 @@ export async function loadLlmConfig(): Promise<LlmConfig | null> {
 
 export async function saveLlmConfig(cfg: LlmConfig): Promise<void> {
   await chrome.storage.local.set({ [STORAGE_KEY]: cfg })
+}
+
+function normalizeFormat(f: unknown): LlmFormat {
+  return f === 'openai' || f === 'agenthub' ? f : 'anthropic'
 }
 
 const KIND_LABEL: Record<ScriptKind, string> = {
@@ -211,13 +215,40 @@ export async function runGenerateScript(
   if (!cfg) return { configured: false }
   const { system, user } = buildGeneratePrompt(requirement, table)
   try {
-    const text = cfg.format === 'openai'
-      ? await callOpenai(cfg, system, user)
-      : await callAnthropic(cfg, system, user)
+    const text = await callProvider(cfg, system, user)
     return { configured: true, ok: true, result: coerceGenerate(extractJson(text)) }
   } catch (err) {
     return { configured: true, ok: false, error: (err as Error).message }
   }
+}
+
+/**
+ * MFEC AgentHub (browser-ingest): single `prompt`, Bearer auth, returns
+ * `{ response }`. System + user are concatenated into one prompt.
+ */
+async function callAgentHub(cfg: LlmConfig, system: string, user: string): Promise<string> {
+  const res = await fetch(cfg.endpoint, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${cfg.apiKey}`,
+    },
+    body: JSON.stringify({
+      prompt: `${system}\n\n${user}`,
+      model: cfg.model || 'claude-opus-4-8',
+      timeoutMs: 120000,
+    }),
+  })
+  if (!res.ok) throw new Error(`AgentHub HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  const body = (await res.json()) as { response?: string; status?: string }
+  return body.response ?? ''
+}
+
+/** Dispatch a system+user prompt to the configured provider, returning raw text. */
+async function callProvider(cfg: LlmConfig, system: string, user: string): Promise<string> {
+  if (cfg.format === 'openai') return callOpenai(cfg, system, user)
+  if (cfg.format === 'agenthub') return callAgentHub(cfg, system, user)
+  return callAnthropic(cfg, system, user)
 }
 
 export type ReviewOutcome =
@@ -234,9 +265,7 @@ export async function runJavaReview(
 
   const { system, user } = buildReviewPrompt(input)
   try {
-    const text = cfg.format === 'openai'
-      ? await callOpenai(cfg, system, user)
-      : await callAnthropic(cfg, system, user)
+    const text = await callProvider(cfg, system, user)
     return { configured: true, ok: true, result: coerceResult(extractJson(text)) }
   } catch (err) {
     return { configured: true, ok: false, error: (err as Error).message }

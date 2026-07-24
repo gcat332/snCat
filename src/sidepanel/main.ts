@@ -22,7 +22,14 @@ import { importableFields, parseUnloadXml } from '@core/xml'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
-import { loadLlmConfig, runGenerateScript, runJavaReview, saveLlmConfig, type LlmConfig, type LlmFormat } from '@core/llm'
+import {
+  loadLlmConfig,
+  saveLlmConfig,
+  type GenerateOutcome,
+  type LlmConfig,
+  type LlmFormat,
+  type ReviewOutcome,
+} from '@core/llm'
 import { createCodeEditor } from './editor'
 import { SandboxRunner } from '@core/sandbox-host'
 import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
@@ -33,7 +40,26 @@ import { renderSpecDocxBlob } from '@core/render-docx'
 import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
 let current: PageContext | null = null
+let currentTabId: number | null = null
 const sandbox = new SandboxRunner()
+
+/** Per-tab LLM job state (mirrors what the background writes to storage). */
+type LlmJobEntry =
+  | { status: 'running'; op: 'review' | 'generate' }
+  | { status: 'done'; op: 'review' | 'generate'; outcome: unknown }
+  | { status: 'error'; op: 'review' | 'generate'; error: string }
+
+function jobKey(tabId: number, op: 'review' | 'generate'): string {
+  return `llmJob:${tabId}:${op}`
+}
+
+/** Start an LLM job in the background so it survives the panel closing. */
+async function startLlmJob(op: 'review' | 'generate', payload: unknown): Promise<boolean> {
+  if (currentTabId == null) return false
+  await chrome.storage.session.set({ [jobKey(currentTabId, op)]: { status: 'running', op } })
+  chrome.runtime.sendMessage({ kind: 'snjava:llm-run', tabId: currentTabId, op, payload }).catch(() => {})
+  return true
+}
 
 /* ---------- helpers ---------- */
 
@@ -695,30 +721,46 @@ function runLints(): boolean {
   return true
 }
 
-/** "Java review": run local lints, then ask the AI for an optimized + tester script. */
+/** "Java review": run local lints, then kick off the AI job in the background. */
 async function javaReview() {
   const hasScript = runLints()
   if (!hasScript) return
 
-  optimizeSection.hidden = true
-  testerSection.hidden = true
-  reviewSpinner.hidden = false
-  analyzeBtn.disabled = true
-  aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester…'
-
-  const outcome = await runJavaReview({
+  const started = await startLlmJob('review', {
     script: scriptEd.getValue(),
     kind: scriptKind.value as ScriptKind,
     timing: scriptTiming.value as BrTiming,
     table: simTable.value.trim() || current?.table || 'incident',
     intent: (el<HTMLTextAreaElement>('script-intent').value || '').trim() || undefined,
   })
+  if (!started) {
+    aiStatus.textContent = 'Open a ServiceNow tab first.'
+    return
+  }
+  applyReviewJob({ status: 'running', op: 'review' })
+}
 
+/** Render the review UI from a job entry (running / done / error). */
+function applyReviewJob(entry: LlmJobEntry | undefined) {
+  if (!entry) return
+  if (entry.status === 'running') {
+    optimizeSection.hidden = true
+    testerSection.hidden = true
+    reviewSpinner.hidden = false
+    analyzeBtn.disabled = true
+    aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester… (keeps running if you close this panel)'
+    return
+  }
   reviewSpinner.hidden = true
   analyzeBtn.disabled = false
 
+  if (entry.status === 'error') {
+    aiStatus.textContent = `AI error: ${entry.error}`
+    return
+  }
+  const outcome = entry.outcome as ReviewOutcome
   if (!outcome.configured) {
-    aiStatus.textContent = 'AI not configured — open ⚙ Settings and add an endpoint + key.'
+    aiStatus.textContent = 'AI not configured — open Settings and add an endpoint + key.'
     activateTab('tab-settings')
     return
   }
@@ -726,18 +768,16 @@ async function javaReview() {
     aiStatus.textContent = `AI error: ${outcome.error}`
     return
   }
-
   const { optimizedScript, testScript, notes } = outcome.result
   aiStatus.textContent = notes.length ? `AI review: ${notes.length} note(s).` : 'AI review complete.'
   for (const n of notes) lintResults.append(elText('div', 'review-note', n))
-
   if (optimizedScript) {
     optimizeEd.setValue(optimizedScript)
     optimizeSection.hidden = false
   }
   if (testScript) {
     testerEd.setValue(testScript)
-    testerSection.hidden = false // Tester script shown automatically (point 4)
+    testerSection.hidden = false
     testerSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
@@ -1262,8 +1302,8 @@ async function saveAiSettings() {
   const cfg: LlmConfig = {
     endpoint: aiEndpoint.value.trim(),
     apiKey: aiKey.value.trim(),
-    model: aiModel.value.trim() || 'claude-sonnet-4-5',
-    format: (aiFormat.value as LlmFormat) === 'openai' ? 'openai' : 'anthropic',
+    model: aiModel.value.trim() || 'claude-opus-4-8',
+    format: aiFormat.value as LlmFormat,
   }
   await saveLlmConfig(cfg)
   aiSaved.hidden = false
@@ -1274,14 +1314,14 @@ async function saveAiSettings() {
 /* ---------- Generate Background Script ---------- */
 
 let genEd: ReturnType<typeof createCodeEditor> | null = null
+const genRun = el<HTMLButtonElement>('gen-run')
+const genSpinner = el('gen-spinner')
+const genStatus = el('gen-status')
+const genSection = el('gen-section')
+const genNotes = el('gen-notes')
+const genRequirement = el<HTMLTextAreaElement>('gen-requirement')
 
 function initGenerate() {
-  const genRun = el<HTMLButtonElement>('gen-run')
-  const genSpinner = el('gen-spinner')
-  const genStatus = el('gen-status')
-  const genSection = el('gen-section')
-  const genNotes = el('gen-notes')
-  const genRequirement = el<HTMLTextAreaElement>('gen-requirement')
   genEd = createCodeEditor(el('gen-editor'))
 
   genRun.addEventListener('click', async () => {
@@ -1290,28 +1330,12 @@ function initGenerate() {
       genStatus.textContent = 'Describe what the script should do first.'
       return
     }
-    genRun.disabled = true
-    genSpinner.hidden = false
-    genStatus.textContent = 'Generating background script…'
-
-    const outcome = await runGenerateScript(requirement, current?.table ?? undefined)
-    genSpinner.hidden = true
-    genRun.disabled = false
-
-    if (!outcome.configured) {
-      genStatus.textContent = 'AI not configured — open ⚙ Settings and add an endpoint + key.'
-      activateTab('tab-settings')
+    const started = await startLlmJob('generate', { requirement, table: current?.table ?? undefined })
+    if (!started) {
+      genStatus.textContent = 'Open a ServiceNow tab first.'
       return
     }
-    if (!outcome.ok) {
-      genStatus.textContent = `AI error: ${outcome.error}`
-      return
-    }
-    genStatus.textContent = 'Generated. Review it, then open Background Scripts to run.'
-    genEd!.setValue(outcome.result.script)
-    genNotes.replaceChildren()
-    for (const n of outcome.result.notes) genNotes.append(elText('div', 'review-note', n))
-    genSection.hidden = false
+    applyGenerateJob({ status: 'running', op: 'generate' })
   })
 
   el<HTMLButtonElement>('gen-format').addEventListener('click', () =>
@@ -1324,10 +1348,61 @@ function initGenerate() {
       showToast('Open a ServiceNow tab first')
       return
     }
-    // Background Scripts (Scripts - Background) classic page.
     void chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
   })
 }
+
+/** Render the Generate UI from a job entry (running / done / error). */
+function applyGenerateJob(entry: LlmJobEntry | undefined) {
+  if (!entry || !genEd) return
+  if (entry.status === 'running') {
+    genSpinner.hidden = false
+    genRun.disabled = true
+    genStatus.textContent = 'Generating background script… (keeps running if you close this panel)'
+    return
+  }
+  genSpinner.hidden = true
+  genRun.disabled = false
+  if (entry.status === 'error') {
+    genStatus.textContent = `AI error: ${entry.error}`
+    return
+  }
+  const outcome = entry.outcome as GenerateOutcome
+  if (!outcome.configured) {
+    genStatus.textContent = 'AI not configured — open Settings and add an endpoint + key.'
+    activateTab('tab-settings')
+    return
+  }
+  if (!outcome.ok) {
+    genStatus.textContent = `AI error: ${outcome.error}`
+    return
+  }
+  genStatus.textContent = 'Generated. Review it, then open Background Scripts to run.'
+  genEd.setValue(outcome.result.script)
+  genNotes.replaceChildren()
+  for (const n of outcome.result.notes) genNotes.append(elText('div', 'review-note', n))
+  genSection.hidden = false
+}
+
+/** Load per-tab job state for the current tab and render it (on switch/reopen). */
+async function restoreLlmJobs() {
+  if (currentTabId == null) return
+  const store = await chrome.storage.session.get([
+    jobKey(currentTabId, 'review'),
+    jobKey(currentTabId, 'generate'),
+  ])
+  applyReviewJob(store[jobKey(currentTabId, 'review')] as LlmJobEntry | undefined)
+  applyGenerateJob(store[jobKey(currentTabId, 'generate')] as LlmJobEntry | undefined)
+}
+
+// Background writes job results to storage — reflect changes for the active tab.
+chrome.storage.session.onChanged.addListener((changes) => {
+  if (currentTabId == null) return
+  const rk = jobKey(currentTabId, 'review')
+  const gk = jobKey(currentTabId, 'generate')
+  if (changes[rk]) applyReviewJob(changes[rk].newValue as LlmJobEntry | undefined)
+  if (changes[gk]) applyGenerateJob(changes[gk].newValue as LlmJobEntry | undefined)
+})
 
 /* ---------- detect + wiring ---------- */
 
@@ -1337,10 +1412,12 @@ async function detect() {
   updateEnabledState()
 
   const tab = await getActiveTab()
+  currentTabId = tab?.id ?? null
   if (!tab?.id || !isServiceNow(tab.url)) {
     renderStatus('Open a ServiceNow page to detect context.')
     return
   }
+  void restoreLlmJobs()
 
   // Primary: parse the tab URL directly — works without the content script and
   // covers classic, Next Experience/Polaris, and workspace routes.
@@ -1418,6 +1495,12 @@ testerRun.addEventListener('click', () => {
   void runSimulationWith(testerEd.getValue())
 })
 aiSave.addEventListener('click', saveAiSettings)
+el<HTMLButtonElement>('ai-preset-agenthub').addEventListener('click', () => {
+  aiFormat.value = 'agenthub'
+  aiEndpoint.value = 'https://dev-agenthub.mfec.co.th/api/browser-ingest'
+  if (!aiModel.value.trim()) aiModel.value = 'claude-opus-4-8'
+  showToast('AgentHub preset filled — paste your token and Save')
+})
 void loadAiSettings()
 initGenerate()
 pickerType.addEventListener('change', syncPickerTableVisibility)

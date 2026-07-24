@@ -317,23 +317,22 @@
             Used by “Java review” and “Generate Background Script”. Stored locally
             in this browser.
           </p>
-          <label class="field-label" for="ai-endpoint">Endpoint URL</label>
-          <input id="ai-endpoint" class="query-input" placeholder="https://…/v1/messages" />
-          <label class="field-label" for="ai-key">API key</label>
-          <input id="ai-key" class="query-input" type="password" placeholder="sk-…" />
-          <div class="field-inline">
-            <div>
-              <label class="field-label" for="ai-model">Model</label>
-              <input id="ai-model" class="query-input" placeholder="claude-sonnet-4-5" />
-            </div>
-            <div>
-              <label class="field-label" for="ai-format">Format</label>
-              <select id="ai-format" class="select">
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-              </select>
-            </div>
+          <div class="btn-row" style="margin-top: 0">
+            <button class="btn btn-ghost" id="ai-preset-agenthub" type="button">Use MFEC AgentHub preset</button>
           </div>
+          <label class="field-label" for="ai-format">Format</label>
+          <select id="ai-format" class="select">
+            <option value="agenthub">MFEC AgentHub</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+          </select>
+          <label class="field-label" for="ai-endpoint">Endpoint URL</label>
+          <input id="ai-endpoint" class="query-input" placeholder="https://dev-agenthub.mfec.co.th/api/browser-ingest" />
+          <label class="field-label" for="ai-key">API key / token</label>
+          <input id="ai-key" class="query-input" type="password" placeholder="BROWSER_INGEST_API_TOKEN (Bearer added automatically)" />
+          <label class="field-label" for="ai-model">Model</label>
+          <input id="ai-model" class="query-input" placeholder="claude-opus-4-8" />
+          <p class="ai-note" id="ai-model-hint">AgentHub models: claude-opus-4-8 · claude-sonnet-5 · claude-sonnet-4-6</p>
           <div class="btn-row">
             <button class="btn" id="ai-save" type="button">Save settings</button>
             <span class="count-badge" id="ai-saved" hidden>Saved ✓</span>
