@@ -1,5 +1,5 @@
 {
-  "phase": "review",
+  "phase": "fix",
   "baseline": {
     "head": "ab94407",
     "tests": {
@@ -38,18 +38,18 @@
       "id": "T-103",
       "type": "review",
       "target": "F2: core/lint.ts, trace.ts, diff.ts, script-meta.ts, sandbox-host.ts, src/sandbox/*",
-      "status": "dispatched",
+      "status": "returned",
       "attempts": 1,
-      "evidence": "",
+      "evidence": ".pipeline/evidence/T-103-review.json",
       "notes": "zero-write invariant"
     },
     {
       "id": "T-104",
       "type": "review",
       "target": "platform: core/llm.ts, xml.ts, context.ts, background/, content/, manifest.config.ts",
-      "status": "dispatched",
+      "status": "returned",
       "attempts": 1,
-      "evidence": "",
+      "evidence": ".pipeline/evidence/T-104-review.json",
       "notes": ""
     },
     {
@@ -69,8 +69,81 @@
       "attempts": 1,
       "evidence": "",
       "notes": "user-requested cleanup sweep; deletions land as Phase 4 refactor tasks with Chesterton's Fence notes"
+    },
+    {
+      "id": "T-201",
+      "type": "bugfix",
+      "target": "src/core/prod-guard.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "prod-guard vanity-domain misclassification (high)"
+    },
+    {
+      "id": "T-202",
+      "type": "bugfix",
+      "target": "src/core/sn-rest.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "apiWrite/getText success-on-login-redirect (high) + char tests"
+    },
+    {
+      "id": "T-203",
+      "type": "bugfix",
+      "target": "src/core/xml.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "XML CDATA truncation (high)"
+    },
+    {
+      "id": "T-204",
+      "type": "bugfix",
+      "target": "src/core/lint.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "ruleUnconditionedQuery var-reuse mis-scope (high)"
+    },
+    {
+      "id": "T-205",
+      "type": "bugfix",
+      "target": "src/core/sandbox-host.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "ensure() readiness hang (high)"
+    },
+    {
+      "id": "T-206",
+      "type": "bugfix",
+      "target": "src/manifest.config.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "sandbox CSP connect-src egress (high)"
+    },
+    {
+      "id": "T-207",
+      "type": "bugfix",
+      "target": "src/sidepanel/main.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "resolveScope fallback + deleteTestRecord host pin (2 high)"
+    },
+    {
+      "id": "T-208",
+      "type": "bugfix",
+      "target": "src/background/index.ts",
+      "status": "pending",
+      "attempts": 0,
+      "evidence": "",
+      "notes": "runLlmJob stuck-running after SW death (high)"
     }
   ],
   "findings": [],
-  "gate_checklist": {}
+  "gate_checklist": {},
+  "branch": "pipeline/production-readiness"
 }

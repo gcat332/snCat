@@ -365,7 +365,7 @@ async function refreshXmlControls() {
   const formHas = !!(current?.table && current.sysId && current.view === 'form')
   const listHas = isListView()
   xmlRow.hidden = !(formHas || listHas)
-  xmlSave.textContent = listHas ? 'Copy list' : 'Copy record'
+  xmlSave.textContent = 'Copy'
   xmlSave.title = listHas ? 'Copy every record in this list' : 'Copy this record'
   xmlView.hidden = !formHas
   const store = await chrome.storage.local.get('xmlClip')
@@ -461,49 +461,64 @@ function rawStringFields(rec: Record<string, unknown>): Record<string, string> {
   return out
 }
 
+/** Re-entrancy guard: a paste in flight must not be started again (double-click,
+ *  panel re-fire) — otherwise the same clip is read twice and inserted twice. */
+let pasteInFlight = false
+
 async function pasteXml() {
+  if (pasteInFlight) return
+  pasteInFlight = true // set synchronously, before any await, so a second click no-ops
+  xmlPaste.disabled = true
+  try {
+    await pasteXmlInner()
+  } finally {
+    pasteInFlight = false
+    void refreshXmlControls()
+  }
+}
+
+async function pasteXmlInner() {
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   if (!clip || !current) return
   // Prefer the finalized records captured at save time; fall back to re-parsing
-  // (older clips) with the same dedupe applied.
-  const rawRecords = clip.records ?? dedupeRecords(parseUnloadXmlAll(clip.xml, clip.table)).map((r) => r.fields)
-  if (rawRecords.length === 0) {
+  // (older clips). Keep sys_id — the import is keyed by it (INSERT_OR_UPDATE).
+  const rows = dedupeRecords(
+    clip.records ? clip.records.map((fields) => ({ table: clip.table, fields })) : parseUnloadXmlAll(clip.xml, clip.table),
+  ).map((r) => r.fields)
+  if (rows.length === 0) {
     xmlOut.replaceChildren(elText('div', 'error', 'No copied records to paste.'))
     return
   }
-  const fieldsList = rawRecords.map((f) => importableFields(f))
-  const noun = fieldsList.length === 1 ? 'record' : 'records'
+  const noun = rows.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${scopeLabel()}"${
+      `Import ${rows.length} "${clip.table}" ${noun} into ${current.host}?\n\nReplicated like a ServiceNow XML import — the original sys_id is preserved (INSERT_OR_UPDATE: a matching record is updated, not duplicated). Business rules / workflows are skipped, in scope "${scopeLabel()}"${
         selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
       }.`,
     ))
   ) {
     return
   }
-  xmlPaste.disabled = true
-  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${fieldsList.length} ${noun} via background script…`))
-  // Import via background inserts so they land in the selected scope + update set
-  // (Table API writes bypass update-set capture).
-  const bg = buildMultiInsertScript(clip.table, fieldsList)
+  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${rows.length} ${noun} via background script…`))
+  // Background run so it lands in the selected scope + update set.
+  const bg = buildImportScript(clip.table, rows)
   const res = await runBackground(current.host, bg, writeTargetOpts())
-  xmlPaste.disabled = false
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
     return
   }
   const out = extractBgOutput(res.data)
-  const m = out.match(/snJava: imported (\d+)\/(\d+)/i)
+  const m = out.match(/snJava: moved ins=(\d+) upd=(\d+) total=(\d+)/i)
   const errm = out.match(/snJava: errors (.+)/i)
   if (m) {
-    const [, done, total] = m
+    const [, ins, upd, total] = m
+    const done = Number(ins) + Number(upd)
     xmlOut.replaceChildren(
       elText(
         'div',
-        done === total ? 'ok-banner' : 'error',
-        `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${scopeLabel()})`,
+        done === Number(total) ? 'ok-banner' : 'error',
+        `${done === Number(total) ? '✓' : '⚠'} Moved ${done}/${total} ${clip.table} ${noun} — ${ins} inserted, ${upd} updated (scope ${scopeLabel()})`,
       ),
     )
     if (errm) {
@@ -511,12 +526,11 @@ async function pasteXml() {
       e.style.marginTop = '6px'
       xmlOut.append(e)
     }
-    // Consume the clip once anything imported, so pressing Paste again can't
-    // silently re-create the same records. Save again to import once more.
-    if (Number(done) > 0) {
+    // Consume the clip once something moved, so an accidental re-Paste is a no-op.
+    if (done > 0) {
       await chrome.storage.local.remove('xmlClip')
       await refreshXmlControls()
-      xmlOut.append(elText('div', 'info-sub', 'Copied records cleared — Copy again to insert another set.'))
+      xmlOut.append(elText('div', 'info-sub', 'Copied records cleared — Copy again to move another set.'))
     }
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
@@ -537,27 +551,38 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
   ].join('\n')
 }
 
-/** Background script that inserts many records and reports "imported N/total". */
-function buildMultiInsertScript(table: string, records: Record<string, string>[]): string {
+/**
+ * Background script that replicates records the way a ServiceNow unload XML
+ * import does: keyed by sys_id with INSERT_OR_UPDATE semantics. If the sys_id
+ * already exists it UPDATES it (so re-running is idempotent — never duplicates);
+ * otherwise it INSERTS preserving the original sys_id (setNewGuidValue). Business
+ * rules / workflows are skipped. Reports "moved ins=.. upd=.. total=..".
+ */
+function buildImportScript(table: string, records: Record<string, string>[]): string {
   return [
     `var rows = ${JSON.stringify(records)};`,
-    `var ok = 0, errs = [];`,
+    // Audit / domain columns the platform owns or that may not exist on the target.
+    `var DROP = {sys_created_on:1, sys_created_by:1, sys_updated_on:1, sys_updated_by:1, sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
+    `var ins = 0, upd = 0, errs = [];`,
     `for (var i = 0; i < rows.length; i++) {`,
     `  try {`,
-    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
-    `    gr.initialize();`,
-    `    gr.setWorkflow(false);`, // ignore business rules / workflows on this insert
     `    var row = rows[i];`,
-    `    for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
-    `    var id = gr.insert();`,
-    `    if (id) { ok++; } else {`,
+    `    var sysId = row['sys_id'];`,
+    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `    gr.setWorkflow(false);`,
+    `    var exists = sysId && gr.get(sysId);`,
+    `    if (!exists) { gr.initialize(); if (sysId) gr.setNewGuidValue(sysId); }`,
+    `    for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) gr.setValue(k, row[k]); }`,
+    `    var ok = exists ? gr.update() : gr.insert();`,
+    `    if (ok) { if (exists) { upd++; } else { ins++; } }`,
+    `    else {`,
     `      var why = '';`,
     `      try { why = gr.getLastErrorMessage(); } catch (e2) {}`,
-    `      errs.push('row ' + i + ': ' + (why || 'insert rejected (ACL / mandatory / data policy / before-insert BR abort)'));`,
+    `      errs.push('row ' + i + ': ' + (why || 'rejected (ACL / mandatory / data policy)'));`,
     `    }`,
     `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
-    `gs.info('snJava: imported ' + ok + '/' + rows.length);`,
+    `gs.info('snJava: moved ins=' + ins + ' upd=' + upd + ' total=' + rows.length);`,
     `if (errs.length) { gs.info('snJava: errors ' + errs.slice(0, 5).join(' || ')); }`,
   ].join('\n')
 }
