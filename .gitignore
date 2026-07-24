@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+*.zip
+
+# Env / secrets — extension config, LLM keys, instance URLs
+.env
+.env.*
+*.local
+config.local.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
