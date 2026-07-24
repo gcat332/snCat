@@ -22,7 +22,7 @@
       <button class="tab" id="tab-tester" data-panel="panel-tester" role="tab">Tester</button>
       <button class="tab" id="tab-generate" data-panel="panel-generate" role="tab">Generate</button>
       <button class="tab" id="tab-spec" data-panel="panel-spec" role="tab">Spec</button>
-      <button class="tab" id="tab-settings" data-panel="panel-settings" role="tab">⚙</button>
+      <button class="tab" id="tab-settings" data-panel="panel-settings" role="tab">Settings</button>
     </nav>
 
     <main class="app-main">
@@ -62,6 +62,10 @@
               Load fields
             </button>
             <span class="count-badge" id="schema-count" hidden></span>
+          </div>
+          <div class="btn-row" id="schema-nav" hidden style="margin-top: 8px">
+            <button class="btn btn-ghost" id="schema-back" type="button">← Back</button>
+            <span class="count-badge" id="schema-path"></span>
           </div>
           <input id="schema-search" class="query-input" placeholder="filter fields by name or label…" hidden />
           <div class="results" id="schema-results"></div>
@@ -202,6 +206,7 @@
 
           <div class="btn-row">
             <button class="btn" id="sim-run" type="button">Run simulation</button>
+            <button class="btn btn-ghost" id="sim-bg" type="button">Run in Background Scripts ↗</button>
             <span class="count-badge" id="sim-status" hidden></span>
           </div>
           <div class="results" id="sim-results"></div>

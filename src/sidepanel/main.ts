@@ -117,6 +117,9 @@ const schemaLoad = el<HTMLButtonElement>('schema-load')
 const schemaCount = el('schema-count')
 const schemaSearch = el<HTMLInputElement>('schema-search')
 const schemaResults = el('schema-results')
+const schemaNav = el('schema-nav')
+const schemaBack = el<HTMLButtonElement>('schema-back')
+const schemaPath = el('schema-path')
 
 function updateEnabledState() {
   const hasTable = !!current?.table
@@ -166,28 +169,66 @@ function openConditionList() {
 
 let schemaFields: DictionaryField[] = []
 let schemaTable = ''
+/** Dot-walk prefix built from reference hops, e.g. "assigned_to.manager." */
+let schemaPrefix = ''
+/** Navigation history for the "Back" button (reference drill-down). */
+const schemaStack: { table: string; prefix: string; fields: DictionaryField[] }[] = []
 const choicesCache = new Map<string, ChoiceOption[]>()
 
-async function loadSchema() {
-  if (!current?.table) return
-  const { host, table } = current
-  schemaTable = table
+async function fetchDictionaryInto(table: string, host: string): Promise<boolean> {
   schemaLoad.disabled = true
   schemaCount.hidden = true
   schemaSearch.hidden = true
-  schemaResults.replaceChildren(elText('div', 'empty', 'Loading fields…'))
-
+  schemaResults.replaceChildren(elText('div', 'empty', `Loading ${table} fields…`))
   const res = await getDictionary(host, table)
   schemaLoad.disabled = false
   if (!res.ok) {
     schemaResults.replaceChildren(elText('div', 'error', res.error))
-    return
+    return false
   }
+  schemaTable = table
   schemaFields = res.data
   schemaCount.hidden = false
-  schemaCount.textContent = `${schemaFields.length} fields`
+  schemaCount.textContent = `${schemaFields.length} fields${schemaPrefix ? ` · ${table}` : ''}`
   schemaSearch.hidden = schemaFields.length === 0
   schemaSearch.value = ''
+  updateSchemaNav()
+  renderSchema('')
+  return true
+}
+
+function updateSchemaNav() {
+  const nested = schemaStack.length > 0
+  schemaNav.hidden = !nested
+  schemaPath.textContent = nested ? `${schemaPrefix}…` : ''
+}
+
+/** Load the current record's table schema (resets any reference drill-down). */
+async function loadSchema() {
+  if (!current?.table) return
+  schemaStack.length = 0
+  schemaPrefix = ''
+  await fetchDictionaryInto(current.table, current.host)
+}
+
+/** Drill into a referenced table; the reference field becomes a dot-walk hop. */
+async function loadSchemaForTable(refTable: string, refElement: string) {
+  if (!current) return
+  schemaStack.push({ table: schemaTable, prefix: schemaPrefix, fields: schemaFields })
+  schemaPrefix = `${schemaPrefix}${refElement}.`
+  await fetchDictionaryInto(refTable, current.host)
+}
+
+function schemaBackOne() {
+  const prev = schemaStack.pop()
+  if (!prev) return
+  schemaTable = prev.table
+  schemaPrefix = prev.prefix
+  schemaFields = prev.fields
+  schemaCount.hidden = false
+  schemaCount.textContent = `${schemaFields.length} fields${schemaPrefix ? ` · ${schemaTable}` : ''}`
+  schemaSearch.hidden = schemaFields.length === 0
+  updateSchemaNav()
   renderSchema('')
 }
 
@@ -208,41 +249,48 @@ function renderSchema(filter: string) {
   for (const d of rows) schemaResults.append(buildSchemaRow(d))
 }
 
+/** True when the field carries a choice list (by choice mode or type). */
+function isChoiceField(d: DictionaryField): boolean {
+  const mode = cellValue(d.choice as unknown)
+  const type = cellValue(d.internal_type as unknown).toLowerCase()
+  return (!!mode && mode !== '0') || type === 'choice' || type === 'multi_two_lines'
+}
+
 function buildSchemaRow(d: DictionaryField): HTMLElement {
   const element = cellValue(d.element as unknown)
   const type = cellDisplay(d.internal_type as unknown) || cellValue(d.internal_type as unknown)
   const label = cellDisplay(d.column_label as unknown)
   const refTable = cellValue(d.reference as unknown)
-  const choiceMode = cellValue(d.choice as unknown)
 
   const row = document.createElement('div')
   row.className = 'schema-row2'
 
-  // element name — click to copy
+  // element name — click to copy the full dot-walk path
+  const dotPath = schemaPrefix + element
   const name = document.createElement('button')
   name.type = 'button'
   name.className = 'col'
   name.textContent = element
-  name.title = 'Click to copy field name'
+  name.title = `Click to copy "${dotPath}"`
   name.addEventListener('click', () => {
-    void copyText(element, name)
+    void copyText(dotPath, name)
   })
   row.append(name)
 
   row.append(elText('span', 'type', type))
 
-  // reference → target table (click to load that table's schema)
+  // reference → target table (click to drill in; the field becomes a dot-walk hop)
   if (refTable) {
     const ref = document.createElement('span')
     ref.className = 'ref'
     ref.textContent = `→ ${refTable}`
-    ref.title = `References ${refTable} — click to load its schema`
-    ref.addEventListener('click', () => loadSchemaForTable(refTable))
+    ref.title = `References ${refTable} — click to dot-walk into it`
+    ref.addEventListener('click', () => loadSchemaForTable(refTable, element))
     row.append(ref)
   }
 
   // choices — hover (or click) to load + preview
-  if (choiceMode && choiceMode !== '0') {
+  if (isChoiceField(d)) {
     const ch = document.createElement('span')
     ch.className = 'choices'
     ch.textContent = 'choices ▾'
@@ -254,31 +302,12 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
     }
     ch.addEventListener('mouseenter', open)
     ch.addEventListener('mouseleave', close)
-    ch.addEventListener('click', open) // click also works (mobile/pinned)
+    ch.addEventListener('click', open)
     row.append(ch)
   }
 
   if (label) row.append(elText('span', 'lbl', label))
   return row
-}
-
-async function loadSchemaForTable(table: string) {
-  if (!current) return
-  schemaTable = table
-  schemaCount.hidden = true
-  schemaSearch.hidden = true
-  schemaResults.replaceChildren(elText('div', 'empty', `Loading ${table} fields…`))
-  const res = await getDictionary(current.host, table)
-  if (!res.ok) {
-    schemaResults.replaceChildren(elText('div', 'error', res.error))
-    return
-  }
-  schemaFields = res.data
-  schemaCount.hidden = false
-  schemaCount.textContent = `${schemaFields.length} fields · ${table}`
-  schemaSearch.hidden = schemaFields.length === 0
-  schemaSearch.value = ''
-  renderSchema('')
 }
 
 /**
@@ -1225,6 +1254,7 @@ condRun.addEventListener('click', runCondition)
 condOpen.addEventListener('click', openConditionList)
 schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
+schemaBack.addEventListener('click', schemaBackOne)
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', javaReview)
 scriptFormat.addEventListener('click', () => formatEditor(scriptEd, scriptFormat))
@@ -1252,6 +1282,15 @@ pickerSearch.addEventListener('keydown', (e) => {
 syncPickerTableVisibility()
 simFill.addEventListener('click', fillFromRecord)
 simRun.addEventListener('click', runSimulation)
+el<HTMLButtonElement>('sim-bg').addEventListener('click', () => {
+  if (!current?.host) {
+    showToast('Open a ServiceNow tab first')
+    return
+  }
+  void copyText(scriptEd.getValue())
+  showToast('Script copied — paste it into Background Scripts')
+  void chrome.tabs.create({ url: `https://${current.host}/sys.scripts.do` })
+})
 l3Create.addEventListener('click', createTestRecord)
 l3Delete.addEventListener('click', deleteTestRecord)
 specWalk.addEventListener('click', discoverArtifacts)
