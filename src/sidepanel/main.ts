@@ -34,6 +34,7 @@ import { createCodeEditor } from './editor'
 import type { ArtifactRef } from '@core/graph'
 import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
+import { formatSpecDoc } from '@core/format'
 import { renderSpecDocxBlob } from '@core/render-docx'
 import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
@@ -1707,15 +1708,17 @@ function download(blob: Blob, filename: string) {
 }
 
 async function exportHtml() {
-  const doc = buildSpecDoc()
-  if (!doc) return
+  const base = buildSpecDoc()
+  if (!base) return
+  const doc = await formatSpecDoc(base)
   const html = renderSpecHtml(doc, { logoDataUri: await getLogoDataUri() })
   download(new Blob([html], { type: 'text/html' }), `${safeName()}.html`)
 }
 
 async function exportPdf() {
-  const doc = buildSpecDoc()
-  if (!doc) return
+  const base = buildSpecDoc()
+  if (!base) return
+  const doc = await formatSpecDoc(base)
   const html = renderSpecHtml(doc, { logoDataUri: await getLogoDataUri() }).replace(
     '</body>',
     '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},350)})</script></body>',
@@ -1727,10 +1730,11 @@ async function exportPdf() {
 }
 
 async function exportDocx() {
-  const doc = buildSpecDoc()
-  if (!doc) return
+  const base = buildSpecDoc()
+  if (!base) return
   specDocxBtn.disabled = true
   try {
+    const doc = await formatSpecDoc(base)
     const blob = await renderSpecDocxBlob(doc)
     download(blob, `${safeName()}.docx`)
   } finally {

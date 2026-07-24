@@ -4,7 +4,19 @@
  * gradient cover band, print/PDF CSS. No external assets except the Google
  * Fonts link; the logo is embedded as a data URI when provided.
  */
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
 import type { SpecBlock, SpecDocument } from './spec'
+
+hljs.registerLanguage('javascript', javascript)
+
+function highlightJs(code: string): string {
+  try {
+    return hljs.highlight(code, { language: 'javascript', ignoreIllegals: true }).value
+  } catch {
+    return esc(code)
+  }
+}
 
 export interface RenderHtmlOptions {
   /** MFEC logo as a data: URI (white variant, sits on the gradient band). */
@@ -33,8 +45,11 @@ function renderBlock(block: SpecBlock): string {
         .join('')}</tr></thead><tbody>${block.rows
         .map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`)
         .join('')}</tbody></table>`
-    case 'code':
-      return `${block.caption ? `<p class="code-caption">${esc(block.caption)}</p>` : ''}<pre class="code"><code>${esc(block.code)}</code></pre>`
+    case 'code': {
+      const caption = block.caption ? `<p class="code-caption">${esc(block.caption)}</p>` : ''
+      const body = block.lang === 'javascript' ? highlightJs(block.code) : esc(block.code)
+      return `${caption}<pre class="code hljs"><code>${body}</code></pre>`
+    }
     case 'list':
       return `<ul>${block.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`
   }
@@ -68,10 +83,20 @@ table.data th,table.kv th{background:var(--blue-dark);color:#fff;font-weight:500
 table.kv th{width:200px;background:var(--surface-alt);color:var(--blue-dark)}
 table td{padding:7px 10px;border:1px solid var(--border);vertical-align:top}
 table.data tbody tr:nth-child(even){background:rgba(0,49,180,0.04)}
-.code-caption{font-weight:500;color:var(--violet);margin:6px 0 4px;font-size:12.5px}
-pre.code{background:var(--surface-alt);border:1px solid var(--border);border-left:3px solid var(--cyan);
+.code-caption{font-weight:500;color:var(--violet);margin:10px 0 4px;font-size:12.5px}
+pre.code{background:#282c34;color:#abb2bf;border:1px solid #1c1f26;border-left:3px solid var(--cyan);
   border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;
-  font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  font-size:12px;line-height:1.55;white-space:pre;tab-size:2}
+pre.code code{font-family:inherit}
+/* one-dark syntax highlighting (self-contained) */
+.hljs-comment,.hljs-quote{color:#7f848e;font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-name,.hljs-tag{color:#c678dd}
+.hljs-string,.hljs-title,.hljs-section,.hljs-attribute,.hljs-literal,.hljs-template-tag,.hljs-template-variable,.hljs-type,.hljs-addition{color:#98c379}
+.hljs-number,.hljs-symbol,.hljs-bullet,.hljs-meta,.hljs-link{color:#d19a66}
+.hljs-title.function_,.hljs-function .hljs-title{color:#61afef}
+.hljs-variable,.hljs-attr,.hljs-property{color:#e06c75}
+.hljs-regexp,.hljs-deletion{color:#e06c75}
+.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:700}
 footer{padding:18px 56px;color:var(--soft);font-size:11px;border-top:1px solid var(--border)}
 @media print{
   .cover{padding:36px 40px}

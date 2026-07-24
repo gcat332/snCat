@@ -11,7 +11,7 @@ export type SpecBlock =
   | { kind: 'paragraph'; text: string }
   | { kind: 'keyvalue'; rows: { key: string; value: string }[] }
   | { kind: 'table'; columns: string[]; rows: string[][] }
-  | { kind: 'code'; caption?: string; code: string }
+  | { kind: 'code'; caption?: string; code: string; lang?: 'javascript' | 'text' }
   | { kind: 'list'; items: string[] }
 
 export interface SpecSection {
@@ -185,7 +185,7 @@ function logicSection(
 
   const condition = rootFields['condition'] || rootFields['filter_condition']
   if (condition) blocks.push({ kind: 'code', caption: 'Condition', code: condition })
-  if (rootFields['script']) blocks.push({ kind: 'code', caption: 'Script (root)', code: rootFields['script'] })
+  if (rootFields['script']) blocks.push({ kind: 'code', caption: 'Script (root)', code: rootFields['script'], lang: 'javascript' })
 
   for (const br of byType(artifacts, 'business_rule')) {
     const acts = (['insert', 'update', 'delete', 'query'] as const).filter((a) => br.fields[`action_${a}`] === 'true')
@@ -201,7 +201,7 @@ function logicSection(
     if (br.fields['description']) blocks.push({ kind: 'paragraph', text: `${br.label}: ${br.fields['description']}` })
     const cond = br.fields['condition'] || br.fields['filter_condition']
     if (cond) blocks.push({ kind: 'code', caption: `Business Rule condition: ${br.label}${suffix}`, code: cond })
-    if (br.fields['script']) blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${suffix}`, code: br.fields['script'] })
+    if (br.fields['script']) blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${suffix}`, code: br.fields['script'], lang: 'javascript' })
   }
   for (const cs of byType(artifacts, 'client_script')) {
     const meta = [
@@ -214,17 +214,17 @@ function logicSection(
       .join(' · ')
     if (cs.fields['description']) blocks.push({ kind: 'paragraph', text: `${cs.label}: ${cs.fields['description']}` })
     if (cs.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label} — ${meta}`, code: cs.fields['script'] })
+      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label} — ${meta}`, code: cs.fields['script'], lang: 'javascript' })
     }
   }
   for (const si of byType(artifacts, 'script_include')) {
     if (si.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Script Include: ${si.label}`, code: si.fields['script'] })
+      blocks.push({ kind: 'code', caption: `Script Include: ${si.label}`, code: si.fields['script'], lang: 'javascript' })
     }
   }
   for (const cs of byType(artifacts, 'catalog_client_script')) {
     if (cs.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Catalog Client Script: ${cs.label}`, code: cs.fields['script'] })
+      blocks.push({ kind: 'code', caption: `Catalog Client Script: ${cs.label}`, code: cs.fields['script'], lang: 'javascript' })
     }
   }
 
@@ -296,7 +296,7 @@ function securitySection(artifacts: ArtifactRef[]): SpecSection {
   // Include any ACL scripts verbatim.
   for (const a of acls) {
     if (a.fields['script']?.trim()) {
-      blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'] })
+      blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'], lang: 'javascript' })
     }
   }
   return { heading: 'Security / ACL', blocks }
