@@ -437,3 +437,20 @@ body {
   font-size: 12px;
   font-weight: 500;
 }
+
+.sim-after {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--surface-alt);
+}
+
+.sim-after-title {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--mfec-blue-dark);
+  margin-bottom: 4px;
+}

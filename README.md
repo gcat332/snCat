@@ -52,7 +52,15 @@ Then load the extension in Chrome:
 - Side panel **Script Tester** tab: auto-loads the script from a Business Rule / Client Script / Script Include record, kind + timing selectors, intent capture, findings list by severity.
 - AI logic-vs-intent review is stubbed off (LLM disabled) per handoff §7 decision 2.
 
-Next: **M3** — Layer 2 sandbox simulation (Glide mocks in a sandboxed iframe). Highest risk.
+**M3 — Script Tester Layer 2 (sandbox simulation)** ✅
+- Glide mocks (`src/sandbox/glide-mocks.ts`): `current`/`previous` (Proxy-backed, field get/set), `gs`, `GlideRecord`, `GlideRecordSecure` (scoped alias), `action`, `g_form`/`g_user`. **Invariant: zero instance writes** — insert/update/deleteRecord are captured as `write-blocked`, never executed.
+- Pure simulation engine (`src/sandbox/engine.ts`) executes the user script via `new Function` and returns a typed execution trace — **fully unit-tested in Node** (`engine.test.ts`, 11 tests).
+- Runs inside a **sandboxed iframe** (opaque origin, `sandbox` manifest CSP) built as a **classic IIFE** (`vite.sandbox.config.ts`) because ES modules do not load in MV3 sandbox pages. Host driver (`src/core/sandbox-host.ts`) posts the job and enforces a timeout (resets the frame on runaway loops).
+- Side panel **Layer 2** card: seed `current` from a real record ("Fill from a record"), edit current/previous, run → execution trace + `current` (after) + fidelity note (V8 vs Rhino).
+
+> ⚠️ **Needs a real-browser smoke test:** the engine logic is proven by unit tests, but the iframe postMessage round-trip + classic-script load in the sandboxed opaque origin can only be confirmed by loading `dist/` in Chrome. Everything else in M0–M3 is verified.
+
+Next: **M4** — F1 Design Spec Generator (graph walker + templated PDF/docx/HTML).
 
 ## Layout
 

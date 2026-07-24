@@ -10,6 +10,8 @@ export interface ScriptTableInfo {
   scriptField: string
   /** Field holding the BR timing (`when`), if applicable. */
   timingField?: string
+  /** Field naming the table the script runs against (BR `collection`). */
+  tableField?: string
   /** Field holding the record's display name. */
   nameField: string
 }
@@ -19,6 +21,7 @@ export const SCRIPT_TABLES: Record<string, ScriptTableInfo> = {
     kind: 'business_rule',
     scriptField: 'script',
     timingField: 'when',
+    tableField: 'collection',
     nameField: 'name',
   },
   sys_script_client: {

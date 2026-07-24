@@ -119,6 +119,42 @@
           <p class="ai-note">AI logic-vs-intent review is disabled (LLM off) — static lints run now.</p>
           <div class="results" id="lint-results"></div>
         </section>
+
+        <section class="card" id="sim-card">
+          <h2 class="card-title">Layer 2 — Sandbox Simulation</h2>
+          <p class="hint">
+            Runs the script above against mocked Glide APIs in a sandboxed iframe.
+            <strong>Zero writes to the instance.</strong>
+          </p>
+
+          <label class="field-label" for="sim-table">Target table (current)</label>
+          <div class="btn-row" style="margin-top: 0">
+            <input id="sim-table" class="query-input" style="flex: 1" placeholder="incident" />
+            <button class="btn btn-ghost" id="sim-fill" type="button">Fill from a record</button>
+          </div>
+
+          <label class="field-label" for="sim-current">current fields (field=value per line)</label>
+          <textarea
+            id="sim-current"
+            class="query-input code"
+            rows="5"
+            placeholder="priority=3&#10;state=1&#10;short_description=Example"
+          ></textarea>
+
+          <label class="field-label" for="sim-previous">previous fields (optional — defaults to current)</label>
+          <textarea
+            id="sim-previous"
+            class="query-input code"
+            rows="3"
+            placeholder="priority=2"
+          ></textarea>
+
+          <div class="btn-row">
+            <button class="btn" id="sim-run" type="button">Run simulation</button>
+            <span class="count-badge" id="sim-status" hidden></span>
+          </div>
+          <div class="results" id="sim-results"></div>
+        </section>
       </div>
     </main>
 

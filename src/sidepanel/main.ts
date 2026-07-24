@@ -9,8 +9,11 @@ import { cellDisplay, cellValue, pickLabel } from '@core/api'
 import { countRecords, getDictionary, getRecord, queryRecords } from '@core/api-client'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { normalizeTiming, scriptTableInfo } from '@core/script-meta'
+import { SandboxRunner } from '@core/sandbox-host'
+import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
 
 let current: PageContext | null = null
+const sandbox = new SandboxRunner()
 
 /* ---------- helpers ---------- */
 
@@ -200,6 +203,7 @@ async function maybeAutoLoadScript() {
   testerSource.textContent = 'Loading script from record…'
   const fields = [info.scriptField, info.nameField]
   if (info.timingField) fields.push(info.timingField)
+  if (info.tableField) fields.push(info.tableField)
 
   const res = await getRecord(current.host, current.table, current.sysId, fields)
   if (!res.ok) {
@@ -211,6 +215,11 @@ async function maybeAutoLoadScript() {
   scriptKind.value = info.kind
   if (info.timingField) {
     scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
+  }
+  // Layer 2: point `current` at the table this script runs against.
+  if (info.tableField) {
+    const target = cellValue(rec[info.tableField])
+    if (target) simTable.value = target
   }
   syncTimingVisibility()
   const name = cellDisplay(rec[info.nameField]) || current.table
@@ -263,6 +272,170 @@ function renderFinding(f: LintFinding) {
   lintResults.append(wrap)
 }
 
+/* ---------- Layer 2 — Sandbox Simulation (M3) ---------- */
+
+const simTable = el<HTMLInputElement>('sim-table')
+const simFill = el<HTMLButtonElement>('sim-fill')
+const simCurrent = el<HTMLTextAreaElement>('sim-current')
+const simPrevious = el<HTMLTextAreaElement>('sim-previous')
+const simRun = el<HTMLButtonElement>('sim-run')
+const simStatus = el('sim-status')
+const simResults = el('sim-results')
+
+/** Parse "field=value" lines into a map (first '=' splits). */
+function parseFields(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    const eq = line.indexOf('=')
+    if (eq === -1) continue
+    out[line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
+  }
+  return out
+}
+
+function fieldsToText(rec: Record<string, unknown>): string {
+  return Object.entries(rec)
+    .filter(([k]) => !k.startsWith('__'))
+    .map(([k, v]) => `${k}=${cellValue(v)}`)
+    .join('\n')
+}
+
+async function fillFromRecord() {
+  const table = simTable.value.trim()
+  if (!current || !table) return
+  simFill.disabled = true
+  const prev = simFill.textContent
+  simFill.textContent = 'Loading…'
+  const res = await queryRecords(current.host, table, { limit: 1, displayValue: false })
+  simFill.disabled = false
+  simFill.textContent = prev
+  if (!res.ok) {
+    simResults.replaceChildren(elText('div', 'error', res.error))
+    return
+  }
+  if (res.data.length === 0) {
+    simResults.replaceChildren(elText('div', 'empty', `No records in ${table} to sample.`))
+    return
+  }
+  simCurrent.value = fieldsToText(res.data[0])
+}
+
+async function runSimulation() {
+  const script = scriptBody.value
+  if (!script.trim()) {
+    simResults.replaceChildren(elText('div', 'empty', 'Load or paste a script in Layer 1 first.'))
+    return
+  }
+  const job: SimulationJob = {
+    script,
+    kind: scriptKind.value as ScriptKind,
+    timing: scriptTiming.value as BrTiming,
+    table: simTable.value.trim() || 'incident',
+    currentFields: parseFields(simCurrent.value),
+    previousFields: simPrevious.value.trim() ? parseFields(simPrevious.value) : undefined,
+  }
+
+  simRun.disabled = true
+  simStatus.hidden = true
+  simResults.replaceChildren(elText('div', 'empty', 'Running in sandbox…'))
+
+  try {
+    const result = await sandbox.run(job)
+    renderSimResult(result)
+  } catch (err) {
+    simResults.replaceChildren(elText('div', 'error', (err as Error).message))
+  } finally {
+    simRun.disabled = false
+  }
+}
+
+const TRACE_LABEL: Record<TraceEvent['type'], string> = {
+  'field-set': 'set',
+  message: 'msg',
+  log: 'log',
+  abort: 'abort',
+  query: 'query',
+  'write-blocked': 'blocked',
+  call: 'call',
+  exception: 'error',
+}
+
+function traceText(e: TraceEvent): string {
+  switch (e.type) {
+    case 'field-set':
+      return `${e.target}.${e.field}: "${e.from}" → "${e.to}"`
+    case 'message':
+      return `addMessage(${e.level}): ${e.text}`
+    case 'log':
+      return `gs.${e.level}: ${e.text}`
+    case 'abort':
+      return `setAbortAction(${e.value})`
+    case 'query':
+      return `${e.table}.query(${e.encodedQuery || 'no filter'})`
+    case 'write-blocked':
+      return `${e.op}() on ${e.table} — ${e.note}`
+    case 'call':
+      return `${e.api}(${e.detail})`
+    case 'exception':
+      return e.message
+  }
+}
+
+function traceSeverity(e: TraceEvent): 'error' | 'warning' | 'info' {
+  if (e.type === 'exception') return 'error'
+  if (e.type === 'write-blocked' || e.type === 'abort') return 'warning'
+  if (e.type === 'message' && e.level === 'error') return 'warning'
+  return 'info'
+}
+
+function renderSimResult(result: SimulationResult) {
+  simResults.replaceChildren()
+  simStatus.hidden = false
+  simStatus.textContent = result.ok
+    ? `${result.events.length} events`
+    : 'threw an exception'
+
+  if (result.events.length === 0 && result.ok) {
+    simResults.append(elText('div', 'ok-banner', '✓ Script ran; no observable Glide effects.'))
+  }
+
+  for (const e of result.events) {
+    const sev = traceSeverity(e)
+    const wrap = document.createElement('div')
+    wrap.className = `finding ${sev}`
+    const head = document.createElement('div')
+    head.className = 'fhead'
+    const rule = document.createElement('span')
+    rule.className = 'rule'
+    rule.append(
+      Object.assign(document.createElement('span'), { className: `sev-dot ${sev}` }),
+      document.createTextNode(TRACE_LABEL[e.type]),
+    )
+    head.append(rule)
+    wrap.append(head, elText('div', 'msg', traceText(e)))
+    simResults.append(wrap)
+  }
+
+  // "current after" summary
+  const after = Object.entries(result.currentAfter)
+  if (after.length) {
+    const box = document.createElement('div')
+    box.className = 'sim-after'
+    box.append(elText('div', 'sim-after-title', 'current (after)'))
+    for (const [k, v] of after) {
+      const r = document.createElement('div')
+      r.className = 'schema-row'
+      r.append(elText('span', 'col', k), elText('span', 'lbl', v))
+      box.append(r)
+    }
+    simResults.append(box)
+  }
+
+  simResults.append(elText('div', 'ai-note', result.note))
+}
+
 /* ---------- detect + wiring ---------- */
 
 async function detect() {
@@ -290,6 +463,12 @@ async function detect() {
     renderStatus('Content script not loaded — reload the ServiceNow tab, then Refresh.', 'error')
   }
   updateEnabledState()
+
+  // Layer 2: default the simulation target to the current table unless it's a
+  // script table (a BR sets the target from its `collection` on auto-load).
+  if (current?.table && !scriptTableInfo(current.table) && !simTable.value.trim()) {
+    simTable.value = current.table
+  }
   void maybeAutoLoadScript()
 }
 
@@ -301,6 +480,8 @@ condRun.addEventListener('click', runCondition)
 schemaLoad.addEventListener('click', loadSchema)
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', analyze)
+simFill.addEventListener('click', fillFromRecord)
+simRun.addEventListener('click', runSimulation)
 
 chrome.tabs.onActivated.addListener(detect)
 chrome.tabs.onUpdated.addListener((_id, info, tab) => {
