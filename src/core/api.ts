@@ -36,6 +36,14 @@ export interface DictionaryField {
   reference: string
   mandatory: boolean
   max_length: string
+  /** Choice mode: '0' none, '1' dropdown w/ none, '2' suggestion, '3' dropdown. */
+  choice: string
+}
+
+/** A single choice option for a field. */
+export interface ChoiceOption {
+  label: string
+  value: string
 }
 
 /** Result envelope returned across the message boundary. */
@@ -113,10 +121,15 @@ export function buildDictionaryUrl(host: string, table: string): string {
   const query = `name=${table}^elementISNOTEMPTY^ORDERBYelement`
   return buildTableQueryUrl(host, 'sys_dictionary', {
     query,
-    fields: ['element', 'column_label', 'internal_type', 'reference', 'mandatory', 'max_length'],
+    fields: ['element', 'column_label', 'internal_type', 'reference', 'mandatory', 'max_length', 'choice'],
     limit: 1000,
     displayValue: 'all',
   })
+}
+
+/** Encoded query for a table+field's choice options (against sys_choice). */
+export function buildChoicesQuery(table: string, element: string): string {
+  return `name=${table}^element=${element}^inactive=false^ORDERBYsequence^ORDERBYlabel`
 }
 
 /** Pull a scalar out of a Table API cell (handles both raw and {value,...} shapes). */

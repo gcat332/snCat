@@ -329,6 +329,121 @@ button.picker-row:hover {
   font-size: 11px;
 }
 
+/* Schema row v2 — clickable name (copy), reference target, choices */
+.schema-row2 {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.schema-row2 .col {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.schema-row2 .col:hover {
+  color: var(--mfec-blue);
+  text-decoration: underline;
+}
+
+.schema-row2 .col.copied {
+  color: var(--mfec-cyan);
+}
+
+.schema-row2 .type {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.schema-row2 .lbl {
+  flex: 1 1 100%;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.schema-row2 .ref {
+  font-size: 11px;
+  color: var(--mfec-blue-dark);
+  background: rgba(0, 49, 180, 0.08);
+  border: 1px solid rgba(0, 49, 180, 0.15);
+  border-radius: 4px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.schema-row2 .ref:hover {
+  background: rgba(0, 49, 180, 0.16);
+}
+
+.schema-row2 .choices {
+  font-size: 11px;
+  color: var(--mfec-violet);
+  border: 1px dashed rgba(105, 104, 171, 0.4);
+  border-radius: 4px;
+  padding: 0 6px;
+  cursor: help;
+}
+
+.choice-pop {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 8px;
+  right: 8px;
+  margin-top: 2px;
+  background: var(--surface);
+  border: 1px solid var(--mfec-violet);
+  border-radius: 6px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 14px rgba(0, 9, 96, 0.14);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.choice-pop .ch {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.choice-pop .ch .v {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  color: var(--ink-soft);
+}
+
+.copy-toast {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--mfec-blue-dark);
+  color: #fff;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.copy-toast.show {
+  opacity: 1;
+}
+
 .empty {
   color: var(--ink-soft);
   font-size: 12px;

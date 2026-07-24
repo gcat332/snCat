@@ -6,7 +6,8 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { cellDisplay, cellValue, pickLabel } from '@core/api'
+import { buildChoicesQuery, cellDisplay, cellValue } from '@core/api'
+import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
   createRecord,
@@ -107,15 +108,18 @@ function renderStatus(text: string, cls = 'detecting') {
 const condHint = el('cond-table-hint')
 const condQuery = el<HTMLTextAreaElement>('cond-query')
 const condRun = el<HTMLButtonElement>('cond-run')
+const condOpen = el<HTMLButtonElement>('cond-open')
 const condCount = el('cond-count')
 const condResults = el('cond-results')
 const schemaLoad = el<HTMLButtonElement>('schema-load')
 const schemaCount = el('schema-count')
+const schemaSearch = el<HTMLInputElement>('schema-search')
 const schemaResults = el('schema-results')
 
 function updateEnabledState() {
   const hasTable = !!current?.table
   condRun.disabled = !hasTable
+  condOpen.disabled = !hasTable
   schemaLoad.disabled = !hasTable
   condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
   specWalk.disabled = !(current?.table && current.sysId)
@@ -128,45 +132,47 @@ async function runCondition() {
 
   condRun.disabled = true
   condCount.hidden = true
-  condResults.replaceChildren(elText('div', 'empty', 'Running…'))
+  condResults.replaceChildren(elText('div', 'empty', 'Counting…'))
 
-  const [countRes, rowsRes] = await Promise.all([
-    countRecords(host, table, query || undefined),
-    queryRecords(host, table, { query: query || undefined, limit: 10, displayValue: 'all' }),
-  ])
+  const countRes = await countRecords(host, table, query || undefined)
   condRun.disabled = false
 
   if (!countRes.ok) {
     condResults.replaceChildren(elText('div', 'error', countRes.error))
     return
   }
+  const n = countRes.data.count
   condCount.hidden = false
-  condCount.textContent = `${countRes.data.count} match${countRes.data.count === 1 ? '' : 'es'}`
-
-  if (!rowsRes.ok) {
-    condResults.replaceChildren(elText('div', 'error', rowsRes.error))
-    return
-  }
-  condResults.replaceChildren()
-  if (rowsRes.data.length === 0) {
-    condResults.append(elText('div', 'empty', 'No records match this query.'))
-    return
-  }
-  for (const rec of rowsRes.data) {
-    const wrap = document.createElement('div')
-    wrap.className = 'result-row'
-    const label = elText('span', 'label', pickLabel(rec))
-    const sid = elText('span', 'sysid', cellValue(rec['sys_id']).slice(0, 8) || '—')
-    wrap.append(label, sid)
-    condResults.append(wrap)
-  }
+  condCount.textContent = `${n} match${n === 1 ? '' : 'es'}`
+  condResults.replaceChildren(
+    elText('div', 'empty', `${n} record${n === 1 ? '' : 's'} match this condition. Use “Open list ↗” to view them in ServiceNow.`),
+  )
+  condOpen.disabled = false
 }
+
+/** Open the filtered list in ServiceNow (classic list view honors sysparm_query). */
+function openConditionList() {
+  if (!current?.table) return
+  const query = condQuery.value.trim()
+  const url =
+    `https://${current.host}/${current.table}_list.do` +
+    (query ? `?sysparm_query=${encodeURIComponent(query)}` : '')
+  void chrome.tabs.create({ url })
+}
+
+/* --- Table schema (search + reference + choices + copy) --- */
+
+let schemaFields: DictionaryField[] = []
+let schemaTable = ''
+const choicesCache = new Map<string, ChoiceOption[]>()
 
 async function loadSchema() {
   if (!current?.table) return
   const { host, table } = current
+  schemaTable = table
   schemaLoad.disabled = true
   schemaCount.hidden = true
+  schemaSearch.hidden = true
   schemaResults.replaceChildren(elText('div', 'empty', 'Loading fields…'))
 
   const res = await getDictionary(host, table)
@@ -175,23 +181,160 @@ async function loadSchema() {
     schemaResults.replaceChildren(elText('div', 'error', res.error))
     return
   }
+  schemaFields = res.data
   schemaCount.hidden = false
-  schemaCount.textContent = `${res.data.length} fields`
+  schemaCount.textContent = `${schemaFields.length} fields`
+  schemaSearch.hidden = schemaFields.length === 0
+  schemaSearch.value = ''
+  renderSchema('')
+}
+
+function renderSchema(filter: string) {
+  const f = filter.trim().toLowerCase()
+  const rows = schemaFields.filter((d) => {
+    if (!f) return true
+    return (
+      cellValue(d.element as unknown).toLowerCase().includes(f) ||
+      cellDisplay(d.column_label as unknown).toLowerCase().includes(f)
+    )
+  })
   schemaResults.replaceChildren()
-  if (res.data.length === 0) {
-    schemaResults.append(elText('div', 'empty', 'No dictionary rows returned.'))
+  if (rows.length === 0) {
+    schemaResults.append(elText('div', 'empty', 'No matching fields.'))
     return
   }
-  for (const f of res.data) {
-    const wrap = document.createElement('div')
-    wrap.className = 'schema-row'
-    wrap.append(
-      elText('span', 'col', cellValue(f.element as unknown)),
-      elText('span', 'type', cellDisplay(f.internal_type as unknown)),
-      elText('span', 'lbl', cellDisplay(f.column_label as unknown)),
-    )
-    schemaResults.append(wrap)
+  for (const d of rows) schemaResults.append(buildSchemaRow(d))
+}
+
+function buildSchemaRow(d: DictionaryField): HTMLElement {
+  const element = cellValue(d.element as unknown)
+  const type = cellDisplay(d.internal_type as unknown) || cellValue(d.internal_type as unknown)
+  const label = cellDisplay(d.column_label as unknown)
+  const refTable = cellValue(d.reference as unknown)
+  const choiceMode = cellValue(d.choice as unknown)
+
+  const row = document.createElement('div')
+  row.className = 'schema-row2'
+
+  // element name — click to copy
+  const name = document.createElement('button')
+  name.type = 'button'
+  name.className = 'col'
+  name.textContent = element
+  name.title = 'Click to copy field name'
+  name.addEventListener('click', () => {
+    void copyText(element, name)
+  })
+  row.append(name)
+
+  row.append(elText('span', 'type', type))
+
+  // reference → target table (click to load that table's schema)
+  if (refTable) {
+    const ref = document.createElement('span')
+    ref.className = 'ref'
+    ref.textContent = `→ ${refTable}`
+    ref.title = `References ${refTable} — click to load its schema`
+    ref.addEventListener('click', () => loadSchemaForTable(refTable))
+    row.append(ref)
   }
+
+  // choices — hover to load + preview
+  if (choiceMode && choiceMode !== '0') {
+    const ch = document.createElement('span')
+    ch.className = 'choices'
+    ch.textContent = 'choices ▾'
+    let pop: HTMLElement | null = null
+    ch.addEventListener('mouseenter', () => {
+      void showChoices(row, element, (p) => (pop = p))
+    })
+    ch.addEventListener('mouseleave', () => {
+      pop?.remove()
+      pop = null
+    })
+    row.append(ch)
+  }
+
+  if (label) row.append(elText('span', 'lbl', label))
+  return row
+}
+
+async function loadSchemaForTable(table: string) {
+  if (!current) return
+  schemaTable = table
+  schemaCount.hidden = true
+  schemaSearch.hidden = true
+  schemaResults.replaceChildren(elText('div', 'empty', `Loading ${table} fields…`))
+  const res = await getDictionary(current.host, table)
+  if (!res.ok) {
+    schemaResults.replaceChildren(elText('div', 'error', res.error))
+    return
+  }
+  schemaFields = res.data
+  schemaCount.hidden = false
+  schemaCount.textContent = `${schemaFields.length} fields · ${table}`
+  schemaSearch.hidden = schemaFields.length === 0
+  schemaSearch.value = ''
+  renderSchema('')
+}
+
+async function showChoices(row: HTMLElement, element: string, setPop: (p: HTMLElement) => void) {
+  if (!current) return
+  const key = `${schemaTable}.${element}`
+  let choices = choicesCache.get(key)
+  if (!choices) {
+    const res = await queryRecords(current.host, 'sys_choice', {
+      query: buildChoicesQuery(schemaTable, element),
+      fields: ['label', 'value', 'sequence'],
+      limit: 200,
+      displayValue: false,
+    })
+    choices = res.ok
+      ? res.data.map((r) => ({ label: cellValue(r['label']), value: cellValue(r['value']) }))
+      : []
+    choicesCache.set(key, choices)
+  }
+  const pop = document.createElement('div')
+  pop.className = 'choice-pop'
+  if (choices.length === 0) {
+    pop.append(elText('div', 'ch', 'No choices found.'))
+  } else {
+    for (const c of choices) {
+      const line = document.createElement('div')
+      line.className = 'ch'
+      line.append(elText('span', 'l', c.label || '(blank)'), elText('span', 'v', c.value))
+      pop.append(line)
+    }
+  }
+  row.append(pop)
+  setPop(pop)
+}
+
+async function copyText(text: string, feedbackEl?: HTMLElement) {
+  try {
+    await navigator.clipboard.writeText(text)
+    showToast(`Copied "${text}"`)
+    if (feedbackEl) {
+      feedbackEl.classList.add('copied')
+      setTimeout(() => feedbackEl.classList.remove('copied'), 800)
+    }
+  } catch {
+    showToast('Copy failed')
+  }
+}
+
+let toastEl: HTMLElement | null = null
+let toastTimer: ReturnType<typeof setTimeout> | undefined
+function showToast(text: string) {
+  if (!toastEl) {
+    toastEl = document.createElement('div')
+    toastEl.className = 'copy-toast'
+    document.body.appendChild(toastEl)
+  }
+  toastEl.textContent = text
+  toastEl.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => toastEl?.classList.remove('show'), 1400)
 }
 
 /* ---------- Script Tester Layer 1 (M2) ---------- */
@@ -861,7 +1004,9 @@ syncTimingVisibility()
 
 refreshBtn.addEventListener('click', detect)
 condRun.addEventListener('click', runCondition)
+condOpen.addEventListener('click', openConditionList)
 schemaLoad.addEventListener('click', loadSchema)
+schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', analyze)
 pickerType.addEventListener('change', syncPickerTableVisibility)
