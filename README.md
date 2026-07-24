@@ -34,13 +34,20 @@ Then load the extension in Chrome:
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Run Vitest unit tests |
 
-## Current status — M0 (Skeleton)
+## Current status — M1 (API core)
 
+**M0 — Skeleton** ✅
 - MV3 scaffold, side panel opens on icon click.
 - Content script detects **table + sys_id** from the URL on **classic UI**, **Next Experience / Polaris**, and **workspace** routes, with a `g_form` / `g_ck` MAIN-world bridge fallback.
-- Context parser is unit-tested (`src/core/context.test.ts`).
+- Context parser unit-tested (`src/core/context.test.ts`).
 
-Next: **M1** — ServiceNow REST client (session auth) + Condition Tester.
+**M1 — API core** ✅
+- ServiceNow REST client in the service worker (`src/background/api.ts`): Table API, Aggregate/stats count, single record, `sys_dictionary` schema. Session-cookie auth via `credentials:'include'` + `X-UserToken` (g_ck) when available.
+- Pure URL builders + cell helpers, unit-tested (`src/core/api.test.ts`).
+- **Condition Tester** end-to-end: encoded query → match count + sample rows.
+- **Table schema** loader (sys_dictionary → field list).
+
+Next: **M2** — Script Tester Layer 1 (AI-free static anti-pattern lints + intent input).
 
 ## Layout
 

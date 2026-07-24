@@ -34,12 +34,32 @@
         <button class="btn" id="refresh-btn" type="button">Refresh</button>
       </section>
 
-      <section class="card muted">
-        <h2 class="card-title">Next</h2>
-        <p class="hint">
-          M0 skeleton. Once context is detected, M1 wires the ServiceNow REST
-          client and the Condition Tester.
-        </p>
+      <section class="card" id="condition-card">
+        <h2 class="card-title">Condition Tester</h2>
+        <p class="hint" id="cond-table-hint">Detect a table first.</p>
+        <label class="field-label" for="cond-query">Encoded query</label>
+        <textarea
+          id="cond-query"
+          class="query-input"
+          rows="2"
+          placeholder="active=true^priority=1  (leave blank to match all)"
+        ></textarea>
+        <div class="btn-row">
+          <button class="btn" id="cond-run" type="button" disabled>Run condition</button>
+          <span class="count-badge" id="cond-count" hidden></span>
+        </div>
+        <div class="results" id="cond-results"></div>
+      </section>
+
+      <section class="card muted" id="schema-card">
+        <h2 class="card-title">Table schema</h2>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="schema-load" type="button" disabled>
+            Load fields
+          </button>
+          <span class="count-badge" id="schema-count" hidden></span>
+        </div>
+        <div class="results" id="schema-results"></div>
       </section>
     </main>
 

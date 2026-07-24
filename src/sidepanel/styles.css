@@ -160,3 +160,125 @@ body {
 .error {
   color: #b4232a;
 }
+
+/* Condition Tester + schema */
+.field-label {
+  display: block;
+  margin: 6px 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.query-input {
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface-alt);
+}
+
+.query-input:focus {
+  outline: none;
+  border-color: var(--mfec-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 162, 233, 0.15);
+}
+
+.btn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.btn:disabled {
+  background: #b9c2d6;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--mfec-blue-dark);
+  border: 1px solid var(--mfec-blue-dark);
+}
+
+.btn-ghost:hover {
+  background: rgba(0, 49, 180, 0.06);
+}
+
+.count-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mfec-blue-dark);
+}
+
+.results {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.result-row .label {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-row .sysid {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  color: var(--ink-soft);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.schema-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.schema-row .col {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+
+.schema-row .type {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.schema-row .lbl {
+  grid-column: 1 / -1;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.empty {
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 6px 0;
+}

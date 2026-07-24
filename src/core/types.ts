@@ -39,3 +39,4 @@ export interface GFormSnapshot {
 export type RuntimeMessage =
   | { kind: 'sncat:get-context' }
   | { kind: 'sncat:context'; context: PageContext | null }
+  | { kind: 'sncat:api'; request: import('./api').ApiRequest }
