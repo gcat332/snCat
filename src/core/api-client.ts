@@ -116,6 +116,16 @@ export function createRecord(
   return call({ op: 'create', host, table, fields })
 }
 
+/** Layer 3 WRITE — updates a record's fields (prod-guarded). */
+export function updateRecord(
+  host: string,
+  table: string,
+  sysId: string,
+  fields: Record<string, string>,
+): Promise<ApiResult<Record<string, unknown>>> {
+  return call({ op: 'update', host, table, sysId, fields })
+}
+
 /** Layer 3 WRITE — deletes a record (prod-guarded in the background). */
 export function deleteRecord(
   host: string,
@@ -123,4 +133,9 @@ export function deleteRecord(
   sysId: string,
 ): Promise<ApiResult<void>> {
   return call({ op: 'delete', host, table, sysId })
+}
+
+/** Read-only raw text GET (e.g. record unload XML). */
+export function getText(host: string, url: string): Promise<ApiResult<string>> {
+  return call({ op: 'text', host, url })
 }

@@ -35,6 +35,12 @@
             <dd id="ctx-status">Detecting…</dd>
           </dl>
           <button class="btn" id="refresh-btn" type="button">Refresh</button>
+          <div class="btn-row" id="xml-row" hidden>
+            <button class="btn btn-ghost" id="xml-save" type="button">Save XML</button>
+            <button class="btn btn-ghost" id="xml-paste" type="button" disabled>Paste XML</button>
+            <button class="btn btn-ghost" id="xml-view" type="button" hidden>View values</button>
+          </div>
+          <div class="results" id="xml-out"></div>
         </section>
 
         <section class="card" id="condition-card">
@@ -157,6 +163,7 @@
                 <button class="tool-btn" id="optimize-format" type="button">⧉ Format</button>
                 <button class="tool-btn" id="optimize-copy" type="button">⧉ Copy</button>
                 <button class="tool-btn" id="optimize-use" type="button">↥ Use</button>
+                <button class="tool-btn accent" id="optimize-save" type="button">💾 Save to record</button>
               </span>
             </div>
             <div class="cm-host" id="optimize-editor"></div>

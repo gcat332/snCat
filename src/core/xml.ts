@@ -1,0 +1,56 @@
+/**
+ * Parse ServiceNow record unload XML (from `<table>.do?sys_id=..&XML`) into a
+ * field map (F3 XML Mover). Regex-based (fields are XML-escaped text, no nested
+ * same-tag elements) so it is pure and unit-testable without a DOM.
+ */
+export interface ParsedRecord {
+  table: string
+  fields: Record<string, string>
+}
+
+/** System-managed fields that should not be re-sent when importing a copy. */
+export const SYSTEM_FIELDS = new Set([
+  'sys_id',
+  'sys_created_on',
+  'sys_created_by',
+  'sys_updated_on',
+  'sys_updated_by',
+  'sys_mod_count',
+  'sys_tags',
+])
+
+function unescapeXml(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCharCode(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&amp;/g, '&')
+}
+
+/** Extract the record's fields from its unload XML for the given table. */
+export function parseUnloadXml(xml: string, table: string): ParsedRecord | null {
+  const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const block = xml.match(new RegExp(`<${esc}\\b[^>]*>([\\s\\S]*?)</${esc}>`, 'i'))
+  const inner = block ? block[1] : null
+  if (!inner) return null
+
+  const fields: Record<string, string> = {}
+  const fieldRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g
+  let m: RegExpExecArray | null
+  while ((m = fieldRe.exec(inner))) {
+    fields[m[1]] = unescapeXml(m[2])
+  }
+  return { table, fields }
+}
+
+/** Drop system-managed fields so an import creates a fresh record safely. */
+export function importableFields(fields: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(fields)) {
+    if (!SYSTEM_FIELDS.has(k)) out[k] = v
+  }
+  return out
+}

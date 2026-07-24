@@ -6,7 +6,7 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
@@ -14,8 +14,11 @@ import {
   deleteRecord,
   getDictionary,
   getRecord,
+  getText,
   queryRecords,
+  updateRecord,
 } from '@core/api-client'
+import { importableFields, parseUnloadXml } from '@core/xml'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
@@ -103,6 +106,117 @@ function renderStatus(text: string, cls = 'detecting') {
   dd.className = cls
   dd.textContent = text
   gridEl.append(dt, dd)
+}
+
+/* ---------- XML mover (F3) ---------- */
+
+const xmlRow = el('xml-row')
+const xmlSave = el<HTMLButtonElement>('xml-save')
+const xmlPaste = el<HTMLButtonElement>('xml-paste')
+const xmlView = el<HTMLButtonElement>('xml-view')
+const xmlOut = el('xml-out')
+
+interface XmlClip {
+  host: string
+  table: string
+  sysId: string
+  xml: string
+  savedAt: string
+}
+
+async function refreshXmlControls() {
+  const has = !!(current?.table && current.sysId)
+  xmlRow.hidden = !has
+  xmlView.hidden = !(has && current?.view === 'form')
+  const store = await chrome.storage.local.get('xmlClip')
+  const clip = store['xmlClip'] as XmlClip | undefined
+  xmlPaste.disabled = !clip
+  xmlPaste.title = clip ? `Import saved ${clip.table} record from ${clip.host}` : 'Save a record XML first'
+}
+
+async function fetchRecordXml(): Promise<string | null> {
+  if (!current?.table || !current.sysId) return null
+  const res = await getText(current.host, buildRecordXmlUrl(current.host, current.table, current.sysId))
+  if (!res.ok) {
+    xmlOut.replaceChildren(elText('div', 'error', res.error))
+    return null
+  }
+  return res.data
+}
+
+async function saveXml() {
+  xmlSave.disabled = true
+  xmlOut.replaceChildren(elText('div', 'empty', 'Exporting record XML…'))
+  const xml = await fetchRecordXml()
+  xmlSave.disabled = false
+  if (!xml || !current) return
+  const clip: XmlClip = {
+    host: current.host,
+    table: current.table!,
+    sysId: current.sysId!,
+    xml,
+    savedAt: new Date().toISOString(),
+  }
+  await chrome.storage.local.set({ xmlClip: clip })
+  await refreshXmlControls()
+  xmlOut.replaceChildren(
+    elText('div', 'ok-banner', `✓ Saved ${clip.table} XML (${(xml.length / 1024).toFixed(1)} KB). Use “Paste XML” on another instance to import.`),
+  )
+}
+
+async function pasteXml() {
+  const store = await chrome.storage.local.get('xmlClip')
+  const clip = store['xmlClip'] as XmlClip | undefined
+  if (!clip || !current) return
+  const parsed = parseUnloadXml(clip.xml, clip.table)
+  if (!parsed) {
+    xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the saved XML.'))
+    return
+  }
+  const fields = importableFields(parsed.fields)
+  if (
+    !confirm(
+      `Import a "${clip.table}" record into ${current.host}?\n\n${Object.keys(fields).length} fields will be created as a NEW record (system fields dropped).`,
+    )
+  ) {
+    return
+  }
+  xmlPaste.disabled = true
+  xmlOut.replaceChildren(elText('div', 'empty', 'Importing…'))
+  const res = await createRecord(current.host, clip.table, fields)
+  xmlPaste.disabled = false
+  if (!res.ok) {
+    xmlOut.replaceChildren(elText('div', 'error', res.error))
+    return
+  }
+  const newId = cellValue(res.data['sys_id'])
+  xmlOut.replaceChildren(elText('div', 'ok-banner', `✓ Imported as ${clip.table} ${newId.slice(0, 8)}…`))
+}
+
+async function viewXmlValues() {
+  xmlOut.replaceChildren(elText('div', 'empty', 'Loading XML values…'))
+  const xml = await fetchRecordXml()
+  if (!xml || !current?.table) return
+  const parsed = parseUnloadXml(xml, current.table)
+  if (!parsed) {
+    xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the record XML.'))
+    return
+  }
+  const entries = Object.entries(parsed.fields).filter(([, v]) => v !== '')
+  xmlOut.replaceChildren()
+  xmlOut.append(elText('div', 'chk-group-title', `${entries.length} non-empty fields`))
+  for (const [k, v] of entries) {
+    const r = document.createElement('div')
+    r.className = 'schema-row2'
+    const name = document.createElement('button')
+    name.type = 'button'
+    name.className = 'col'
+    name.textContent = k
+    name.title = 'Click to copy field name'
+    name.addEventListener('click', () => void copyText(k, name))
+    r.append(name, elText('span', 'lbl', v.length > 120 ? v.slice(0, 120) + '…' : v))
+    xmlOut.append(r)
+  }
 }
 
 /* ---------- Condition Tester + schema (M1) ---------- */
@@ -420,6 +534,10 @@ const optimizeEd = createCodeEditor(el('optimize-editor'))
 const optimizeFormat = el<HTMLButtonElement>('optimize-format')
 const optimizeCopy = el<HTMLButtonElement>('optimize-copy')
 const optimizeUse = el<HTMLButtonElement>('optimize-use')
+const optimizeSave = el<HTMLButtonElement>('optimize-save')
+
+/** The script record currently loaded into the tester (for "Save to record"). */
+let loadedScriptRecord: { host: string; table: string; sysId: string; scriptField: string } | null = null
 const testerSection = el('tester-section')
 const testerEd = createCodeEditor(el('tester-editor'))
 const testerFormat = el<HTMLButtonElement>('tester-format')
@@ -464,6 +582,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
     return
   }
   const rec = res.data
+  loadedScriptRecord = { host, table: scriptTable, sysId, scriptField: info.scriptField }
   scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
   if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
@@ -621,6 +740,28 @@ async function javaReview() {
     testerSection.hidden = false // Tester script shown automatically (point 4)
     testerSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
+}
+
+/** Write the optimized script back over the source record (prod-guarded). */
+async function saveOptimizedToRecord() {
+  if (!loadedScriptRecord) {
+    showToast('Load a script from a record first (picker or open the record)')
+    return
+  }
+  const { host, table, sysId, scriptField } = loadedScriptRecord
+  const code = optimizeEd.getValue()
+  if (!code.trim()) return
+  if (!confirm(`Overwrite the ${table} record's script with the optimized version on ${host}?`)) return
+
+  optimizeSave.disabled = true
+  const res = await updateRecord(host, table, sysId, { [scriptField]: code })
+  optimizeSave.disabled = false
+  if (!res.ok) {
+    showToast(`Save failed: ${res.error.slice(0, 60)}`)
+    return
+  }
+  scriptEd.setValue(code)
+  showToast('Saved optimized script to the record ✓')
 }
 
 async function formatEditor(ed: { getValue: () => string; setValue: (v: string) => void }, btn: HTMLButtonElement) {
@@ -1243,6 +1384,7 @@ async function detect() {
     pickerTable.value = current.table
   }
   updateProdGuard()
+  void refreshXmlControls()
   void maybeAutoLoadScript()
 }
 
@@ -1265,6 +1407,10 @@ optimizeUse.addEventListener('click', () => {
   scriptEd.setValue(optimizeEd.getValue())
   showToast('Optimized script moved into the editor')
 })
+optimizeSave.addEventListener('click', saveOptimizedToRecord)
+xmlSave.addEventListener('click', saveXml)
+xmlPaste.addEventListener('click', pasteXml)
+xmlView.addEventListener('click', viewXmlValues)
 testerFormat.addEventListener('click', () => formatEditor(testerEd, testerFormat))
 testerCopy.addEventListener('click', () => copyText(testerEd.getValue()))
 testerRun.addEventListener('click', () => {

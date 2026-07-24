@@ -63,10 +63,24 @@ async function apiGet<T>(url: string, deps: RestDeps): Promise<ApiResult<T>> {
   }
 }
 
+async function apiGetText(url: string, deps: RestDeps): Promise<ApiResult<string>> {
+  const headers: Record<string, string> = {}
+  if (deps.token) headers['X-UserToken'] = deps.token
+  let res: Response
+  try {
+    res = await fetch(url, { method: 'GET', credentials: 'same-origin', headers })
+  } catch (err) {
+    return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
+  }
+  if (res.status === 401) return { ok: false, status: 401, error: 'Not authenticated.' }
+  if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` }
+  return { ok: true, data: await res.text() }
+}
+
 async function apiWrite<T>(
   host: string,
   url: string,
-  method: 'POST' | 'DELETE',
+  method: 'POST' | 'DELETE' | 'PATCH',
   deps: RestDeps,
   body?: unknown,
 ): Promise<ApiResult<T>> {
@@ -131,8 +145,18 @@ export async function executeApiRequest(
     }
     case 'create':
       return apiWrite<RecordRow>(req.host, buildCreateUrl(req.host, req.table), 'POST', deps, req.fields)
+    case 'update':
+      return apiWrite<RecordRow>(
+        req.host,
+        buildRecordUrl(req.host, req.table, req.sysId),
+        'PATCH',
+        deps,
+        req.fields,
+      )
     case 'delete':
       return apiWrite<void>(req.host, buildRecordUrl(req.host, req.table, req.sysId), 'DELETE', deps)
+    case 'text':
+      return apiGetText(req.url, deps)
     default: {
       const _exhaustive: never = req
       return { ok: false, status: 0, error: `Unknown op: ${JSON.stringify(_exhaustive)}` }

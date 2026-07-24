@@ -57,9 +57,12 @@ export type ApiRequest =
   | { op: 'count'; host: string; table: string; query?: string }
   | { op: 'record'; host: string; table: string; sysId: string; fields?: string[] }
   | { op: 'dictionary'; host: string; table: string }
-  // Layer 3 WRITES — gated by the prod guard in the background before any fetch.
+  // Layer 3 WRITES — gated by the prod guard before any fetch.
   | { op: 'create'; host: string; table: string; fields: Record<string, string> }
+  | { op: 'update'; host: string; table: string; sysId: string; fields: Record<string, string> }
   | { op: 'delete'; host: string; table: string; sysId: string }
+  // Raw text GET (e.g. record unload XML) — read-only, not JSON.
+  | { op: 'text'; host: string; url: string }
 
 const API_BASE = '/api/now'
 
@@ -95,6 +98,11 @@ export function buildRecordUrl(
   params.set('sysparm_display_value', 'all')
   params.set('sysparm_exclude_reference_link', 'true')
   return `${origin(host)}${API_BASE}/table/${encodeURIComponent(table)}/${encodeURIComponent(sysId)}?${params.toString()}`
+}
+
+/** Build the classic record unload-XML URL (e.g. incident.do?sys_id=..&XML). */
+export function buildRecordXmlUrl(host: string, table: string, sysId: string): string {
+  return `${origin(host)}/${encodeURIComponent(table)}.do?sys_id=${encodeURIComponent(sysId)}&XML`
 }
 
 /** Build the Table API collection URL (for create/POST). */
