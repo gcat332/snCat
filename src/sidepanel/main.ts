@@ -1478,14 +1478,9 @@ async function createTestRecord() {
   step(`Creating a ${table} record on ${current.host} (scope ${scopeLabel()})…`)
   const t0 = Date.now()
   // Create via a background insert so it runs in the chosen scope + update set
-  // (Table API 403s on scoped-app tables).
-  const dumpFields = [
-    ...new Set([
-      ...Object.keys(fields),
-      'number', 'state', 'work_notes', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'approval',
-    ]),
-  ]
-  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields, dumpFields), writeTargetOpts())
+  // (Table API 403s on scoped-app tables). Dumps ALL fields + a default record
+  // so we can show exactly what the Business Rules changed.
+  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields), writeTargetOpts())
   if (!res.ok) {
     step(`✗ Create failed (HTTP ${res.status}): ${res.error}`, 'err')
     l3Create.disabled = false
@@ -1493,7 +1488,14 @@ async function createTestRecord() {
     return
   }
   const out = extractBgOutput(res.data)
-  const result = parseSnjavaResult(out)
+  if (/snJava:aborted/.test(out)) {
+    step('⛔ insert() returned nothing — a "before" Business Rule aborted the insert.', 'err')
+    l3Create.disabled = false
+    updateGuard()
+    return
+  }
+  const result = parseSnjava(out, 'snJava:result ')
+  const defaults = parseSnjava(out, 'snJava:defaults ') ?? {}
   if (!result?.sys_id) {
     step(`✗ Insert did not report a sys_id. Output: ${out.slice(0, 200)}`, 'err')
     l3Create.disabled = false
@@ -1502,14 +1504,14 @@ async function createTestRecord() {
   }
   l3Created = { table, sysId: result.sys_id }
   step(`✓ Created ${result.sys_id.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
-  renderL3Diff(fields, result)
+  renderL3Diff(fields, result, defaults)
   step('Done. Delete the test record when finished.')
   l3Create.disabled = false
   updateGuard()
 }
 
-/** Background insert that runs in-scope and prints the resulting field values. */
-function buildGuardedInsertScript(table: string, fields: Record<string, string>, dump: string[]): string {
+/** Background insert (in scope) that dumps ALL fields after insert + defaults. */
+function buildGuardedInsertScript(table: string, fields: Record<string, string>): string {
   const sets = Object.entries(fields)
     .map(([k, v]) => `gr.setValue(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
     .join('\n  ')
@@ -1518,19 +1520,25 @@ function buildGuardedInsertScript(table: string, fields: Record<string, string>,
     `gr.initialize();`,
     `  ${sets}`,
     `var id = gr.insert();`,
-    `if (id) {`,
+    `if (!id) { gs.error('snJava:aborted'); }`,
+    `else {`,
     `  gr.get(id);`,
-    `  var fs = ${JSON.stringify(dump)}; var out = {};`,
-    `  for (var i = 0; i < fs.length; i++) { var v = gr.getValue(fs[i]); out[fs[i]] = (v === null ? '' : '' + v); }`,
+    `  var def = new GlideRecord(${JSON.stringify(table)}); def.initialize();`,
+    `  var fs = gr.getFields(); var out = {}; var defs = {};`,
+    `  for (var i = 0; i < fs.size(); i++) {`,
+    `    var nm = '' + fs.get(i).getName();`,
+    `    var v = gr.getValue(nm); out[nm] = (v === null ? '' : '' + v);`,
+    `    var d = def.getValue(nm); defs[nm] = (d === null ? '' : '' + d);`,
+    `  }`,
     `  out.sys_id = id;`,
     `  gs.info('snJava:result ' + JSON.stringify(out));`,
-    `} else { gs.error('snJava:insert failed'); }`,
+    `  gs.info('snJava:defaults ' + JSON.stringify(defs));`,
+    `}`,
   ].join('\n')
 }
 
-/** Parse the "snJava:result {json}" line from a background-script output. */
-function parseSnjavaResult(output: string): Record<string, string> | null {
-  const marker = 'snJava:result '
+/** Parse a "marker {json}" line from a background-script output. */
+function parseSnjava(output: string, marker: string): Record<string, string> | null {
   const i = output.indexOf(marker)
   if (i === -1) return null
   const line = output.slice(i + marker.length).split('\n')[0].trim()
@@ -1541,44 +1549,53 @@ function parseSnjavaResult(output: string): Record<string, string> | null {
   }
 }
 
-/** Show before (sent) → after (engine result): all tested fields + engine-populated ones. */
-function renderL3Diff(seed: Record<string, string>, rec: Record<string, unknown>) {
-  const rows: { field: string; before: string; after: string; changed: boolean }[] = []
-  // Every field we sent (tested), whether or not the engine changed it.
-  for (const [k, v] of Object.entries(seed)) {
-    const after = cellValue(rec[k])
-    rows.push({ field: k, before: v, after, changed: v !== after })
-  }
-  // Engine-populated fields we didn't send.
-  const engineFields = ['number', 'state', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'work_notes', 'approval']
-  for (const f of engineFields) {
-    if (!(f in seed) && f in rec && cellValue(rec[f])) {
-      rows.push({ field: f, before: '(unset)', after: cellValue(rec[f]), changed: true })
-    }
-  }
+/** System-managed fields excluded from the "set by Business Rules" view. */
+const L3_NOISE = new Set([
+  'sys_id', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'sys_updated_by',
+  'sys_mod_count', 'sys_domain', 'sys_domain_path', 'sys_tags', 'sys_class_name',
+])
 
-  const changedCount = rows.filter((r) => r.changed).length
+/**
+ * Before → after view: tested (sent) fields, then everything the engine set that
+ * we did NOT send and that differs from the table default (isolates BR effects).
+ */
+function renderL3Diff(seed: Record<string, string>, result: Record<string, string>, defaults: Record<string, string>) {
   const box = document.createElement('div')
   box.className = 'sim-after'
-  box.append(elText('div', 'sim-after-title', `${changedCount} of ${rows.length} field(s) changed by the engine`))
-  if (rows.length === 0) box.append(elText('div', 'empty', 'No fields to compare.'))
 
-  for (const r of rows) {
-    const row = document.createElement('div')
-    row.className = `diff-kv ${r.changed ? '' : 'same'}`
-    row.append(elText('span', 'dk-field', r.field))
-    if (r.changed) {
-      row.append(
-        elText('span', 'dk-before', r.before || '(empty)'),
-        elText('span', 'dk-arrow', '→'),
-        elText('span', 'dk-after', r.after || '(empty)'),
-      )
-    } else {
-      row.append(elText('span', 'dk-same', `= ${r.after || '(empty)'}`))
-    }
-    box.append(row)
+  const testedChanged = Object.keys(seed).filter((k) => seed[k] !== (result[k] ?? '')).length
+  box.append(elText('div', 'sim-after-title', `Tested fields (${testedChanged} changed by the engine)`))
+  for (const [k, before] of Object.entries(seed)) {
+    const after = result[k] ?? ''
+    box.append(diffRow(k, before, after, before !== after))
+  }
+  if (Object.keys(seed).length === 0) box.append(elText('div', 'empty', 'No fields were sent.'))
+
+  // Fields the engine set that we didn't send and that differ from the default.
+  const engineSet = Object.keys(result).filter(
+    (k) => !(k in seed) && !L3_NOISE.has(k) && (result[k] ?? '') !== (defaults[k] ?? '') && (result[k] ?? '') !== '',
+  )
+  if (engineSet.length) {
+    box.append(elText('div', 'sim-after-title', `Set by Business Rules / defaults (${engineSet.length})`))
+    for (const k of engineSet) box.append(diffRow(k, defaults[k] ?? '(default)', result[k], true))
   }
   l3Results.append(box)
+}
+
+function diffRow(field: string, before: string, after: string, changed: boolean): HTMLElement {
+  const row = document.createElement('div')
+  row.className = `diff-kv ${changed ? '' : 'same'}`
+  row.append(elText('span', 'dk-field', field))
+  if (changed) {
+    row.append(
+      elText('span', 'dk-before', before || '(empty)'),
+      elText('span', 'dk-arrow', '→'),
+      elText('span', 'dk-after', after || '(empty)'),
+    )
+  } else {
+    row.append(elText('span', 'dk-same', `= ${after || '(empty)'}`))
+  }
+  return row
 }
 
 async function deleteTestRecord() {
