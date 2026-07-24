@@ -233,7 +233,9 @@ export function buildPlanPrompt(requirement: string, ctx: PlanContext): { system
     requirement,
     '',
     ctx.table ? `Current table: ${ctx.table}` : 'No specific table.',
-    ctx.fields?.length ? `Existing fields (sample): ${ctx.fields.slice(0, 60).join(', ')}` : '',
+    ctx.fields?.length
+      ? `EXISTING fields on ${ctx.table} — do NOT propose creating any of these; reuse them and only add genuinely new fields:\n${ctx.fields.slice(0, 400).join(', ')}`
+      : '',
     '',
     'Return a JSON object with:',
     '- "summary": one sentence describing the approach.',

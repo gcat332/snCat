@@ -79,7 +79,6 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     ? [
         { key: 'Instance', value: instance },
         { key: 'Table', value: table },
-        { key: 'Generated from', value: `${rootLabel} (${rootFields['sys_id'] ?? ''})` },
         { key: 'Artifacts documented', value: String(artifacts.length) },
       ]
     : [

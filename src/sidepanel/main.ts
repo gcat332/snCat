@@ -1831,8 +1831,18 @@ function initGenerate() {
       genStatus.textContent = 'Describe what you need first.'
       return
     }
-    // Include the current table's field names for grounding, if loaded.
-    const fields = schemaTable === current?.table ? schemaFields.map((d) => cellValue(d.element as unknown)) : undefined
+    // Always send the table's existing field names so the AI doesn't propose
+    // fields that already exist. Fetch the dictionary if not already loaded.
+    let fields: string[] | undefined
+    if (current?.table) {
+      if (schemaTable === current.table && schemaFields.length) {
+        fields = schemaFields.map((d) => cellValue(d.element as unknown))
+      } else {
+        genStatus.textContent = 'Reading the table schema…'
+        const dict = await getDictionary(current.host, current.table)
+        if (dict.ok) fields = dict.data.map((d) => cellValue(d.element as unknown))
+      }
+    }
     const started = await startLlmJob('generate', {
       requirement,
       table: current?.table ?? undefined,
