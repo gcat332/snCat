@@ -142,13 +142,15 @@ extension/
 5. **M4 — F1 MVP:** graph walker (depth 2, Catalog Item + Business Rule resolvers first), artifact checklist, AI spec composition, reveal.js output with MFEC theme.
 6. **M5 — Tester L3:** client-script live capture; BR test-record flow or ATF generation; prod guard.
 
-## 7. Open questions (carry into Claude Code)
+## 7. Resolved decisions (2026-07-24, Claude Code session)
 
-1. Sandbox scope: global-scope Glide API first, or also scoped-app (`GlideRecordSecure`, scoped `gs`) from day one? *(Lean: global first, design mocks with scope in mind.)*
-2. LLM endpoint: Anthropic API direct with org key, or an internal MFEC proxy? Affects redaction requirements.
-3. Which instance(s) to develop against — is there a stable sub-prod with representative ITSM data?
-4. F1 artifact resolvers: which record types to prioritize after Catalog Item + Business Rule? (Flow, Script Include, ACL, Transform Map?)
-5. Does reveal.js output need PDF export (reveal print CSS) as well?
+The section-7 open questions were resolved as follows:
+
+1. **Sandbox scope — Global + scoped from day one.** Glide mocks support both global-scope (`current`, `previous`, `gs`, `GlideRecord`, `g_form`, `g_user`) and scoped-app semantics (`GlideRecordSecure`, scoped `gs`, ACL-aware reads) from the start.
+2. **LLM endpoint — build LLM-free first; LLM is a pluggable enhancement layer.** The `llm/` module is a provider interface whose **default provider is `none` (deterministic)**. F1 spec composition uses a **template** that structures fetched artifacts into the skeleton with no prose generation; Layer 1 ships **rule-based anti-pattern lints only**. The LLM-powered parts (Layer 1 "logic vs. intent" review, F1 prose polish) are optional and added later. Consequence: no customer script/record content leaves the instance during early dev, so the redaction + proxy-vs-direct-API decision is **deferred, not blocking**. Reversible: picking proxy vs. direct later = one provider implementation behind the existing interface.
+3. **Dev instance — an MFEC sub-prod with representative ITSM data** (hostname TBD; feeds prod-guard sub-prod pattern config in decision #5, section 2).
+4. **F1 resolver priority (after Catalog Item + Business Rule) — Script Include, ACL, Transform Map.** Flow/Workflow deprioritized (build after these three).
+5. **reveal.js PDF export — yes.** Include reveal.js print/PDF CSS in the theme so the self-contained HTML exports cleanly to PDF (print-to-PDF).
 
 ## 8. Reference notes
 
