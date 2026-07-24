@@ -73,6 +73,9 @@ async function apiGetText(url: string, deps: RestDeps): Promise<ApiResult<string
     return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
   }
   if (res.status === 401) return { ok: false, status: 401, error: 'Not authenticated.' }
+  if (res.redirected && /login|sso/i.test(res.url)) {
+    return { ok: false, status: 401, error: 'Redirected to login — session expired.' }
+  }
   if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` }
   return { ok: true, data: await res.text() }
 }
@@ -160,6 +163,9 @@ async function apiBgRun(
     })
   } catch (err) {
     return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
+  }
+  if (res.redirected && /login|sso/i.test(res.url)) {
+    return { ok: false, status: 401, error: 'Redirected to login — session expired.' }
   }
   if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` }
   return { ok: true, data: await res.text() }
