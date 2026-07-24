@@ -860,7 +860,7 @@ const reviewSpinner = el('review-spinner')
 const aiStatus = el('ai-status')
 const lintSummary = el('lint-summary')
 const lintResults = el('lint-results')
-const simCard = el('sim-card')
+const simCard = el('runner-card')
 
 // AI review outputs
 const optimizeSection = el('optimize-section')
