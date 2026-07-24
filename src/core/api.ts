@@ -108,6 +108,19 @@ export function buildRecordXmlUrl(host: string, table: string, sysId: string): s
   return `${origin(host)}/${encodeURIComponent(table)}.do?sys_id=${encodeURIComponent(sysId)}&XML`
 }
 
+/**
+ * Build the classic list unload-XML URL, exporting every record that matches
+ * the query (e.g. incident_list.do?sysparm_query=active=true&XML). This is the
+ * URL a "Export > XML" from a list view fetches. An empty query exports all.
+ */
+export function buildListXmlUrl(host: string, table: string, query = '', limit?: number): string {
+  const params = new URLSearchParams()
+  params.set('sysparm_query', query)
+  params.set('XML', '')
+  if (limit && limit > 0) params.set('sysparm_record_count', String(limit))
+  return `${origin(host)}/${encodeURIComponent(table)}_list.do?${params.toString()}`
+}
+
 /** Build the Table API collection URL (for create/POST). */
 export function buildCreateUrl(host: string, table: string): string {
   const params = new URLSearchParams()

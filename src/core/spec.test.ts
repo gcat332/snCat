@@ -11,7 +11,7 @@ function headings(doc: ReturnType<typeof composeSpec>): string[] {
 }
 
 describe('composeSpec', () => {
-  it('always emits the five skeleton sections in order', () => {
+  it('always emits the skeleton sections in order', () => {
     const doc = composeSpec({
       instance: 'x.service-now.com',
       rootTable: 'sys_script',
@@ -25,6 +25,7 @@ describe('composeSpec', () => {
       'Logic',
       'Integration Points',
       'Security / ACL',
+      'REST API (Table API)',
     ])
   })
 

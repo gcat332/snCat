@@ -100,8 +100,94 @@ export function composeSpec(input: ComposeInput): SpecDocument {
       logicSection(rootFields, artifacts),
       integrationSection(artifacts),
       securitySection(artifacts),
+      apiSpecSection(instance, table, schema),
     ],
   }
+}
+
+/**
+ * REST API reference for the primary table, using ServiceNow's standard Table
+ * API (/api/now/table/{table}). Documents the CRUD endpoints, common query
+ * parameters, and a sample JSON payload derived from the table schema.
+ */
+function apiSpecSection(instance: string, table: string, schema?: SpecSchemaField[]): SpecSection {
+  const host = instance.startsWith('http') ? instance.replace(/\/+$/, '') : `https://${instance}`
+  const base = `${host}/api/now/table/${table}`
+  const blocks: SpecBlock[] = [
+    {
+      kind: 'paragraph',
+      text: `The "${table}" table is exposed through the ServiceNow REST Table API. All requests require authentication (Basic auth or an OAuth 2.0 bearer token) and honor the caller's ACLs. Set the headers "Accept: application/json" and, for writes, "Content-Type: application/json".`,
+    },
+    { kind: 'subheading', level: 2, text: 'Endpoints' },
+    {
+      kind: 'table',
+      columns: ['Method', 'Path', 'Purpose'],
+      rows: [
+        ['GET', `/api/now/table/${table}`, 'List / query records'],
+        ['GET', `/api/now/table/${table}/{sys_id}`, 'Retrieve a single record'],
+        ['POST', `/api/now/table/${table}`, 'Create a record'],
+        ['PUT', `/api/now/table/${table}/{sys_id}`, 'Replace a record'],
+        ['PATCH', `/api/now/table/${table}/{sys_id}`, 'Update selected fields'],
+        ['DELETE', `/api/now/table/${table}/{sys_id}`, 'Delete a record'],
+      ],
+    },
+    { kind: 'subheading', level: 2, text: 'Common query parameters' },
+    {
+      kind: 'table',
+      columns: ['Parameter', 'Description', 'Example'],
+      rows: [
+        ['sysparm_query', 'Encoded query string (same syntax as a list filter).', 'active=true^ORDERBYnumber'],
+        ['sysparm_fields', 'Comma-separated list of fields to return.', 'sys_id,number,short_description'],
+        ['sysparm_display_value', 'Return display values (true), raw values (false), or both.', 'all'],
+        ['sysparm_limit', 'Maximum number of records to return.', '100'],
+        ['sysparm_offset', 'Row offset for pagination.', '0'],
+        ['sysparm_exclude_reference_link', 'Omit reference link metadata.', 'true'],
+      ],
+    },
+    { kind: 'subheading', level: 2, text: 'Example — list records' },
+    {
+      kind: 'code',
+      lang: 'javascript',
+      caption: 'GET (query)',
+      code: `curl -s -u "USER:PASS" \\
+  -H "Accept: application/json" \\
+  "${base}?sysparm_limit=10&sysparm_display_value=all"`,
+    },
+  ]
+
+  // Sample create payload from the schema (skip read-only system columns).
+  if (schema && schema.length) {
+    const SKIP = new Set([
+      'sys_id', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'sys_updated_by',
+      'sys_mod_count', 'sys_tags', 'sys_class_name', 'sys_domain', 'sys_domain_path',
+    ])
+    const sample = schema
+      .filter((f) => f.element && !SKIP.has(f.element))
+      .slice(0, 12)
+      .map((f) => `  ${JSON.stringify(f.element)}: ${JSON.stringify(sampleValue(f))}`)
+      .join(',\n')
+    blocks.push({ kind: 'subheading', level: 2, text: 'Example — create a record' })
+    blocks.push({
+      kind: 'code',
+      lang: 'javascript',
+      caption: `POST ${base}`,
+      code: `// Request body (application/json)\n{\n${sample}\n}`,
+    })
+  }
+
+  return { heading: 'REST API (Table API)', blocks }
+}
+
+/** A placeholder value for a schema field, keyed off its type. */
+function sampleValue(f: SpecSchemaField): string {
+  if (f.defaultValue) return f.defaultValue
+  const t = (f.type || '').toLowerCase()
+  if (f.reference) return '<sys_id of ' + f.reference + '>'
+  if (t.includes('boolean')) return 'true'
+  if (t.includes('integer') || t.includes('decimal') || t.includes('numeric')) return '0'
+  if (t.includes('date') || t.includes('glide_date')) return 'YYYY-MM-DD hh:mm:ss'
+  if (t.includes('choice')) return '<choice value>'
+  return `<${f.label || f.element}>`
 }
 
 function overviewSection(
@@ -206,19 +292,14 @@ function dataModelSection(
   return { heading: 'Data Model', blocks }
 }
 
-const DESCRIPTION_PLACEHOLDER = '— (add a description in ServiceNow)'
-
 /**
  * A detail key/value block. Empty values are dropped, EXCEPT "Description",
- * which is always shown (with a placeholder) so authors can fill it in.
+ * which is always shown (blank when empty) so authors can fill it in.
  */
 function detailBlock(pairs: [string, string | undefined][]): SpecBlock {
   const rows = pairs
     .filter(([key, v]) => key === 'Description' || (v && v.trim()))
-    .map(([key, value]) => ({
-      key,
-      value: value && value.trim() ? value : key === 'Description' ? DESCRIPTION_PLACEHOLDER : '',
-    }))
+    .map(([key, value]) => ({ key, value: value && value.trim() ? value : '' }))
   return { kind: 'keyvalue', rows }
 }
 

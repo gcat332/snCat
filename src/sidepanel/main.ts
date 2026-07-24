@@ -6,7 +6,7 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildListXmlUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
@@ -16,7 +16,7 @@ import {
   queryRecords,
   runBackground,
 } from '@core/api-client'
-import { importableFields, parseUnloadXml } from '@core/xml'
+import { importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
 import { diffStats, lineDiff } from '@core/diff'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
@@ -279,19 +279,47 @@ const xmlOut = el('xml-out')
 interface XmlClip {
   host: string
   table: string
-  sysId: string
+  sysId?: string
   xml: string
+  count: number
   savedAt: string
 }
 
+/** True when the current page is a list view we can export from. */
+function isListView(): boolean {
+  return !!(current?.table && current.view === 'list')
+}
+
+/** The list's active filter, read from the page URL's sysparm_query (if any). */
+function currentListQuery(): string {
+  const url = current?.url ?? ''
+  const m = url.match(/sysparm_query=([^&]*)/i)
+  if (!m) return ''
+  let q = m[1]
+  for (let i = 0; i < 2 && /%[0-9a-f]{2}/i.test(q); i++) {
+    try {
+      q = decodeURIComponent(q)
+    } catch {
+      break
+    }
+  }
+  return q
+}
+
 async function refreshXmlControls() {
-  const has = !!(current?.table && current.sysId)
-  xmlRow.hidden = !has
-  xmlView.hidden = !(has && current?.view === 'form')
+  const formHas = !!(current?.table && current.sysId && current.view === 'form')
+  const listHas = isListView()
+  xmlRow.hidden = !(formHas || listHas)
+  xmlSave.textContent = listHas ? 'Save list XML' : 'Save XML'
+  xmlSave.title = listHas ? 'Export every record in this list as XML' : 'Export this record as XML'
+  xmlView.hidden = !formHas
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   xmlPaste.disabled = !clip
-  xmlPaste.title = clip ? `Import saved ${clip.table} record from ${clip.host}` : 'Save a record XML first'
+  xmlPaste.textContent = clip && clip.count > 1 ? `Paste XML (${clip.count})` : 'Paste XML'
+  xmlPaste.title = clip
+    ? `Import saved ${clip.count} ${clip.table} record(s) from ${clip.host}`
+    : 'Save a record XML first'
 }
 
 async function fetchRecordXml(): Promise<string | null> {
@@ -305,22 +333,44 @@ async function fetchRecordXml(): Promise<string | null> {
 }
 
 async function saveXml() {
+  if (!current?.table) return
   xmlSave.disabled = true
-  xmlOut.replaceChildren(elText('div', 'empty', 'Exporting record XML…'))
-  const xml = await fetchRecordXml()
+  const list = isListView()
+  xmlOut.replaceChildren(elText('div', 'empty', list ? 'Exporting list XML…' : 'Exporting record XML…'))
+
+  let xml: string | null
+  if (list) {
+    const query = currentListQuery()
+    const res = await getText(current.host, buildListXmlUrl(current.host, current.table, query))
+    xml = res.ok ? res.data : (xmlOut.replaceChildren(elText('div', 'error', res.error)), null)
+  } else {
+    xml = await fetchRecordXml()
+  }
   xmlSave.disabled = false
-  if (!xml || !current) return
+  if (!xml) return
+
+  const records = parseUnloadXmlAll(xml, current.table)
+  if (records.length === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'The export contained no records.'))
+    return
+  }
   const clip: XmlClip = {
     host: current.host,
-    table: current.table!,
-    sysId: current.sysId!,
+    table: current.table,
+    sysId: current.sysId ?? undefined,
     xml,
+    count: records.length,
     savedAt: new Date().toISOString(),
   }
   await chrome.storage.local.set({ xmlClip: clip })
   await refreshXmlControls()
+  const noun = records.length === 1 ? 'record' : 'records'
   xmlOut.replaceChildren(
-    elText('div', 'ok-banner', `✓ Saved ${clip.table} XML (${(xml.length / 1024).toFixed(1)} KB). Use “Paste XML” on another instance to import.`),
+    elText(
+      'div',
+      'ok-banner',
+      `✓ Saved ${records.length} ${clip.table} ${noun} (${(xml.length / 1024).toFixed(1)} KB). Use “Paste XML” on any list or form to import.`,
+    ),
   )
 }
 
@@ -328,15 +378,16 @@ async function pasteXml() {
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   if (!clip || !current) return
-  const parsed = parseUnloadXml(clip.xml, clip.table)
-  if (!parsed) {
+  const records = parseUnloadXmlAll(clip.xml, clip.table)
+  if (records.length === 0) {
     xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the saved XML.'))
     return
   }
-  const fields = importableFields(parsed.fields)
+  const fieldsList = records.map((r) => importableFields(r.fields))
+  const noun = fieldsList.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import a "${clip.table}" record into ${current.host}?\n\n${Object.keys(fields).length} fields will be created as a NEW record (system fields dropped), in scope "${scopeLabel()}"${
+      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record (system fields dropped), in scope "${scopeLabel()}"${
         selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
       }.`,
     ))
@@ -344,10 +395,10 @@ async function pasteXml() {
     return
   }
   xmlPaste.disabled = true
-  xmlOut.replaceChildren(elText('div', 'empty', 'Importing via background script…'))
-  // Import via a background insert so it lands in the selected scope + update set
+  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${fieldsList.length} ${noun} via background script…`))
+  // Import via background inserts so they land in the selected scope + update set
   // (Table API writes bypass update-set capture).
-  const bg = buildRecordInsertScript(clip.table, fields)
+  const bg = buildMultiInsertScript(clip.table, fieldsList)
   const res = await runBackground(current.host, bg, writeTargetOpts())
   xmlPaste.disabled = false
   if (!res.ok) {
@@ -355,10 +406,10 @@ async function pasteXml() {
     return
   }
   const out = extractBgOutput(res.data)
-  const m = out.match(/snJava: imported ([0-9a-f]{32})/i)
+  const m = out.match(/snJava: imported (\d+)\/(\d+)/i)
   if (m) {
     xmlOut.replaceChildren(
-      elText('div', 'ok-banner', `✓ Imported as ${clip.table} ${m[1].slice(0, 8)}… (scope ${scopeLabel()})`),
+      elText('div', 'ok-banner', `✓ Imported ${m[1]}/${m[2]} ${clip.table} ${noun} (scope ${scopeLabel()})`),
     )
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 300)}`))
@@ -376,6 +427,22 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
     `  ${sets}`,
     `var id = gr.insert();`,
     `if (id) { gs.info('snJava: imported ' + id); } else { gs.error('snJava: insert failed'); }`,
+  ].join('\n')
+}
+
+/** Background script that inserts many records and reports "imported N/total". */
+function buildMultiInsertScript(table: string, records: Record<string, string>[]): string {
+  return [
+    `var rows = ${JSON.stringify(records)};`,
+    `var ok = 0;`,
+    `for (var i = 0; i < rows.length; i++) {`,
+    `  var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `  gr.initialize();`,
+    `  var row = rows[i];`,
+    `  for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
+    `  if (gr.insert()) ok++;`,
+    `}`,
+    `gs.info('snJava: imported ' + ok + '/' + rows.length);`,
   ].join('\n')
 }
 
@@ -497,6 +564,8 @@ function openConditionList() {
 
 let schemaFields: DictionaryField[] = []
 let schemaTable = ''
+/** Field names known to exist on the current table, used to skip re-creating fields. */
+let genKnownFields = new Set<string>()
 /** Dot-walk prefix built from reference hops, e.g. "assigned_to.manager." */
 let schemaPrefix = ''
 /** Navigation history for the "Back" button (reference drill-down). */
@@ -1633,8 +1702,19 @@ function renderL3Diff(seed: Record<string, string>, result: Record<string, L3Cel
   const box = document.createElement('div')
   box.className = 'sim-after'
   box.append(elText('div', 'sim-after-title', `${changed.length} field(s) changed`))
-  if (changed.length === 0) box.append(elText('div', 'empty', 'No fields changed from the table defaults.'))
+  if (changed.length === 0) {
+    box.append(elText('div', 'empty', 'No fields changed from the table defaults.'))
+    l3Results.append(box)
+    return
+  }
 
+  const search = document.createElement('input')
+  search.type = 'search'
+  search.className = 'schema-search'
+  search.placeholder = 'Filter changed fields…'
+  box.append(search)
+
+  const rows: { el: HTMLElement; hay: string }[] = []
   for (const c of changed) {
     const row = document.createElement('div')
     row.className = 'diff-kv'
@@ -1646,7 +1726,12 @@ function renderL3Diff(seed: Record<string, string>, result: Record<string, L3Cel
       elText('span', 'dk-after', c.after || '(empty)'),
     )
     box.append(row)
+    rows.push({ el: row, hay: `${c.field} ${c.before} ${c.after}`.toLowerCase() })
   }
+  search.addEventListener('input', () => {
+    const f = search.value.trim().toLowerCase()
+    for (const r of rows) r.el.hidden = f !== '' && !r.hay.includes(f)
+  })
   l3Results.append(box)
 }
 
@@ -1812,7 +1897,9 @@ function buildSpecDoc(): SpecDocument | null {
 }
 
 function safeName(): string {
-  return (specRoot?.label || 'design-spec').replace(/[^\w.-]+/g, '_').slice(0, 60)
+  // {module}_specification_doc — module = the table the spec documents.
+  const module = (specPrimaryTable || specRoot?.table || 'design').replace(/[^\w.-]+/g, '_').slice(0, 50)
+  return `${module}_specification_doc`
 }
 
 function download(blob: Blob, filename: string) {
@@ -1912,6 +1999,7 @@ function initGenerate() {
         if (dict.ok) fields = dict.data.map((d) => cellValue(d.element as unknown))
       }
     }
+    genKnownFields = new Set((fields ?? []).map((f) => f.toLowerCase()).filter(Boolean))
     const started = await startLlmJob('generate', {
       requirement,
       table: current?.table ?? undefined,
@@ -1954,6 +2042,20 @@ function applyGenerateJob(entry: LlmJobEntry | undefined) {
   renderPlan(outcome.result.summary, outcome.result.artifacts)
 }
 
+/**
+ * A create-a-field artifact whose target column already exists on the table.
+ * Matches scope-prefixed proposals too (e.g. u_x / x_app_x for an existing "x").
+ */
+function fieldAlreadyExists(a: PlanArtifact): boolean {
+  if (a.action !== 'create' || a.targetTable !== 'sys_dictionary' || !a.fields) return false
+  const el = (a.fields['element'] ?? '').toLowerCase().trim()
+  if (!el) return false
+  for (const k of genKnownFields) {
+    if (el === k || el.endsWith('_' + k) || k.endsWith('_' + el)) return true
+  }
+  return false
+}
+
 function renderPlan(summary: string, artifacts: PlanArtifact[]) {
   genStatus.textContent = summary || `${artifacts.length} artifact(s) proposed.`
   genList.replaceChildren()
@@ -1961,7 +2063,23 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
     genList.append(elText('div', 'empty', 'No artifacts proposed.'))
     return
   }
+
+  // "Create all" acts on creatable artifacts that don't already exist.
+  const creatable = artifacts.filter((a) => a.action === 'create' && a.targetTable && a.fields && !fieldAlreadyExists(a))
+  if (creatable.length > 1) {
+    const bar = document.createElement('div')
+    bar.className = 'btn-row'
+    bar.style.margin = '2px 0 8px'
+    const all = document.createElement('button')
+    all.className = 'btn'
+    all.textContent = `Create all (${creatable.length})`
+    all.addEventListener('click', () => void createAllArtifacts(creatable, all))
+    bar.append(all)
+    genList.append(bar)
+  }
+
   for (const a of artifacts) {
+    const exists = fieldAlreadyExists(a)
     const row = document.createElement('div')
     row.className = 'info-row'
     const name = document.createElement('button')
@@ -1974,10 +2092,41 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
     const meta = document.createElement('span')
     meta.className = 'info-meta'
     meta.append(elText('span', 'ref', a.kind))
-    meta.append(elText('span', 'info-sub', a.action === 'create' ? (a.targetTable ?? 'create') : 'script'))
+    if (exists) {
+      const tag = elText('span', 'info-sub', 'already exists')
+      tag.style.color = 'var(--warn, #b26a00)'
+      meta.append(tag)
+    } else {
+      meta.append(elText('span', 'info-sub', a.action === 'create' ? (a.targetTable ?? 'create') : 'script'))
+    }
     row.append(name, meta)
     genList.append(row)
   }
+}
+
+/** Create several artifacts back-to-back, reporting progress in genStatus. */
+async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) {
+  if (!current) return
+  if (
+    !(await confirmDialog(
+      `Create ${list.length} artifact(s) on ${current.host}?\n\nScope "${scopeLabel()}"${
+        selUpdateSet.value.trim() ? `, update set "${selUpdateSet.value.trim()}"` : ''
+      }.`,
+    ))
+  ) {
+    return
+  }
+  btn.disabled = true
+  let ok = 0
+  for (let i = 0; i < list.length; i++) {
+    genStatus.textContent = `Creating ${i + 1}/${list.length}: ${list[i].title}…`
+    const res = await createArtifactCore(list[i])
+    if (res.ok) ok++
+    else showToast(`Failed: ${list[i].title.slice(0, 40)} — ${res.error?.slice(0, 40) ?? ''}`)
+  }
+  btn.disabled = false
+  genStatus.textContent = `Created ${ok}/${list.length} artifact(s).`
+  showToast(ok === list.length ? `Created all ${ok} ✓` : `Created ${ok}/${list.length}`)
 }
 
 /** Detail modal for one planned artifact, with a create / open action. */
@@ -1992,6 +2141,12 @@ function showArtifact(a: PlanArtifact) {
     elText('span', 'info-sub', a.action === 'create' ? `→ ${a.targetTable ?? '?'}` : 'background script'),
   )
   if (a.notes) box.append(elText('p', 'ai-note', a.notes))
+  const exists = fieldAlreadyExists(a)
+  if (exists) {
+    const w = elText('p', 'ai-note', '⚠ A field with this name already exists on the table — creating it again would duplicate it.')
+    w.style.color = 'var(--warn, #b26a00)'
+    box.append(w)
+  }
 
   const body = document.createElement('div')
   body.className = 'diff-body'
@@ -2020,7 +2175,7 @@ function showArtifact(a: PlanArtifact) {
   const act = document.createElement('button')
   act.className = 'btn'
   if (a.action === 'create') {
-    act.textContent = 'Create in instance'
+    act.textContent = exists ? 'Create anyway' : 'Create in instance'
     act.addEventListener('click', () => void createArtifact(a, act, overlay))
   } else {
     act.textContent = 'Open in Background Scripts'
@@ -2039,6 +2194,16 @@ function showArtifact(a: PlanArtifact) {
   document.body.append(overlay)
 }
 
+/** Insert one planned record via a scope-aware background script. No UI. */
+async function createArtifactCore(a: PlanArtifact): Promise<{ ok: boolean; sysId?: string; error?: string }> {
+  if (!current || !a.targetTable || !a.fields) return { ok: false, error: 'nothing to create' }
+  const bg = buildRecordInsertScript(a.targetTable, a.fields)
+  const res = await runBackground(current.host, bg, writeTargetOpts())
+  if (!res.ok) return { ok: false, error: res.error }
+  const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)
+  return m ? { ok: true, sysId: m[1] } : { ok: false, error: 'no sys_id reported' }
+}
+
 /** Create a planned customization record via a background insert (scope-aware). */
 async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: HTMLElement) {
   if (!current || !a.targetTable || !a.fields) return
@@ -2053,20 +2218,14 @@ async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: 
   }
   btn.disabled = true
   btn.textContent = 'Creating…'
-  const bg = buildRecordInsertScript(a.targetTable, a.fields)
-  const res = await runBackground(current.host, bg, writeTargetOpts())
+  const res = await createArtifactCore(a)
   btn.disabled = false
   btn.textContent = 'Create in instance'
-  if (!res.ok) {
-    showToast(`Create failed: ${res.error.slice(0, 60)}`)
-    return
-  }
-  const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)
-  if (m) {
+  if (res.ok) {
     showToast(`Created ${a.kind} ✓`)
     overlay.remove()
   } else {
-    showToast('Create may have failed — check Background Scripts')
+    showToast(`Create failed: ${(res.error ?? '').slice(0, 60)}`)
   }
 }
 

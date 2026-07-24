@@ -46,6 +46,27 @@ export function parseUnloadXml(xml: string, table: string): ParsedRecord | null 
   return { table, fields }
 }
 
+/**
+ * Extract ALL records of the given table from an unload XML. A list export
+ * (`<table>_list.do?...&XML`) wraps many `<table>` blocks in an `<unload>`
+ * element; a single-record export has exactly one. Works for both.
+ */
+export function parseUnloadXmlAll(xml: string, table: string): ParsedRecord[] {
+  const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const blockRe = new RegExp(`<${esc}\\b[^>]*>([\\s\\S]*?)</${esc}>`, 'gi')
+  const out: ParsedRecord[] = []
+  let block: RegExpExecArray | null
+  while ((block = blockRe.exec(xml))) {
+    const inner = block[1]
+    const fields: Record<string, string> = {}
+    const fieldRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g
+    let m: RegExpExecArray | null
+    while ((m = fieldRe.exec(inner))) fields[m[1]] = unescapeXml(m[2])
+    if (Object.keys(fields).length) out.push({ table, fields })
+  }
+  return out
+}
+
 /** Drop system-managed fields so an import creates a fresh record safely. */
 export function importableFields(fields: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
