@@ -160,6 +160,66 @@ async function callOpenai(cfg: LlmConfig, system: string, user: string): Promise
   return body.choices?.[0]?.message?.content ?? ''
 }
 
+export interface GenerateResult {
+  script: string
+  notes: string[]
+}
+
+/** Prompt to generate a server-side background script from a plain requirement. */
+export function buildGeneratePrompt(requirement: string, table?: string): { system: string; user: string } {
+  const system = [
+    'You are a senior ServiceNow developer.',
+    'You write correct, safe server-side background scripts (run in Scripts - Background) using the Glide API (GlideRecord, gs, GlideAggregate, GlideDateTime).',
+    'Follow best practices: filter GlideRecord queries, guard against large updates, use gs.info() to report progress, avoid hardcoded sys_ids.',
+    'You always reply with a SINGLE valid JSON object and nothing else.',
+  ].join(' ')
+  const user = [
+    'Write a ServiceNow background script for this requirement:',
+    requirement,
+    table ? `Primary table (if relevant): ${table}` : '',
+    '',
+    'Return a JSON object with exactly these keys:',
+    '- "script": the complete background script (server-side, Rhino/ES5-safe).',
+    '- "notes": an array of short strings — assumptions, safety warnings, and what to verify before running in production.',
+    '',
+    'Respond with ONLY the JSON object.',
+  ]
+    .filter(Boolean)
+    .join('\n')
+  return { system, user }
+}
+
+function coerceGenerate(raw: unknown): GenerateResult {
+  const o = (raw ?? {}) as Record<string, unknown>
+  return {
+    script: typeof o.script === 'string' ? o.script : '',
+    notes: Array.isArray(o.notes) ? o.notes.map((n) => String(n)) : [],
+  }
+}
+
+export type GenerateOutcome =
+  | { configured: false }
+  | { configured: true; ok: true; result: GenerateResult }
+  | { configured: true; ok: false; error: string }
+
+export async function runGenerateScript(
+  requirement: string,
+  table?: string,
+  config?: LlmConfig | null,
+): Promise<GenerateOutcome> {
+  const cfg = config ?? (await loadLlmConfig())
+  if (!cfg) return { configured: false }
+  const { system, user } = buildGeneratePrompt(requirement, table)
+  try {
+    const text = cfg.format === 'openai'
+      ? await callOpenai(cfg, system, user)
+      : await callAnthropic(cfg, system, user)
+    return { configured: true, ok: true, result: coerceGenerate(extractJson(text)) }
+  } catch (err) {
+    return { configured: true, ok: false, error: (err as Error).message }
+  }
+}
+
 export type ReviewOutcome =
   | { configured: false }
   | { configured: true; ok: true; result: ReviewResult }

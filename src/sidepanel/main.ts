@@ -19,7 +19,8 @@ import {
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
-import { loadLlmConfig, runJavaReview, saveLlmConfig, type LlmConfig, type LlmFormat } from '@core/llm'
+import { loadLlmConfig, runGenerateScript, runJavaReview, saveLlmConfig, type LlmConfig, type LlmFormat } from '@core/llm'
+import { createCodeEditor } from './editor'
 import { SandboxRunner } from '@core/sandbox-host'
 import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
 import type { ArtifactRef } from '@core/graph'
@@ -280,20 +281,45 @@ async function loadSchemaForTable(table: string) {
   renderSchema('')
 }
 
+/**
+ * Fetch choices for a field. Choices are often stored under a PARENT table
+ * (e.g. incident.state lives under "task"), so if the table-scoped query is
+ * empty, fall back to matching the element alone (deduped by value).
+ */
+async function fetchChoices(host: string, table: string, element: string): Promise<ChoiceOption[]> {
+  const scoped = await queryRecords(host, 'sys_choice', {
+    query: buildChoicesQuery(table, element),
+    fields: ['label', 'value', 'sequence'],
+    limit: 200,
+    displayValue: false,
+  })
+  let rows = scoped.ok ? scoped.data : []
+  if (rows.length === 0) {
+    const anyTable = await queryRecords(host, 'sys_choice', {
+      query: `element=${element}^inactive=false^ORDERBYsequence^ORDERBYlabel`,
+      fields: ['label', 'value', 'sequence'],
+      limit: 200,
+      displayValue: false,
+    })
+    rows = anyTable.ok ? anyTable.data : []
+  }
+  const seen = new Set<string>()
+  const out: ChoiceOption[] = []
+  for (const r of rows) {
+    const value = cellValue(r['value'])
+    if (seen.has(value)) continue
+    seen.add(value)
+    out.push({ label: cellValue(r['label']), value })
+  }
+  return out
+}
+
 async function showChoices(anchor: HTMLElement, element: string, setPop: (p: HTMLElement) => void) {
   if (!current) return
   const key = `${schemaTable}.${element}`
   let choices = choicesCache.get(key)
   if (!choices) {
-    const res = await queryRecords(current.host, 'sys_choice', {
-      query: buildChoicesQuery(schemaTable, element),
-      fields: ['label', 'value', 'sequence'],
-      limit: 200,
-      displayValue: false,
-    })
-    choices = res.ok
-      ? res.data.map((r) => ({ label: cellValue(r['label']), value: cellValue(r['value']) }))
-      : []
+    choices = await fetchChoices(current.host, schemaTable, element)
     choicesCache.set(key, choices)
   }
   // Append to <body>, fixed-positioned, so the scroll container can't clip it.
@@ -349,7 +375,7 @@ const testerSource = el('tester-source')
 const scriptKind = el<HTMLSelectElement>('script-kind')
 const timingWrap = el('timing-wrap')
 const scriptTiming = el<HTMLSelectElement>('script-timing')
-const scriptBody = el<HTMLTextAreaElement>('script-body')
+const scriptEd = createCodeEditor(el('script-editor'))
 const scriptFormat = el<HTMLButtonElement>('script-format')
 const scriptCopy = el<HTMLButtonElement>('script-copy')
 const analyzeBtn = el<HTMLButtonElement>('analyze-btn')
@@ -361,26 +387,30 @@ const simCard = el('sim-card')
 
 // AI review outputs
 const optimizeSection = el('optimize-section')
-const optimizeCode = el<HTMLTextAreaElement>('optimize-code')
+const optimizeEd = createCodeEditor(el('optimize-editor'))
 const optimizeFormat = el<HTMLButtonElement>('optimize-format')
 const optimizeCopy = el<HTMLButtonElement>('optimize-copy')
 const optimizeUse = el<HTMLButtonElement>('optimize-use')
 const testerSection = el('tester-section')
-const testerCode = el<HTMLTextAreaElement>('tester-code')
+const testerEd = createCodeEditor(el('tester-editor'))
 const testerFormat = el<HTMLButtonElement>('tester-format')
 const testerCopy = el<HTMLButtonElement>('tester-copy')
 const testerRun = el<HTMLButtonElement>('tester-run')
 
-// AI settings
+// AI settings (Settings tab)
 const aiEndpoint = el<HTMLInputElement>('ai-endpoint')
 const aiKey = el<HTMLInputElement>('ai-key')
 const aiModel = el<HTMLInputElement>('ai-model')
 const aiFormat = el<HTMLSelectElement>('ai-format')
 const aiSave = el<HTMLButtonElement>('ai-save')
 const aiSaved = el('ai-saved')
-const aiSettings = el<HTMLDetailsElement>('ai-settings')
 
 const SERVER_KINDS = new Set(['business_rule', 'script_include', 'unknown'])
+
+/** Switch to a named tab programmatically. */
+function activateTab(tabId: string) {
+  document.getElementById(tabId)?.dispatchEvent(new MouseEvent('click'))
+}
 
 /** Toggle timing (BR only) and sandbox visibility (server scripts only). */
 function syncTimingVisibility() {
@@ -405,7 +435,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
     return
   }
   const rec = res.data
-  scriptBody.value = cellValue(rec[info.scriptField])
+  scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
   if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
   // Layer 2/3: point the target table at what this script runs against.
@@ -419,7 +449,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   syncTimingVisibility()
   const name = cellDisplay(rec[info.nameField]) || scriptTable
   testerSource.textContent = `Loaded "${name}" (${info.kind.replace('_', ' ')}).`
-  scriptBody.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  scriptEd.view.scrollDOM.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 /** If the current record is itself a script record, pull it into the tester. */
@@ -491,7 +521,7 @@ async function findScripts() {
 
 /** Local static lints (instant, no AI). Returns true if a script was present. */
 function runLints(): boolean {
-  const script = scriptBody.value
+  const script = scriptEd.getValue()
   const kind = scriptKind.value as ScriptKind
   const timing = scriptTiming.value as BrTiming
   const findings = lintScript({ script, kind, timing })
@@ -529,7 +559,7 @@ async function javaReview() {
   aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester…'
 
   const outcome = await runJavaReview({
-    script: scriptBody.value,
+    script: scriptEd.getValue(),
     kind: scriptKind.value as ScriptKind,
     timing: scriptTiming.value as BrTiming,
     table: simTable.value.trim() || current?.table || 'incident',
@@ -540,8 +570,8 @@ async function javaReview() {
   analyzeBtn.disabled = false
 
   if (!outcome.configured) {
-    aiStatus.textContent = 'AI not configured — open “AI settings” below and add an endpoint + key.'
-    aiSettings.open = true
+    aiStatus.textContent = 'AI not configured — open ⚙ Settings and add an endpoint + key.'
+    activateTab('tab-settings')
     return
   }
   if (!outcome.ok) {
@@ -554,24 +584,24 @@ async function javaReview() {
   for (const n of notes) lintResults.append(elText('div', 'review-note', n))
 
   if (optimizedScript) {
-    optimizeCode.value = optimizedScript
+    optimizeEd.setValue(optimizedScript)
     optimizeSection.hidden = false
   }
   if (testScript) {
-    testerCode.value = testScript
+    testerEd.setValue(testScript)
     testerSection.hidden = false // Tester script shown automatically (point 4)
     testerSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
 
-async function formatEditor(ta: HTMLTextAreaElement, btn: HTMLButtonElement) {
-  if (!ta.value.trim()) return
+async function formatEditor(ed: { getValue: () => string; setValue: (v: string) => void }, btn: HTMLButtonElement) {
+  if (!ed.getValue().trim()) return
   const prev = btn.textContent
   btn.disabled = true
   btn.textContent = '…'
   try {
     const { formatJs } = await import('@core/format')
-    ta.value = await formatJs(ta.value)
+    ed.setValue(await formatJs(ed.getValue()))
     showToast('Formatted')
   } catch (err) {
     showToast(`Format failed: ${(err as Error).message.slice(0, 60)}`)
@@ -652,7 +682,7 @@ async function fillFromRecord() {
 }
 
 function runSimulation() {
-  return runSimulationWith(scriptBody.value)
+  return runSimulationWith(scriptEd.getValue())
 }
 
 async function runSimulationWith(script: string) {
@@ -1071,6 +1101,64 @@ async function saveAiSettings() {
   aiStatus.textContent = 'AI settings saved. Run “Java review” to use them.'
 }
 
+/* ---------- Generate Background Script ---------- */
+
+let genEd: ReturnType<typeof createCodeEditor> | null = null
+
+function initGenerate() {
+  const genRun = el<HTMLButtonElement>('gen-run')
+  const genSpinner = el('gen-spinner')
+  const genStatus = el('gen-status')
+  const genSection = el('gen-section')
+  const genNotes = el('gen-notes')
+  const genRequirement = el<HTMLTextAreaElement>('gen-requirement')
+  genEd = createCodeEditor(el('gen-editor'))
+
+  genRun.addEventListener('click', async () => {
+    const requirement = genRequirement.value.trim()
+    if (!requirement) {
+      genStatus.textContent = 'Describe what the script should do first.'
+      return
+    }
+    genRun.disabled = true
+    genSpinner.hidden = false
+    genStatus.textContent = 'Generating background script…'
+
+    const outcome = await runGenerateScript(requirement, current?.table ?? undefined)
+    genSpinner.hidden = true
+    genRun.disabled = false
+
+    if (!outcome.configured) {
+      genStatus.textContent = 'AI not configured — open ⚙ Settings and add an endpoint + key.'
+      activateTab('tab-settings')
+      return
+    }
+    if (!outcome.ok) {
+      genStatus.textContent = `AI error: ${outcome.error}`
+      return
+    }
+    genStatus.textContent = 'Generated. Review it, then open Background Scripts to run.'
+    genEd!.setValue(outcome.result.script)
+    genNotes.replaceChildren()
+    for (const n of outcome.result.notes) genNotes.append(elText('div', 'review-note', n))
+    genSection.hidden = false
+  })
+
+  el<HTMLButtonElement>('gen-format').addEventListener('click', () =>
+    formatEditor(genEd!, el<HTMLButtonElement>('gen-format')),
+  )
+  el<HTMLButtonElement>('gen-copy').addEventListener('click', () => copyText(genEd!.getValue()))
+  el<HTMLButtonElement>('gen-open').addEventListener('click', () => {
+    const host = current?.host
+    if (!host) {
+      showToast('Open a ServiceNow tab first')
+      return
+    }
+    // Background Scripts (Scripts - Background) classic page.
+    void chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
+  })
+}
+
 /* ---------- detect + wiring ---------- */
 
 async function detect() {
@@ -1139,22 +1227,23 @@ schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', javaReview)
-scriptFormat.addEventListener('click', () => formatEditor(scriptBody, scriptFormat))
-scriptCopy.addEventListener('click', () => copyText(scriptBody.value))
-optimizeFormat.addEventListener('click', () => formatEditor(optimizeCode, optimizeFormat))
-optimizeCopy.addEventListener('click', () => copyText(optimizeCode.value))
+scriptFormat.addEventListener('click', () => formatEditor(scriptEd, scriptFormat))
+scriptCopy.addEventListener('click', () => copyText(scriptEd.getValue()))
+optimizeFormat.addEventListener('click', () => formatEditor(optimizeEd, optimizeFormat))
+optimizeCopy.addEventListener('click', () => copyText(optimizeEd.getValue()))
 optimizeUse.addEventListener('click', () => {
-  scriptBody.value = optimizeCode.value
+  scriptEd.setValue(optimizeEd.getValue())
   showToast('Optimized script moved into the editor')
 })
-testerFormat.addEventListener('click', () => formatEditor(testerCode, testerFormat))
-testerCopy.addEventListener('click', () => copyText(testerCode.value))
+testerFormat.addEventListener('click', () => formatEditor(testerEd, testerFormat))
+testerCopy.addEventListener('click', () => copyText(testerEd.getValue()))
 testerRun.addEventListener('click', () => {
   simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  void runSimulationWith(testerCode.value)
+  void runSimulationWith(testerEd.getValue())
 })
 aiSave.addEventListener('click', saveAiSettings)
 void loadAiSettings()
+initGenerate()
 pickerType.addEventListener('change', syncPickerTableVisibility)
 pickerFind.addEventListener('click', findScripts)
 pickerSearch.addEventListener('keydown', (e) => {

@@ -18,15 +18,11 @@
     </header>
 
     <nav class="tabs" role="tablist">
-      <button class="tab is-active" id="tab-inspect" data-panel="panel-inspect" role="tab">
-        Inspect
-      </button>
-      <button class="tab" id="tab-tester" data-panel="panel-tester" role="tab">
-        Script Tester
-      </button>
-      <button class="tab" id="tab-spec" data-panel="panel-spec" role="tab">
-        Design Spec
-      </button>
+      <button class="tab is-active" id="tab-inspect" data-panel="panel-inspect" role="tab">Inspect</button>
+      <button class="tab" id="tab-tester" data-panel="panel-tester" role="tab">Tester</button>
+      <button class="tab" id="tab-generate" data-panel="panel-generate" role="tab">Generate</button>
+      <button class="tab" id="tab-spec" data-panel="panel-spec" role="tab">Spec</button>
+      <button class="tab" id="tab-settings" data-panel="panel-settings" role="tab">⚙</button>
     </nav>
 
     <main class="app-main">
@@ -123,18 +119,14 @@
             </div>
           </div>
 
-          <label class="field-label" for="script-body">Script</label>
-          <textarea
-            id="script-body"
-            class="code-editor"
-            rows="10"
-            spellcheck="false"
-            placeholder="// paste your Business Rule / Client Script here"
-          ></textarea>
-          <div class="btn-row" style="margin-top: 6px">
-            <button class="btn btn-ghost" id="script-format" type="button">Format</button>
-            <button class="btn btn-ghost" id="script-copy" type="button">Copy</button>
+          <div class="editor-toolbar">
+            <span class="editor-title">Script</span>
+            <span class="editor-tools">
+              <button class="tool-btn" id="script-format" type="button" title="Format">⧉ Format</button>
+              <button class="tool-btn" id="script-copy" type="button" title="Copy">⧉ Copy</button>
+            </span>
           </div>
+          <div class="cm-host" id="script-editor"></div>
 
           <label class="field-label" for="script-intent">
             Intent — what should this do? (optional)
@@ -155,49 +147,28 @@
           <div class="results" id="lint-results"></div>
 
           <div id="optimize-section" hidden>
-            <h3 class="subhead">Optimized script</h3>
-            <textarea id="optimize-code" class="code-editor" rows="12" spellcheck="false"></textarea>
-            <div class="btn-row" style="margin-top: 6px">
-              <button class="btn btn-ghost" id="optimize-format" type="button">Format</button>
-              <button class="btn btn-ghost" id="optimize-copy" type="button">Copy</button>
-              <button class="btn btn-ghost" id="optimize-use" type="button">Use as script</button>
+            <div class="editor-toolbar">
+              <span class="editor-title">Optimized script</span>
+              <span class="editor-tools">
+                <button class="tool-btn" id="optimize-format" type="button">⧉ Format</button>
+                <button class="tool-btn" id="optimize-copy" type="button">⧉ Copy</button>
+                <button class="tool-btn" id="optimize-use" type="button">↥ Use</button>
+              </span>
             </div>
+            <div class="cm-host" id="optimize-editor"></div>
           </div>
 
           <div id="tester-section" hidden>
-            <h3 class="subhead">Tester script (for sandbox)</h3>
-            <textarea id="tester-code" class="code-editor" rows="12" spellcheck="false"></textarea>
-            <div class="btn-row" style="margin-top: 6px">
-              <button class="btn btn-ghost" id="tester-format" type="button">Format</button>
-              <button class="btn btn-ghost" id="tester-copy" type="button">Copy</button>
-              <button class="btn" id="tester-run" type="button">Run in sandbox ↓</button>
+            <div class="editor-toolbar">
+              <span class="editor-title">Tester script (for sandbox)</span>
+              <span class="editor-tools">
+                <button class="tool-btn" id="tester-format" type="button">⧉ Format</button>
+                <button class="tool-btn" id="tester-copy" type="button">⧉ Copy</button>
+                <button class="tool-btn accent" id="tester-run" type="button">▶ Run in sandbox</button>
+              </span>
             </div>
+            <div class="cm-host" id="tester-editor"></div>
           </div>
-
-          <details id="ai-settings">
-            <summary>AI settings</summary>
-            <label class="field-label" for="ai-endpoint">Endpoint URL</label>
-            <input id="ai-endpoint" class="query-input" placeholder="https://…/v1/messages" />
-            <label class="field-label" for="ai-key">API key</label>
-            <input id="ai-key" class="query-input" type="password" placeholder="sk-…" />
-            <div class="field-inline">
-              <div>
-                <label class="field-label" for="ai-model">Model</label>
-                <input id="ai-model" class="query-input" placeholder="claude-sonnet-4-5" />
-              </div>
-              <div>
-                <label class="field-label" for="ai-format">Format</label>
-                <select id="ai-format" class="select">
-                  <option value="anthropic">Anthropic</option>
-                  <option value="openai">OpenAI</option>
-                </select>
-              </div>
-            </div>
-            <div class="btn-row">
-              <button class="btn" id="ai-save" type="button">Save settings</button>
-              <span class="count-badge" id="ai-saved" hidden>Saved ✓</span>
-            </div>
-          </details>
         </section>
 
         <section class="card" id="sim-card">
@@ -264,6 +235,42 @@
         </section>
       </div>
 
+      <!-- ============ GENERATE SCRIPT ============ -->
+      <div class="panel" id="panel-generate">
+        <section class="card" id="generate-card">
+          <h2 class="card-title">Generate Background Script</h2>
+          <p class="hint">
+            Describe what you need; the AI writes a server-side background script.
+            Review it, then open the Background Scripts page to run it.
+          </p>
+          <label class="field-label" for="gen-requirement">Requirement</label>
+          <textarea
+            id="gen-requirement"
+            class="query-input"
+            rows="4"
+            placeholder="e.g. Close all incidents inactive for more than 90 days and add a work note"
+          ></textarea>
+          <div class="btn-row">
+            <button class="btn" id="gen-run" type="button">Generate</button>
+            <span class="spinner" id="gen-spinner" hidden></span>
+          </div>
+          <p class="ai-note" id="gen-status">Uses the AI configured in ⚙ Settings.</p>
+
+          <div id="gen-section" hidden>
+            <div class="editor-toolbar">
+              <span class="editor-title">Background script</span>
+              <span class="editor-tools">
+                <button class="tool-btn" id="gen-format" type="button">⧉ Format</button>
+                <button class="tool-btn" id="gen-copy" type="button">⧉ Copy</button>
+                <button class="tool-btn accent" id="gen-open" type="button">↗ Background Scripts</button>
+              </span>
+            </div>
+            <div class="cm-host" id="gen-editor"></div>
+            <div class="results" id="gen-notes"></div>
+          </div>
+        </section>
+      </div>
+
       <!-- ============ DESIGN SPEC (F1) ============ -->
       <div class="panel" id="panel-spec">
         <section class="card" id="spec-card">
@@ -286,6 +293,38 @@
               <button class="btn" id="spec-docx" type="button">Word</button>
             </div>
             <p class="ai-note">Template output — no AI-generated prose (LLM off).</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ============ SETTINGS ============ -->
+      <div class="panel" id="panel-settings">
+        <section class="card" id="settings-card">
+          <h2 class="card-title">AI Settings</h2>
+          <p class="hint">
+            Used by “Java review” and “Generate Background Script”. Stored locally
+            in this browser.
+          </p>
+          <label class="field-label" for="ai-endpoint">Endpoint URL</label>
+          <input id="ai-endpoint" class="query-input" placeholder="https://…/v1/messages" />
+          <label class="field-label" for="ai-key">API key</label>
+          <input id="ai-key" class="query-input" type="password" placeholder="sk-…" />
+          <div class="field-inline">
+            <div>
+              <label class="field-label" for="ai-model">Model</label>
+              <input id="ai-model" class="query-input" placeholder="claude-sonnet-4-5" />
+            </div>
+            <div>
+              <label class="field-label" for="ai-format">Format</label>
+              <select id="ai-format" class="select">
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn" id="ai-save" type="button">Save settings</button>
+            <span class="count-badge" id="ai-saved" hidden>Saved ✓</span>
           </div>
         </section>
       </div>
