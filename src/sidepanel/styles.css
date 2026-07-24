@@ -46,21 +46,24 @@ body {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  background: var(--gradient);
-  color: #fff;
+  /* Light header so the MFEC wordmark shows in its real colors. */
+  background: var(--surface);
+  color: var(--ink);
+  border-bottom: 1px solid var(--border);
 }
 
 .app-logo {
   height: 22px;
   width: auto;
-  /* logo is dark wordmark; invert-friendly white variant sits on the gradient */
-  filter: brightness(0) invert(1);
+  /* real full-colour MFEC wordmark on the light header — no white filter */
 }
 
 .app-title {
   font-weight: 500;
   font-size: 13px;
   letter-spacing: 0.2px;
+  /* nudge the wordmark's baseline down to sit with the logo */
+  transform: translateY(4px);
 }
 
 .tabs {
