@@ -78,6 +78,35 @@ describe('lintScript — Business Rule', () => {
     })
     expect(found).not.toContain('unconditioned-query')
   })
+
+  it('scopes filter detection to the nearest declaration when a var name is reused', () => {
+    // gr is re-declared: the first (incident) query IS filtered and must not
+    // flag; the second (problem) query is unconditioned and MUST flag once.
+    const script = [
+      'var gr = new GlideRecord("incident");', // line 1
+      'gr.addQuery("active", true);', // line 2
+      'gr.query();', // line 3 — filtered, must NOT flag
+      'gr = new GlideRecord("problem");', // line 4
+      'gr.query();', // line 5 — unconditioned, MUST flag
+    ].join('\n')
+    const findings = lintScript({ kind: 'business_rule', timing: 'after', script })
+    const unconditioned = findings.filter((f) => f.rule === 'unconditioned-query')
+    expect(unconditioned).toHaveLength(1)
+    expect(unconditioned[0].line).toBe(5)
+  })
+
+  it('flags every unconditioned query when a reused var name is never filtered', () => {
+    const script = [
+      'var gr = new GlideRecord("incident");', // line 1
+      'gr.query();', // line 2 — unconditioned
+      'gr = new GlideRecord("problem");', // line 3
+      'gr.query();', // line 4 — unconditioned
+    ].join('\n')
+    const findings = lintScript({ kind: 'business_rule', timing: 'after', script })
+    const unconditioned = findings.filter((f) => f.rule === 'unconditioned-query')
+    expect(unconditioned).toHaveLength(2)
+    expect(unconditioned.map((f) => f.line)).toEqual([2, 4])
+  })
 })
 
 describe('lintScript — Client Script', () => {
