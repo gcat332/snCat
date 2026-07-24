@@ -481,6 +481,13 @@ async function pasteXml() {
       e.style.marginTop = '6px'
       xmlOut.append(e)
     }
+    // Consume the clip once anything imported, so pressing Paste again can't
+    // silently re-create the same records. Save again to import once more.
+    if (Number(done) > 0) {
+      await chrome.storage.local.remove('xmlClip')
+      await refreshXmlControls()
+      xmlOut.append(elText('div', 'info-sub', 'Saved XML cleared — Save again to import another copy.'))
+    }
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
   }
