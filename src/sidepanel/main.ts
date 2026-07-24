@@ -53,11 +53,26 @@ function jobKey(tabId: number, op: 'review' | 'generate'): string {
   return `llmJob:${tabId}:${op}`
 }
 
+function applyJob(op: 'review' | 'generate', entry: LlmJobEntry | undefined) {
+  if (op === 'review') applyReviewJob(entry)
+  else applyGenerateJob(entry)
+}
+
 /** Start an LLM job in the background so it survives the panel closing. */
 async function startLlmJob(op: 'review' | 'generate', payload: unknown): Promise<boolean> {
   if (currentTabId == null) return false
-  await chrome.storage.session.set({ [jobKey(currentTabId, op)]: { status: 'running', op } })
-  chrome.runtime.sendMessage({ kind: 'snjava:llm-run', tabId: currentTabId, op, payload }).catch(() => {})
+  try {
+    await chrome.storage.session.set({ [jobKey(currentTabId, op)]: { status: 'running', op } })
+  } catch {
+    /* ignore */
+  }
+  // Reply comes back directly (reliable) AND is mirrored to storage (survives close).
+  chrome.runtime
+    .sendMessage({ kind: 'snjava:llm-run', tabId: currentTabId, op, payload })
+    .then((entry) => {
+      if (entry) applyJob(op, entry as LlmJobEntry)
+    })
+    .catch(() => {})
   return true
 }
 
@@ -219,6 +234,8 @@ async function pasteXml() {
   xmlOut.replaceChildren(elText('div', 'ok-banner', `✓ Imported as ${clip.table} ${newId.slice(0, 8)}…`))
 }
 
+let xmlEntries: [string, string][] = []
+
 async function viewXmlValues() {
   xmlOut.replaceChildren(elText('div', 'empty', 'Loading XML values…'))
   const xml = await fetchRecordXml()
@@ -228,20 +245,42 @@ async function viewXmlValues() {
     xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the record XML.'))
     return
   }
-  const entries = Object.entries(parsed.fields).filter(([, v]) => v !== '')
+  xmlEntries = Object.entries(parsed.fields).filter(([, v]) => v !== '')
+
   xmlOut.replaceChildren()
-  xmlOut.append(elText('div', 'chk-group-title', `${entries.length} non-empty fields`))
-  for (const [k, v] of entries) {
-    const r = document.createElement('div')
-    r.className = 'schema-row2'
-    const name = document.createElement('button')
-    name.type = 'button'
-    name.className = 'col'
-    name.textContent = k
-    name.title = 'Click to copy field name'
-    name.addEventListener('click', () => void copyText(k, name))
-    r.append(name, elText('span', 'lbl', v.length > 120 ? v.slice(0, 120) + '…' : v))
-    xmlOut.append(r)
+  const search = document.createElement('input')
+  search.className = 'query-input'
+  search.style.marginBottom = '8px'
+  search.placeholder = 'filter fields by name or value…'
+  search.addEventListener('input', () => renderXmlValues(search.value))
+  xmlOut.append(search)
+
+  const list = document.createElement('div')
+  list.id = 'xml-values-list'
+  xmlOut.append(list)
+  renderXmlValues('')
+}
+
+function renderXmlValues(filter: string) {
+  const list = document.getElementById('xml-values-list')
+  if (!list) return
+  const f = filter.trim().toLowerCase()
+  const rows = xmlEntries.filter(
+    ([k, v]) => !f || k.toLowerCase().includes(f) || v.toLowerCase().includes(f),
+  )
+  list.replaceChildren()
+  list.append(elText('div', 'chk-group-title', `${rows.length} field${rows.length === 1 ? '' : 's'}`))
+  for (const [k, v] of rows) {
+    const r = document.createElement('button')
+    r.type = 'button'
+    r.className = 'result-row picker-row'
+    r.title = `Click to copy the value of ${k}`
+    r.append(
+      elText('span', 'label', k),
+      elText('span', 'sysid', v.length > 60 ? v.slice(0, 60) + '…' : v),
+    )
+    r.addEventListener('click', () => void copyText(v))
+    list.append(r)
   }
 }
 

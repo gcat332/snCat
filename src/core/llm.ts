@@ -127,6 +127,7 @@ function coerceResult(raw: unknown): ReviewResult {
 async function callAnthropic(cfg: LlmConfig, system: string, user: string): Promise<string> {
   const res = await fetch(cfg.endpoint, {
     method: 'POST',
+    signal: AbortSignal.timeout(135000),
     headers: {
       'content-type': 'application/json',
       'x-api-key': cfg.apiKey,
@@ -147,6 +148,7 @@ async function callAnthropic(cfg: LlmConfig, system: string, user: string): Prom
 async function callOpenai(cfg: LlmConfig, system: string, user: string): Promise<string> {
   const res = await fetch(cfg.endpoint, {
     method: 'POST',
+    signal: AbortSignal.timeout(135000),
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${cfg.apiKey}`,
@@ -229,6 +231,7 @@ export async function runGenerateScript(
 async function callAgentHub(cfg: LlmConfig, system: string, user: string): Promise<string> {
   const res = await fetch(cfg.endpoint, {
     method: 'POST',
+    signal: AbortSignal.timeout(135000),
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${cfg.apiKey}`,

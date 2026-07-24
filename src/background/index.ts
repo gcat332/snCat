@@ -20,9 +20,9 @@ function jobKey(tabId: number, op: string): string {
   return `llmJob:${tabId}:${op}`
 }
 
-async function runLlmJob(msg: LlmRunMessage): Promise<void> {
+async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
   const key = jobKey(msg.tabId, msg.op)
-  await chrome.storage.session.set({ [key]: { status: 'running', op: msg.op } })
+  await setJob(key, { status: 'running', op: msg.op })
   let entry: unknown
   try {
     const outcome =
@@ -33,15 +33,39 @@ async function runLlmJob(msg: LlmRunMessage): Promise<void> {
   } catch (err) {
     entry = { status: 'error', op: msg.op, error: (err as Error).message }
   }
-  await chrome.storage.session.set({ [key]: entry })
+  await setJob(key, entry)
+  return entry
+}
+
+async function setJob(key: string, value: unknown): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [key]: value })
+  } catch {
+    /* session storage may be unavailable in some contexts — ignore */
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if ((message as { kind?: string })?.kind === 'snjava:llm-run') {
-    // Ack immediately; the in-flight fetch inside runLlmJob keeps the SW alive.
-    void runLlmJob(message as LlmRunMessage)
-    sendResponse({ ok: true })
-    return true
+    // Run the job (the in-flight fetch keeps the SW alive) and reply directly so
+    // the panel updates even if storage events don't reach it. If the panel has
+    // closed, sendResponse throws harmlessly and the result is still in storage.
+    runLlmJob(message as LlmRunMessage)
+      .then((entry) => {
+        try {
+          sendResponse(entry)
+        } catch {
+          /* panel gone */
+        }
+      })
+      .catch((err) => {
+        try {
+          sendResponse({ status: 'error', op: (message as LlmRunMessage).op, error: String(err) })
+        } catch {
+          /* panel gone */
+        }
+      })
+    return true // keep the channel open for the async response
   }
   return undefined
 })
