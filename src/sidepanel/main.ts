@@ -5,6 +5,7 @@
  *     script from the current Business Rule / Client Script / Script Include.
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
+import { parseServiceNowContext } from '@core/context'
 import { cellDisplay, cellValue, pickLabel } from '@core/api'
 import {
   countRecords,
@@ -744,19 +745,35 @@ async function detect() {
     renderStatus('Open a ServiceNow page to detect context.')
     return
   }
+
+  // Primary: parse the tab URL directly — works without the content script and
+  // covers classic, Next Experience/Polaris, and workspace routes.
+  let context = parseServiceNowContext(tab.url!)
+
+  // Best-effort enrichment: the content script can add g_form-derived table/
+  // sys_id (e.g. deep Next Experience views the URL doesn't expose) and caches
+  // g_ck. Never fatal if it isn't loaded.
   try {
     const res = (await chrome.tabs.sendMessage(tab.id, {
       kind: 'sncat:get-context',
     } satisfies RuntimeMessage)) as RuntimeMessage | undefined
-
-    if (res?.kind === 'sncat:context' && res.context) {
-      current = res.context
-      renderContext(res.context)
-    } else {
-      renderStatus('No record detected on this page.')
+    if (res?.kind === 'sncat:context' && res.context?.table) {
+      const enriched = res.context
+      // Prefer enrichment when the URL parse couldn't resolve the record.
+      if (!context?.table || (!context.sysId && enriched.sysId)) context = enriched
     }
   } catch {
-    renderStatus('Content script not loaded — reload the ServiceNow tab, then Refresh.', 'error')
+    /* content script not present in this frame — URL parse stands. */
+  }
+
+  if (context?.table) {
+    current = context
+    renderContext(context)
+  } else if (context) {
+    current = context
+    renderContext(context)
+  } else {
+    renderStatus('No record detected on this page.')
   }
   updateEnabledState()
 

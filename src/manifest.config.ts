@@ -64,7 +64,7 @@ export default defineManifest({
       matches: ['https://*.service-now.com/*'],
       js: ['src/content/index.ts'],
       run_at: 'document_idle',
-      all_frames: false,
+      all_frames: true,
     },
     {
       // MAIN-world bridge: reads window.g_form / window.g_ck on classic UI and
