@@ -22,7 +22,11 @@ function jobKey(tabId: number, op: string): string {
 
 async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
   const key = jobKey(msg.tabId, msg.op)
-  await setJob(key, { status: 'running', op: msg.op })
+  // startedAt lets the panel detect a job that never finished: if this worker is
+  // killed mid-fetch (browser/extension update, OS suspend, memory eviction) the
+  // done/error write below never happens, so the panel would otherwise spin on
+  // 'running' forever. It treats a running entry older than a threshold as failed.
+  await setJob(key, { status: 'running', op: msg.op, startedAt: Date.now() })
   let entry: unknown
   try {
     const outcome =
