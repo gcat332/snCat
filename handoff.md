@@ -39,7 +39,7 @@ Architect the core separately from actions so future features (Explain Record, I
 2. Core engine walks related artifacts (examples for a Catalog Item: variables, variable sets, UI policies, client scripts, attached flow/workflow, approvals; for a BR: table, condition, script, referenced Script Includes).
 3. User reviews the artifact checklist (include/exclude), then confirms.
 4. AI composes the spec with a standard skeleton: **Overview → Data Model → Logic → Integration Points → Security/ACL**.
-5. Output = single self-contained `reveal.js` HTML file (all CSS inline, fonts via Google Fonts link), downloadable.
+5. Output = the spec in **three formats** (see §3a): **PDF**, **Word `.docx`** (editable), and **self-contained HTML** — all downloadable. HTML is generated first; PDF via print CSS, `.docx` via a client-side `docx` builder. All three use the **light document theme** (§3b), not the dark slide theme.
 
 ### MFEC brand theme — extracted from `MFEC_Company_Profile_2026_version_1.pptx` (31 slides, verified against theme XML + rendered slides)
 
@@ -77,12 +77,28 @@ Architect the core separately from actions so future features (Explain Record, I
 - Body: Prompt Light (300) / ExtraLight (200)
 - Load: `https://fonts.googleapis.com/css2?family=Prompt:wght@200;300;400;500&display=swap`
 
-**reveal.js theme rules:**
-- Title/section slides: `--mfec-gradient` background, white Prompt Medium headings, cyan accent line usage sparingly
-- Content slides: dark navy background, translucent white cards (`rgba(255,255,255,0.06)` + 1px `rgba(255,255,255,0.15)` border), cyan `#00A2E9` for emphasis/inline code accents
-- Diagrams (Mermaid if used): dark theme, edge color cyan, node fill `#0031B4`
+### 3a. Output formats (REVISED 2026-07-24)
 
-Hardcode this theme into the extension as a CSS template — the PPTX does not need to ship with the project.
+The Design Spec exports in **three formats**, all from one light-themed source:
+- **PDF** — generate the HTML, apply print/PDF CSS, print-to-PDF. Primary deliverable.
+- **Word `.docx`** — build client-side with the `docx` JS library (editable hand-off doc). Map skeleton sections → Word headings/tables; MFEC accent colors on heading styles + table headers; logo in the header/cover.
+- **HTML** — self-contained (CSS inline, fonts via Google Fonts link) for quick preview/share.
+
+The dark reveal.js slide theme is **dropped** for this deliverable — a spec doc is read/printed/edited, so it uses a light theme.
+
+### 3b. Document theme rules — LIGHT (REVISED 2026-07-24)
+
+Keep the MFEC color tokens (§ above) but as **accents on a white page**, and include the **MFEC logo**:
+- **Page/background:** white `#FFFFFF`; body text dark `#1F1F1F`; Prompt font family.
+- **Cover / section headers:** MFEC blue→purple gradient band or `--mfec-blue-dark #0031B4` bar with white Prompt Medium heading; **MFEC logo** top-left of cover and/or running header.
+- **Headings:** `--mfec-blue-dark #0031B4` (H1/H2), `--mfec-blue #0062EC` (H3); Prompt Medium.
+- **Accent line / rules / callouts:** cyan `#00A2E9`.
+- **Tables (Data Model / ACL):** header row filled `--mfec-blue-dark` with white text; zebra rows very light navy tint (`rgba(0,49,180,0.04)`); 1px light border.
+- **Inline code / logic blocks:** light gray surface `#F4F6FB`, cyan accent on keywords.
+- **Diagrams (Mermaid if used):** light theme, edge color `--mfec-blue`, node fill light tint with `--mfec-blue-dark` border.
+- **Print CSS:** avoid dark fills across full pages (ink), page-break before each section, repeat table headers.
+
+Hardcode this theme into the extension as a CSS template + docx style map — the PPTX does not ship. **The MFEC logo asset (SVG/PNG) is needed** — see §8.
 
 ---
 
@@ -123,9 +139,10 @@ extension/
 │   ├── graph/               # dependency walker (depth-limited, per-artifact-type resolvers)
 │   └── llm/                 # AI client, configurable endpoint, redaction
 ├── content/                 # page context detection (table, sys_id, g_form bridge)
-├── sidepanel/               # UI (artifact checklist, tester UI, results)
-├── sandbox/                 # sandboxed iframe: Glide mock runtime + script executor
-│   └── glide-mocks/         # current/previous/gs/GlideRecord/g_form implementations
+├── sidepanel/               # UI (artifact checklist, tester UI, results); hosts inline sandbox iframe
+├── runner/                  # dedicated full-page test-runner (extension page); pop-out target for F2
+├── sandbox/                 # sandboxed iframe: Glide mock runtime + script executor (loaded by both sidepanel & runner)
+│   └── glide-mocks/         # current/previous/gs/GlideRecord/g_form (+ scoped: GlideRecordSecure, scoped gs)
 └── themes/
     └── mfec-reveal.css      # brand theme (tokens above)
 ```
@@ -152,7 +169,13 @@ The section-7 open questions were resolved as follows:
 4. **F1 resolver priority (after Catalog Item + Business Rule) — Script Include, ACL, Transform Map.** Flow/Workflow deprioritized (build after these three).
 5. **reveal.js PDF export — yes.** Include reveal.js print/PDF CSS in the theme so the self-contained HTML exports cleanly to PDF (print-to-PDF).
 
+### 7a. Feature revisions (2026-07-24, Claude Code session)
+
+- **F1 output — PDF + Word `.docx` + HTML (was: reveal.js HTML only).** All three from one **light** document theme (white page, MFEC colors as accents) **with the MFEC logo**. Dark slide theme dropped for this deliverable. See §3a/§3b. Needs the `docx` JS library and the logo asset (§8).
+- **F2 run UX — "3 + 1": inline iframe in the side panel + pop-out full-page runner.** Clicking Run executes the user script in a **sandboxed iframe embedded in the side panel** (fast, in-context). A **pop-out button** opens the same sandbox in a **dedicated full-page runner tab** (`runner/`) for more room / long execution traces. `background/` acts only as the broker that ships `{script, context}` into whichever host — it never executes user script itself (MV3: SW has no DOM + CSP blocks `eval`).
+
 ## 8. Reference notes
 
 - Brand tokens sourced from `MFEC_Company_Profile_2026_version_1.pptx` — theme1.xml accents + frequency analysis of slide XML + visual render. Keep the PPTX for future re-extraction if branding updates.
+- **NEEDED: MFEC logo asset** (SVG preferred, or high-res transparent PNG) for the F1 document theme cover/header. Can be extracted from the PPTX (`ppt/media/`) if not provided separately. Until supplied, F1 uses a text placeholder.
 - Related prior work by Gust that connects here: `itsm-deploy` ATF regression gates (Layer 3), Chesterton's Fence refactoring framing (Impact Analysis future feature), reasoning-trace skill (could drive the graph-walk audit trail).
