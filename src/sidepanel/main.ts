@@ -43,9 +43,27 @@ let currentTabId: number | null = null
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
-  | { status: 'running'; op: 'review' | 'generate' }
+  | { status: 'running'; op: 'review' | 'generate'; startedAt?: number }
   | { status: 'done'; op: 'review' | 'generate'; outcome: unknown }
   | { status: 'error'; op: 'review' | 'generate'; error: string }
+
+/**
+ * A 'running' job is stale once its startedAt is older than this. The background
+ * runs the fetch in the service worker; if that worker is killed mid-fetch the
+ * final done/error write never lands and the entry stays 'running' forever, so
+ * we infer failure from elapsed wall-clock time. This MUST exceed the longest
+ * expected LLM call — there is no fetch AbortController/timeout yet (separate
+ * finding), so wall-clock is our only signal. A running entry with no startedAt
+ * is an old-format job (written before this field existed) and is always stale.
+ */
+const STALE_JOB_MS = 3 * 60_000
+
+/** True when a 'running' entry is from a worker that was interrupted mid-fetch. */
+function isStaleJob(entry: LlmJobEntry): boolean {
+  if (entry.status !== 'running') return false
+  if (entry.startedAt == null) return true
+  return Date.now() - entry.startedAt > STALE_JOB_MS
+}
 
 function jobKey(tabId: number, op: 'review' | 'generate'): string {
   return `llmJob:${tabId}:${op}`
@@ -60,7 +78,9 @@ function applyJob(op: 'review' | 'generate', entry: LlmJobEntry | undefined) {
 async function startLlmJob(op: 'review' | 'generate', payload: unknown): Promise<boolean> {
   if (currentTabId == null) return false
   try {
-    await chrome.storage.session.set({ [jobKey(currentTabId, op)]: { status: 'running', op } })
+    await chrome.storage.session.set({
+      [jobKey(currentTabId, op)]: { status: 'running', op, startedAt: Date.now() },
+    })
   } catch {
     /* ignore */
   }
@@ -1342,13 +1362,23 @@ async function javaReview() {
     aiStatus.textContent = 'Open a ServiceNow tab first.'
     return
   }
-  applyReviewJob({ status: 'running', op: 'review' })
+  applyReviewJob({ status: 'running', op: 'review', startedAt: Date.now() })
 }
 
 /** Render the review UI from a job entry (running / done / error). */
 function applyReviewJob(entry: LlmJobEntry | undefined) {
   if (!entry) return
   if (entry.status === 'running') {
+    // A running entry that's too old (or has no startedAt) means the background
+    // worker was killed mid-fetch and will never write done/error — treat it as
+    // a retryable failure instead of spinning forever.
+    if (isStaleJob(entry)) {
+      optimizeSection.hidden = true
+      reviewSpinner.hidden = true
+      analyzeBtn.disabled = false
+      aiStatus.textContent = "The previous review didn't finish (the background worker was interrupted). Run it again."
+      return
+    }
     optimizeSection.hidden = true
     reviewSpinner.hidden = false
     analyzeBtn.disabled = true
@@ -2256,7 +2286,7 @@ function initGenerate() {
       genStatus.textContent = 'Open a ServiceNow tab first.'
       return
     }
-    applyGenerateJob({ status: 'running', op: 'generate' })
+    applyGenerateJob({ status: 'running', op: 'generate', startedAt: Date.now() })
   })
 }
 
@@ -2264,6 +2294,14 @@ function initGenerate() {
 async function applyGenerateJob(entry: LlmJobEntry | undefined) {
   if (!entry) return
   if (entry.status === 'running') {
+    // Stale (or timestamp-less) running entry: the background worker was killed
+    // mid-fetch, so no done/error will ever arrive — surface it as retryable.
+    if (isStaleJob(entry)) {
+      genSpinner.hidden = true
+      genRun.disabled = false
+      genStatus.textContent = "The previous plan didn't finish (the background worker was interrupted). Run it again."
+      return
+    }
     genSpinner.hidden = false
     genRun.disabled = true
     genStatus.textContent = 'Planning artifacts… (keeps running if you close this panel)'
