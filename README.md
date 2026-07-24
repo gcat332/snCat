@@ -1,4 +1,4 @@
-# snJava — Java Assistant (Chrome Extension, MV3)
+# snJava — ServiceNow Java Assistant (Chrome Extension, MV3)
 
 A Chrome Extension with a shared core engine and two features:
 

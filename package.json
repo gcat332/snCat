@@ -2,7 +2,7 @@
   "name": "snjava",
   "private": true,
   "version": "0.0.0",
-  "description": "Java Assistant — Chrome Extension (MV3): Design Spec Generator + Script Tester",
+  "description": "ServiceNow Java Assistant — Chrome Extension (MV3): Design Spec Generator + Script Tester",
   "type": "module",
   "scripts": {
     "dev": "vite",

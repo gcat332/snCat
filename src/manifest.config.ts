@@ -2,7 +2,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 import pkg from '../package.json'
 
 /**
- * MV3 manifest for the Java Assistant (snJava).
+ * MV3 manifest for the ServiceNow Java Assistant (snJava).
  *
  * Host strategy (handoff §7 decision 3): match all standard ServiceNow
  * instances so the extension reads whatever instance the user is on from the
@@ -11,7 +11,7 @@ import pkg from '../package.json'
  */
 export default defineManifest({
   manifest_version: 3,
-  name: 'snJava — Java Assistant',
+  name: 'snJava — ServiceNow Java Assistant',
   version: pkg.version || '0.0.0',
   description: pkg.description,
 
