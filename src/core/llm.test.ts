@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildReviewPrompt, extractJson } from './llm'
+import { buildPlanPrompt, buildReviewPrompt, extractJson } from './llm'
 
 describe('buildReviewPrompt', () => {
   it('includes the script, table, kind and intent', () => {
@@ -18,6 +18,20 @@ describe('buildReviewPrompt', () => {
     expect(user).toContain('set priority')
     expect(user).toContain('optimizedScript')
     expect(user).toContain('testScript')
+  })
+})
+
+describe('buildPlanPrompt', () => {
+  it('includes the requirement, table, and asks for an artifacts array', () => {
+    const { system, user } = buildPlanPrompt('Add a VIP field and an ACL', {
+      table: 'incident',
+      fields: ['priority', 'state'],
+    })
+    expect(system).toContain('ServiceNow')
+    expect(user).toContain('Add a VIP field and an ACL')
+    expect(user).toContain('incident')
+    expect(user).toContain('"artifacts"')
+    expect(user).toContain('targetTable')
   })
 })
 

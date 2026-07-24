@@ -26,9 +26,10 @@ import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/
 import {
   loadLlmConfig,
   saveLlmConfig,
-  type GenerateOutcome,
   type LlmConfig,
   type LlmFormat,
+  type PlanArtifact,
+  type PlanOutcome,
   type ReviewOutcome,
 } from '@core/llm'
 import { createCodeEditor } from './editor'
@@ -1016,7 +1017,7 @@ function runLints(): boolean {
   lintSummary.textContent = `${counts.error} error · ${counts.warning} warning · ${counts.info} info`
 
   if (findings.length === 0) {
-    lintResults.append(elText('div', 'ok-banner', '✓ No anti-patterns found by Layer 1 lints.'))
+    lintResults.append(elText('div', 'ok-banner', '✓ No anti-patterns found by the static lints.'))
   } else {
     for (const f of findings) renderFinding(f)
   }
@@ -1639,54 +1640,44 @@ async function saveAiSettings() {
   aiStatus.textContent = 'AI settings saved. Run “Java review” to use them.'
 }
 
-/* ---------- Generate Background Script ---------- */
+/* ---------- Generate (plan of artifacts) ---------- */
 
-let genEd: ReturnType<typeof createCodeEditor> | null = null
 const genRun = el<HTMLButtonElement>('gen-run')
 const genSpinner = el('gen-spinner')
 const genStatus = el('gen-status')
-const genSection = el('gen-section')
-const genNotes = el('gen-notes')
+const genList = el('gen-list')
 const genRequirement = el<HTMLTextAreaElement>('gen-requirement')
 
 function initGenerate() {
-  genEd = createCodeEditor(el('gen-editor'))
-
   genRun.addEventListener('click', async () => {
     const requirement = genRequirement.value.trim()
     if (!requirement) {
-      genStatus.textContent = 'Describe what the script should do first.'
+      genStatus.textContent = 'Describe what you need first.'
       return
     }
-    const started = await startLlmJob('generate', { requirement, table: current?.table ?? undefined })
+    // Include the current table's field names for grounding, if loaded.
+    const fields = schemaTable === current?.table ? schemaFields.map((d) => cellValue(d.element as unknown)) : undefined
+    const started = await startLlmJob('generate', {
+      requirement,
+      table: current?.table ?? undefined,
+      sysId: current?.sysId ?? undefined,
+      fields,
+    })
     if (!started) {
       genStatus.textContent = 'Open a ServiceNow tab first.'
       return
     }
     applyGenerateJob({ status: 'running', op: 'generate' })
   })
-
-  el<HTMLButtonElement>('gen-format').addEventListener('click', () =>
-    formatEditor(genEd!, el<HTMLButtonElement>('gen-format')),
-  )
-  el<HTMLButtonElement>('gen-copy').addEventListener('click', () => copyText(genEd!.getValue()))
-  el<HTMLButtonElement>('gen-open').addEventListener('click', () => {
-    const host = current?.host
-    if (!host) {
-      showToast('Open a ServiceNow tab first')
-      return
-    }
-    void openBackgroundScripts(host, genEd!.getValue())
-  })
 }
 
-/** Render the Generate UI from a job entry (running / done / error). */
+/** Render the Generate plan from a job entry (running / done / error). */
 function applyGenerateJob(entry: LlmJobEntry | undefined) {
-  if (!entry || !genEd) return
+  if (!entry) return
   if (entry.status === 'running') {
     genSpinner.hidden = false
     genRun.disabled = true
-    genStatus.textContent = 'Generating background script… (keeps running if you close this panel)'
+    genStatus.textContent = 'Planning artifacts… (keeps running if you close this panel)'
     return
   }
   genSpinner.hidden = true
@@ -1695,7 +1686,7 @@ function applyGenerateJob(entry: LlmJobEntry | undefined) {
     genStatus.textContent = `AI error: ${entry.error}`
     return
   }
-  const outcome = entry.outcome as GenerateOutcome
+  const outcome = entry.outcome as PlanOutcome
   if (!outcome.configured) {
     genStatus.textContent = 'AI not configured — open Settings and add an endpoint + key.'
     activateTab('tab-settings')
@@ -1705,11 +1696,123 @@ function applyGenerateJob(entry: LlmJobEntry | undefined) {
     genStatus.textContent = `AI error: ${outcome.error}`
     return
   }
-  genStatus.textContent = 'Generated. Review it, then open Background Scripts to run.'
-  genEd.setValue(outcome.result.script)
-  genNotes.replaceChildren()
-  for (const n of outcome.result.notes) genNotes.append(elText('div', 'review-note', n))
-  genSection.hidden = false
+  renderPlan(outcome.result.summary, outcome.result.artifacts)
+}
+
+function renderPlan(summary: string, artifacts: PlanArtifact[]) {
+  genStatus.textContent = summary || `${artifacts.length} artifact(s) proposed.`
+  genList.replaceChildren()
+  if (artifacts.length === 0) {
+    genList.append(elText('div', 'empty', 'No artifacts proposed.'))
+    return
+  }
+  for (const a of artifacts) {
+    const row = document.createElement('div')
+    row.className = 'info-row'
+    const name = document.createElement('button')
+    name.type = 'button'
+    name.className = 'info-name'
+    name.textContent = a.title
+    name.title = 'View details'
+    name.style.maxWidth = '60%'
+    name.addEventListener('click', () => showArtifact(a))
+    const meta = document.createElement('span')
+    meta.className = 'info-meta'
+    meta.append(elText('span', 'ref', a.kind))
+    meta.append(elText('span', 'info-sub', a.action === 'create' ? (a.targetTable ?? 'create') : 'script'))
+    row.append(name, meta)
+    genList.append(row)
+  }
+}
+
+/** Detail modal for one planned artifact, with a create / open action. */
+function showArtifact(a: PlanArtifact) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const box = document.createElement('div')
+  box.className = 'modal-box wide'
+  box.append(elText('div', 'diff-head', ''))
+  ;(box.firstChild as HTMLElement).append(
+    elText('span', 'title', `${a.kind}: ${a.title}`),
+    elText('span', 'info-sub', a.action === 'create' ? `→ ${a.targetTable ?? '?'}` : 'background script'),
+  )
+  if (a.notes) box.append(elText('p', 'ai-note', a.notes))
+
+  const body = document.createElement('div')
+  body.className = 'diff-body'
+  body.style.padding = '8px'
+  if (a.action === 'create' && a.fields) {
+    for (const [k, v] of Object.entries(a.fields)) {
+      const r = document.createElement('div')
+      r.className = 'info-row'
+      r.style.background = 'transparent'
+      r.append(elText('span', 'info-name', k), elText('span', 'info-sub', v.length > 80 ? v.slice(0, 80) + '…' : v))
+      body.append(r)
+    }
+  } else if (a.script) {
+    const pre = document.createElement('pre')
+    pre.className = 'code-block'
+    pre.textContent = a.script
+    body.append(pre)
+  }
+
+  const row = document.createElement('div')
+  row.className = 'btn-row'
+  const close = document.createElement('button')
+  close.className = 'btn btn-ghost'
+  close.textContent = 'Close'
+  close.addEventListener('click', () => overlay.remove())
+  const act = document.createElement('button')
+  act.className = 'btn'
+  if (a.action === 'create') {
+    act.textContent = 'Create in instance'
+    act.addEventListener('click', () => void createArtifact(a, act, overlay))
+  } else {
+    act.textContent = 'Open in Background Scripts'
+    act.addEventListener('click', () => {
+      if (current?.host && a.script) void openBackgroundScripts(current.host, a.script)
+      overlay.remove()
+    })
+  }
+  row.append(close, act)
+
+  box.append(body, row)
+  overlay.append(box)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove()
+  })
+  document.body.append(overlay)
+}
+
+/** Create a planned customization record via a background insert (scope-aware). */
+async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: HTMLElement) {
+  if (!current || !a.targetTable || !a.fields) return
+  if (
+    !(await confirmDialog(
+      `Create this ${a.kind} in ${a.targetTable} on ${current.host}?\n\nScope "${scopeLabel()}"${
+        selUpdateSet.value.trim() ? `, update set "${selUpdateSet.value.trim()}"` : ''
+      }.`,
+    ))
+  ) {
+    return
+  }
+  btn.disabled = true
+  btn.textContent = 'Creating…'
+  const bg = buildRecordInsertScript(a.targetTable, a.fields)
+  const res = await runBackground(current.host, bg, writeTargetOpts())
+  btn.disabled = false
+  btn.textContent = 'Create in instance'
+  if (!res.ok) {
+    showToast(`Create failed: ${res.error.slice(0, 60)}`)
+    return
+  }
+  const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)
+  if (m) {
+    showToast(`Created ${a.kind} ✓`)
+    overlay.remove()
+  } else {
+    showToast('Create may have failed — check Background Scripts')
+  }
 }
 
 /** Load per-tab job state for the current tab and render it (on switch/reopen). */

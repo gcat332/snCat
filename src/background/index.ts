@@ -7,13 +7,13 @@
  * state is stored per browser TAB in chrome.storage.session so each tab has its
  * own review/generate result and the panel restores it on reopen / tab switch.
  */
-import { runGenerateScript, runJavaReview, type ReviewInput } from '@core/llm'
+import { runGeneratePlan, runJavaReview, type ReviewInput } from '@core/llm'
 
 interface LlmRunMessage {
   kind: 'snjava:llm-run'
   tabId: number
   op: 'review' | 'generate'
-  payload: ReviewInput & { requirement?: string; table?: string }
+  payload: ReviewInput & { requirement?: string; table?: string; sysId?: string; fields?: string[] }
 }
 
 function jobKey(tabId: number, op: string): string {
@@ -28,7 +28,11 @@ async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
     const outcome =
       msg.op === 'review'
         ? await runJavaReview(msg.payload)
-        : await runGenerateScript(msg.payload.requirement ?? '', msg.payload.table)
+        : await runGeneratePlan(msg.payload.requirement ?? '', {
+            table: msg.payload.table,
+            sysId: msg.payload.sysId,
+            fields: msg.payload.fields,
+          })
     entry = { status: 'done', op: msg.op, outcome }
   } catch (err) {
     entry = { status: 'error', op: msg.op, error: (err as Error).message }

@@ -24,6 +24,10 @@ export interface ReviewInput {
   timing?: BrTiming
   table: string
   intent?: string
+  /** How the tester script should seed `current`. */
+  seedMode?: 'blank' | 'record' | 'query'
+  seedSysId?: string
+  seedQuery?: string
 }
 
 export interface ReviewResult {
@@ -172,59 +176,105 @@ async function callOpenai(cfg: LlmConfig, system: string, user: string): Promise
   return body.choices?.[0]?.message?.content ?? ''
 }
 
-export interface GenerateResult {
-  script: string
-  notes: string[]
+/** One thing the AI proposes building to satisfy a requirement. */
+export interface PlanArtifact {
+  /** Human label, e.g. "Field", "ACL", "Script Include", "Business Rule", "Fix Script". */
+  kind: string
+  title: string
+  /** 'create' = insert a customization record; 'background' = run a script. */
+  action: 'create' | 'background'
+  /** For action=create: the metadata table to insert into (e.g. sys_dictionary). */
+  targetTable?: string
+  /** For action=create: the record's column values. */
+  fields?: Record<string, string>
+  /** For action=background: the server-side script to run / open. */
+  script?: string
+  notes?: string
 }
 
-/** Prompt to generate a server-side background script from a plain requirement. */
-export function buildGeneratePrompt(requirement: string, table?: string): { system: string; user: string } {
+export interface PlanResult {
+  summary: string
+  artifacts: PlanArtifact[]
+}
+
+export interface PlanContext {
+  table?: string
+  sysId?: string
+  /** Existing field names on the table, for grounding. */
+  fields?: string[]
+}
+
+/** Prompt: turn a requirement + current context into a plan of artifacts. */
+export function buildPlanPrompt(requirement: string, ctx: PlanContext): { system: string; user: string } {
   const system = [
-    'You are a senior ServiceNow developer.',
-    'You write correct, safe server-side background scripts (run in Scripts - Background) using the Glide API (GlideRecord, gs, GlideAggregate, GlideDateTime).',
-    'Follow best practices: filter GlideRecord queries, guard against large updates, use gs.info() to report progress, avoid hardcoded sys_ids.',
+    'You are a senior ServiceNow solution engineer and platform developer.',
+    'Given a requirement and the current table context, you decide the concrete ServiceNow artifacts needed and return them as a build plan.',
+    'Prefer configuration/customization records (dictionary fields, ACLs, Script Includes, UI Policies, Business Rules, Client Scripts, Choices) over one-off data changes.',
     'You always reply with a SINGLE valid JSON object and nothing else.',
   ].join(' ')
+
   const user = [
-    'Write a ServiceNow background script for this requirement:',
+    'Requirement:',
     requirement,
-    table ? `Primary table (if relevant): ${table}` : '',
     '',
-    'Return a JSON object with exactly these keys:',
-    '- "script": the complete background script (server-side, Rhino/ES5-safe).',
-    '- "notes": an array of short strings — assumptions, safety warnings, and what to verify before running in production.',
+    ctx.table ? `Current table: ${ctx.table}` : 'No specific table.',
+    ctx.fields?.length ? `Existing fields (sample): ${ctx.fields.slice(0, 60).join(', ')}` : '',
     '',
-    'Respond with ONLY the JSON object.',
+    'Return a JSON object with:',
+    '- "summary": one sentence describing the approach.',
+    '- "artifacts": an array. Each item has:',
+    '   - "kind": short label (Field, ACL, Script Include, UI Policy, Business Rule, Client Script, Choice, Fix Script, Background Script, Data Change).',
+    '   - "title": a concise name.',
+    '   - "action": "create" for a customization record to insert, or "background" for a script to run.',
+    '   - For action="create": "targetTable" (the ServiceNow metadata table to insert into, e.g. sys_dictionary for a field, sys_security_acl for an ACL, sys_script_include, sys_ui_policy, sys_script, sys_script_client, sys_choice) and "fields" (an object of that record\'s column names → values; include name/table/element/script/etc. as appropriate).',
+    '   - For action="background": "script" (a complete, safe server-side background script).',
+    '   - "notes": optional short caveat.',
+    '',
+    'Order artifacts by dependency (create fields before rules that use them). Respond with ONLY the JSON object.',
   ]
     .filter(Boolean)
     .join('\n')
   return { system, user }
 }
 
-function coerceGenerate(raw: unknown): GenerateResult {
+function coercePlan(raw: unknown): PlanResult {
   const o = (raw ?? {}) as Record<string, unknown>
-  return {
-    script: typeof o.script === 'string' ? o.script : '',
-    notes: Array.isArray(o.notes) ? o.notes.map((n) => String(n)) : [],
-  }
+  const arr = Array.isArray(o.artifacts) ? o.artifacts : []
+  const artifacts: PlanArtifact[] = arr.map((a) => {
+    const r = (a ?? {}) as Record<string, unknown>
+    const fields: Record<string, string> = {}
+    if (r.fields && typeof r.fields === 'object') {
+      for (const [k, v] of Object.entries(r.fields as Record<string, unknown>)) fields[k] = String(v ?? '')
+    }
+    return {
+      kind: String(r.kind ?? 'Artifact'),
+      title: String(r.title ?? '(untitled)'),
+      action: r.action === 'create' ? 'create' : 'background',
+      targetTable: r.targetTable ? String(r.targetTable) : undefined,
+      fields: Object.keys(fields).length ? fields : undefined,
+      script: typeof r.script === 'string' ? r.script : undefined,
+      notes: r.notes ? String(r.notes) : undefined,
+    }
+  })
+  return { summary: String(o.summary ?? ''), artifacts }
 }
 
-export type GenerateOutcome =
+export type PlanOutcome =
   | { configured: false }
-  | { configured: true; ok: true; result: GenerateResult }
+  | { configured: true; ok: true; result: PlanResult }
   | { configured: true; ok: false; error: string }
 
-export async function runGenerateScript(
+export async function runGeneratePlan(
   requirement: string,
-  table?: string,
+  ctx: PlanContext,
   config?: LlmConfig | null,
-): Promise<GenerateOutcome> {
+): Promise<PlanOutcome> {
   const cfg = config ?? (await loadLlmConfig())
   if (!cfg) return { configured: false }
-  const { system, user } = buildGeneratePrompt(requirement, table)
+  const { system, user } = buildPlanPrompt(requirement, ctx)
   try {
     const text = await callProvider(cfg, system, user)
-    return { configured: true, ok: true, result: coerceGenerate(extractJson(text)) }
+    return { configured: true, ok: true, result: coercePlan(extractJson(text)) }
   } catch (err) {
     return { configured: true, ok: false, error: (err as Error).message }
   }

@@ -121,7 +121,7 @@
         </section>
 
         <section class="card" id="tester-card">
-          <h2 class="card-title">Layer 1 — Static Analysis</h2>
+          <h2 class="card-title">Script &amp; AI Review</h2>
           <p class="hint" id="tester-source">Paste a script, pick one above, or open a Business Rule / Client Script / Script Include record to auto-load it.</p>
 
           <div class="field-inline">
@@ -212,7 +212,7 @@
         </section>
 
         <section class="card" id="l3-card">
-          <h2 class="card-title">Layer 3 — Guarded Real Execution</h2>
+          <h2 class="card-title">Guarded Real Execution</h2>
           <div class="guard-badge" id="l3-guard">Checking instance…</div>
           <p class="hint">
             Creates a <strong>real</strong> record on a sub-prod so the actual
@@ -228,7 +228,7 @@
             id="l3-fields"
             class="query-input code"
             rows="4"
-            placeholder="short_description=snJava Layer 3 test&#10;priority=3"
+            placeholder="short_description=snJava test&#10;priority=3"
           ></textarea>
 
           <div class="btn-row">
@@ -239,39 +239,28 @@
         </section>
       </div>
 
-      <!-- ============ GENERATE SCRIPT ============ -->
+      <!-- ============ GENERATE ============ -->
       <div class="panel" id="panel-generate">
         <section class="card" id="generate-card">
-          <h2 class="card-title">Generate Background Script</h2>
+          <h2 class="card-title">Generate</h2>
           <p class="hint">
-            Describe what you need; the AI writes a server-side background script.
-            Review it, then open the Background Scripts page to run it.
+            Describe what you need. The AI proposes the ServiceNow artifacts to
+            build for the current table; review each, then create them in the
+            selected Scope + Update Set.
           </p>
           <label class="field-label" for="gen-requirement">Requirement</label>
           <textarea
             id="gen-requirement"
             class="query-input"
             rows="4"
-            placeholder="e.g. Close all incidents inactive for more than 90 days and add a work note"
+            placeholder="e.g. Add a 'VIP callback' checkbox on incident, an ACL so only ITIL can edit it, and a before-BR that flags VIP callers"
           ></textarea>
           <div class="btn-row">
-            <button class="btn" id="gen-run" type="button">Generate</button>
+            <button class="btn" id="gen-run" type="button">Generate plan</button>
             <span class="spinner" id="gen-spinner" hidden></span>
           </div>
-          <p class="ai-note" id="gen-status">Uses the AI configured in ⚙ Settings.</p>
-
-          <div id="gen-section" hidden>
-            <div class="editor-toolbar">
-              <span class="editor-title">Background script</span>
-              <span class="editor-tools">
-                <button class="tool-btn" id="gen-format" type="button">⧉ Format</button>
-                <button class="tool-btn" id="gen-copy" type="button">⧉ Copy</button>
-                <button class="tool-btn accent" id="gen-open" type="button">Background Scripts</button>
-              </span>
-            </div>
-            <div class="cm-host" id="gen-editor"></div>
-            <div class="results" id="gen-notes"></div>
-          </div>
+          <p class="ai-note" id="gen-status">Uses the AI configured in the Settings tab.</p>
+          <div class="results" id="gen-list"></div>
         </section>
       </div>
 
