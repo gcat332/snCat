@@ -61,6 +61,15 @@ function byType(artifacts: ArtifactRef[], type: string): ArtifactRef[] {
   return artifacts.filter((a) => a.type === type)
 }
 
+/** Human-readable name for a table/module id: "change_request" → "Change Request". */
+function titleCase(name: string): string {
+  return name
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 function emptyNote(text: string): SpecBlock {
   return { kind: 'paragraph', text }
 }
@@ -72,20 +81,21 @@ export function composeSpec(input: ComposeInput): SpecDocument {
   // single customization record (BR, Script Include, Catalog Item, Transform Map).
   const isTableSpec = !TYPE_LABEL[rootTable]
   const table = primaryTable ?? rootTable
+  const tableDisplay = titleCase(table)
 
-  const title = isTableSpec ? table : rootLabel || rootKind
+  const title = isTableSpec ? tableDisplay : rootLabel || rootKind
   const subtitle = isTableSpec ? 'Table / Module Design Specification' : `${rootKind} · Design Specification`
 
   const meta = isTableSpec
     ? [
         { key: 'Instance', value: instance },
-        { key: 'Table', value: table },
+        { key: 'Table', value: `${tableDisplay} (${table})` },
         { key: 'Artifacts documented', value: String(artifacts.length) },
       ]
     : [
         { key: 'Instance', value: instance },
         { key: 'Artifact type', value: rootKind },
-        { key: 'Table', value: rootTable },
+        { key: 'Table', value: `${titleCase(rootTable)} (${rootTable})` },
         { key: 'sys_id', value: rootFields['sys_id'] ?? '' },
         { key: 'Artifacts included', value: String(artifacts.length + 1) },
       ]
@@ -95,7 +105,7 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     subtitle,
     meta,
     sections: [
-      overviewSection(rootKind, isTableSpec ? table : rootLabel, instance, rootFields, isTableSpec),
+      overviewSection(rootKind, isTableSpec ? tableDisplay : rootLabel, instance, rootFields, isTableSpec),
       dataModelSection(table, rootFields, artifacts, schema),
       logicSection(rootFields, artifacts, isTableSpec ? '' : `${rootKind}: ${rootLabel || rootKind}`),
       integrationSection(artifacts),

@@ -17,6 +17,7 @@ import {
   ShadingType,
   BorderStyle,
   TableOfContents,
+  ImageRun,
 } from 'docx'
 import type { SpecBlock, SpecDocument } from './spec'
 
@@ -88,8 +89,22 @@ function blockToChildren(block: SpecBlock): (Paragraph | Table)[] {
   }
 }
 
-export function buildDocxDocument(doc: SpecDocument): Document {
+export function buildDocxDocument(doc: SpecDocument, logo?: Uint8Array): Document {
   const children: (Paragraph | Table)[] = []
+
+  if (logo && logo.length) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 160 },
+        children: [
+          new ImageRun({
+            data: logo,
+            transformation: { width: 168, height: 53 }, // MFEC logo aspect ~3.2:1
+          }),
+        ],
+      }),
+    )
+  }
 
   children.push(new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun({ text: doc.title, color: BLUE_DARK })] }))
   children.push(new Paragraph({ children: [new TextRun({ text: doc.subtitle, color: '5B6172' })] }))
@@ -123,6 +138,6 @@ export function buildDocxDocument(doc: SpecDocument): Document {
   })
 }
 
-export async function renderSpecDocxBlob(doc: SpecDocument): Promise<Blob> {
-  return Packer.toBlob(buildDocxDocument(doc))
+export async function renderSpecDocxBlob(doc: SpecDocument, logo?: Uint8Array): Promise<Blob> {
+  return Packer.toBlob(buildDocxDocument(doc, logo))
 }

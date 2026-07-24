@@ -1873,17 +1873,26 @@ const ARTIFACT_GROUP: Record<string, string> = {
 
 async function getLogoDataUri(): Promise<string | undefined> {
   if (logoDataUriCache !== undefined) return logoDataUriCache
-  try {
-    const res = await fetch(chrome.runtime.getURL('public/brand/mfec-logo-light.png'))
-    const blob = await res.blob()
-    logoDataUriCache = await new Promise<string>((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as string)
-      reader.readAsDataURL(blob)
-    })
-  } catch {
-    logoDataUriCache = undefined
+  // Vite copies public/ to the dist root (stripping the prefix), so the packaged
+  // path is brand/… — but @crxjs also mirrors manifest-referenced assets under
+  // public/. Try both so the real logo loads regardless of the build layout.
+  const candidates = ['brand/mfec-logo-light.png', 'public/brand/mfec-logo-light.png']
+  for (const path of candidates) {
+    try {
+      const res = await fetch(chrome.runtime.getURL(path))
+      if (!res.ok) continue
+      const blob = await res.blob()
+      logoDataUriCache = await new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.readAsDataURL(blob)
+      })
+      return logoDataUriCache
+    } catch {
+      /* try next candidate */
+    }
   }
+  logoDataUriCache = undefined
   return logoDataUriCache
 }
 
@@ -2017,13 +2026,26 @@ async function exportPdf() {
   setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
+async function getLogoBytes(): Promise<Uint8Array | undefined> {
+  for (const path of ['brand/mfec-logo-light.png', 'public/brand/mfec-logo-light.png']) {
+    try {
+      const res = await fetch(chrome.runtime.getURL(path))
+      if (!res.ok) continue
+      return new Uint8Array(await res.arrayBuffer())
+    } catch {
+      /* try next */
+    }
+  }
+  return undefined
+}
+
 async function exportDocx() {
   const base = buildSpecDoc()
   if (!base) return
   specDocxBtn.disabled = true
   try {
     const doc = await formatSpecDoc(base)
-    const blob = await renderSpecDocxBlob(doc)
+    const blob = await renderSpecDocxBlob(doc, await getLogoBytes())
     download(blob, `${safeName()}.docx`)
   } finally {
     specDocxBtn.disabled = false
