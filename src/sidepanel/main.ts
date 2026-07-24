@@ -365,16 +365,16 @@ async function refreshXmlControls() {
   const formHas = !!(current?.table && current.sysId && current.view === 'form')
   const listHas = isListView()
   xmlRow.hidden = !(formHas || listHas)
-  xmlSave.textContent = listHas ? 'Save list XML' : 'Save XML'
-  xmlSave.title = listHas ? 'Export every record in this list as XML' : 'Export this record as XML'
+  xmlSave.textContent = listHas ? 'Copy list' : 'Copy record'
+  xmlSave.title = listHas ? 'Copy every record in this list' : 'Copy this record'
   xmlView.hidden = !formHas
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   xmlPaste.disabled = !clip
-  xmlPaste.textContent = clip && clip.count > 1 ? `Paste XML (${clip.count})` : 'Paste XML'
+  xmlPaste.textContent = clip && clip.count > 1 ? `Paste (${clip.count})` : 'Paste'
   xmlPaste.title = clip
-    ? `Import saved ${clip.count} ${clip.table} record(s) from ${clip.host}`
-    : 'Save a record XML first'
+    ? `Insert the ${clip.count} copied ${clip.table} record(s) from ${clip.host} as new records`
+    : 'Copy a record first'
 }
 
 async function fetchRecordXml(): Promise<string | null> {
@@ -444,7 +444,7 @@ async function saveXml() {
     elText(
       'div',
       'ok-banner',
-      `✓ Saved ${records.length} ${clip.table} ${noun}. Use “Paste XML” on any list or form to import.`,
+      `✓ Copied ${records.length} ${clip.table} ${noun}. Use “Paste” on any list or form to insert them as new records.`,
     ),
   )
   if (list) {
@@ -469,7 +469,7 @@ async function pasteXml() {
   // (older clips) with the same dedupe applied.
   const rawRecords = clip.records ?? dedupeRecords(parseUnloadXmlAll(clip.xml, clip.table)).map((r) => r.fields)
   if (rawRecords.length === 0) {
-    xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the saved XML.'))
+    xmlOut.replaceChildren(elText('div', 'error', 'No copied records to paste.'))
     return
   }
   const fieldsList = rawRecords.map((f) => importableFields(f))
@@ -516,7 +516,7 @@ async function pasteXml() {
     if (Number(done) > 0) {
       await chrome.storage.local.remove('xmlClip')
       await refreshXmlControls()
-      xmlOut.append(elText('div', 'info-sub', 'Saved XML cleared — Save again to import another copy.'))
+      xmlOut.append(elText('div', 'info-sub', 'Copied records cleared — Copy again to insert another set.'))
     }
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))

@@ -29,9 +29,9 @@
       "id": "T-102",
       "type": "review",
       "target": "src/core F1: graph.ts, resolvers.ts, spec-runner.ts, spec.ts, render-html.ts, render-docx.ts, format.ts",
-      "status": "dispatched",
+      "status": "returned",
       "attempts": 1,
-      "evidence": "",
+      "evidence": ".pipeline/evidence/T-102-review.json",
       "notes": ""
     },
     {
@@ -60,6 +60,15 @@
       "attempts": 1,
       "evidence": "",
       "notes": "2556-line UI monolith"
+    },
+    {
+      "id": "T-106",
+      "type": "review",
+      "target": "whole repo: dead code / unused features / unused deps & assets",
+      "status": "dispatched",
+      "attempts": 1,
+      "evidence": "",
+      "notes": "user-requested cleanup sweep; deletions land as Phase 4 refactor tasks with Chesterton's Fence notes"
     }
   ],
   "findings": [],
