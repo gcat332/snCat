@@ -63,6 +63,8 @@ export type ApiRequest =
   | { op: 'delete'; host: string; table: string; sysId: string }
   // Raw text GET (e.g. record unload XML) — read-only, not JSON.
   | { op: 'text'; host: string; url: string }
+  // Run a server-side background script (sys.scripts.do) — prod-guarded WRITE.
+  | { op: 'bgrun'; host: string; script: string }
 
 const API_BASE = '/api/now'
 

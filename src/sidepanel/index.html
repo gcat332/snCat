@@ -139,13 +139,13 @@
           <div class="cm-host" id="script-editor"></div>
 
           <label class="field-label" for="script-intent">
-            Intent — what should this do? (optional)
+            Intent &amp; change requests (optional)
           </label>
           <textarea
             id="script-intent"
             class="query-input"
-            rows="2"
-            placeholder="e.g. Set priority to 1 when the caller is a VIP"
+            rows="3"
+            placeholder="What it should do + anything to adjust. e.g. 'Set priority 1 for VIP callers; also add a null check on caller_id and a comment on each block.'"
           ></textarea>
 
           <div class="btn-row">
@@ -169,52 +169,27 @@
             <div class="cm-host" id="optimize-editor"></div>
           </div>
 
-          <div id="tester-section" hidden>
-            <div class="editor-toolbar">
-              <span class="editor-title">Tester script (for sandbox)</span>
-              <span class="editor-tools">
-                <button class="tool-btn" id="tester-format" type="button">⧉ Format</button>
-                <button class="tool-btn" id="tester-copy" type="button">⧉ Copy</button>
-                <button class="tool-btn accent" id="tester-run" type="button">▶ Run in sandbox</button>
-              </span>
-            </div>
-            <div class="cm-host" id="tester-editor"></div>
-          </div>
         </section>
 
-        <section class="card" id="sim-card">
-          <h2 class="card-title">Layer 2 — Sandbox Simulation</h2>
+        <section class="card" id="sim-card" hidden>
+          <h2 class="card-title">Sandbox — Run tester on instance</h2>
+          <div class="guard-badge" id="sim-guard">Checking instance…</div>
           <p class="hint">
-            Runs the script above against mocked Glide APIs in a sandboxed iframe.
-            <strong>Zero writes to the instance.</strong>
+            Runs the tester script as a real <strong>background script</strong> on
+            this instance and shows the output below. <strong>Hard-blocked on production.</strong>
           </p>
-
-          <label class="field-label" for="sim-table">Target table (current)</label>
-          <div class="btn-row" style="margin-top: 0">
-            <input id="sim-table" class="query-input" style="flex: 1" placeholder="incident" />
-            <button class="btn btn-ghost" id="sim-fill" type="button">Fill from a record</button>
+          <div class="editor-toolbar">
+            <span class="editor-title">Tester script</span>
+            <span class="editor-tools">
+              <button class="tool-btn" id="tester-format" type="button">⧉ Format</button>
+              <button class="tool-btn" id="tester-copy" type="button">⧉ Copy</button>
+            </span>
           </div>
-
-          <label class="field-label" for="sim-current">current fields (field=value per line)</label>
-          <textarea
-            id="sim-current"
-            class="query-input code"
-            rows="5"
-            placeholder="priority=3&#10;state=1&#10;short_description=Example"
-          ></textarea>
-
-          <label class="field-label" for="sim-previous">previous fields (optional — defaults to current)</label>
-          <textarea
-            id="sim-previous"
-            class="query-input code"
-            rows="3"
-            placeholder="priority=2"
-          ></textarea>
-
+          <div class="cm-host" id="tester-editor"></div>
           <div class="btn-row">
-            <button class="btn" id="sim-run" type="button">Run simulation</button>
-            <button class="btn btn-ghost" id="sim-bg" type="button">Run in Background Scripts ↗</button>
-            <span class="count-badge" id="sim-status" hidden></span>
+            <button class="btn" id="sim-run" type="button">Run on instance ▶</button>
+            <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts ↗</button>
+            <span class="spinner" id="sim-spinner" hidden></span>
           </div>
           <div class="results" id="sim-results"></div>
         </section>

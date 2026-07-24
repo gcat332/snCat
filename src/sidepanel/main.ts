@@ -16,6 +16,7 @@ import {
   getRecord,
   getText,
   queryRecords,
+  runBackground,
   updateRecord,
 } from '@core/api-client'
 import { importableFields, parseUnloadXml } from '@core/xml'
@@ -31,8 +32,6 @@ import {
   type ReviewOutcome,
 } from '@core/llm'
 import { createCodeEditor } from './editor'
-import { SandboxRunner } from '@core/sandbox-host'
-import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
 import type { ArtifactRef } from '@core/graph'
 import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
@@ -41,7 +40,7 @@ import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
-const sandbox = new SandboxRunner()
+let hasTesterScript = false
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
@@ -216,9 +215,9 @@ async function pasteXml() {
   }
   const fields = importableFields(parsed.fields)
   if (
-    !confirm(
+    !(await confirmDialog(
       `Import a "${clip.table}" record into ${current.host}?\n\n${Object.keys(fields).length} fields will be created as a NEW record (system fields dropped).`,
-    )
+    ))
   ) {
     return
   }
@@ -271,16 +270,17 @@ function renderXmlValues(filter: string) {
   list.replaceChildren()
   list.append(elText('div', 'chk-group-title', `${rows.length} field${rows.length === 1 ? '' : 's'}`))
   for (const [k, v] of rows) {
-    const r = document.createElement('button')
-    r.type = 'button'
-    r.className = 'result-row picker-row'
-    r.title = `Click to copy the value of ${k}`
-    r.append(
-      elText('span', 'label', k),
-      elText('span', 'sysid', v.length > 60 ? v.slice(0, 60) + '…' : v),
-    )
-    r.addEventListener('click', () => void copyText(v))
-    list.append(r)
+    // Same row style as Table schema for consistency.
+    const row = document.createElement('div')
+    row.className = 'schema-row2'
+    const name = document.createElement('button')
+    name.type = 'button'
+    name.className = 'col'
+    name.textContent = k
+    name.title = `Click to copy the value of ${k}`
+    name.addEventListener('click', () => void copyText(v, name))
+    row.append(name, elText('span', 'lbl', v.length > 160 ? v.slice(0, 160) + '…' : v))
+    list.append(row)
   }
 }
 
@@ -563,6 +563,39 @@ async function copyText(text: string, feedbackEl?: HTMLElement) {
   }
 }
 
+/** In-panel confirm dialog — window.confirm() is suppressed in side panels. */
+function confirmDialog(message: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay'
+    const box = document.createElement('div')
+    box.className = 'modal-box'
+    box.append(elText('div', 'modal-msg', message))
+    const row = document.createElement('div')
+    row.className = 'btn-row'
+    const cancel = document.createElement('button')
+    cancel.className = 'btn btn-ghost'
+    cancel.textContent = 'Cancel'
+    const ok = document.createElement('button')
+    ok.className = 'btn'
+    ok.textContent = 'Confirm'
+    const done = (v: boolean) => {
+      overlay.remove()
+      resolve(v)
+    }
+    cancel.addEventListener('click', () => done(false))
+    ok.addEventListener('click', () => done(true))
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) done(false)
+    })
+    row.append(cancel, ok)
+    box.append(row)
+    overlay.append(box)
+    document.body.append(overlay)
+    ok.focus()
+  })
+}
+
 let toastEl: HTMLElement | null = null
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 function showToast(text: string) {
@@ -603,11 +636,9 @@ const optimizeSave = el<HTMLButtonElement>('optimize-save')
 
 /** The script record currently loaded into the tester (for "Save to record"). */
 let loadedScriptRecord: { host: string; table: string; sysId: string; scriptField: string } | null = null
-const testerSection = el('tester-section')
 const testerEd = createCodeEditor(el('tester-editor'))
 const testerFormat = el<HTMLButtonElement>('tester-format')
 const testerCopy = el<HTMLButtonElement>('tester-copy')
-const testerRun = el<HTMLButtonElement>('tester-run')
 
 // AI settings (Settings tab)
 const aiEndpoint = el<HTMLInputElement>('ai-endpoint')
@@ -624,11 +655,15 @@ function activateTab(tabId: string) {
   document.getElementById(tabId)?.dispatchEvent(new MouseEvent('click'))
 }
 
-/** Toggle timing (BR only) and sandbox visibility (server scripts only). */
+/** Toggle the BR timing selector; sandbox visibility is handled separately. */
 function syncTimingVisibility() {
   timingWrap.style.display = scriptKind.value === 'business_rule' ? '' : 'none'
-  // Layer 2 Sandbox Simulation only applies to server-side scripts.
-  simCard.style.display = SERVER_KINDS.has(scriptKind.value) ? '' : 'none'
+  updateSandboxVisibility()
+}
+
+/** Sandbox appears only once a tester script exists AND the kind is server-side. */
+function updateSandboxVisibility() {
+  simCard.hidden = !(hasTesterScript && SERVER_KINDS.has(scriptKind.value))
 }
 
 /** Fetch a script record (any script table) and populate the Layer 1 editor. */
@@ -651,13 +686,10 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
   if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
-  // Layer 2/3: point the target table at what this script runs against.
+  // Layer 3: point the target table at what this script runs against.
   if (info.tableField) {
     const target = cellValue(rec[info.tableField])
-    if (target) {
-      simTable.value = target
-      l3Table.value = target
-    }
+    if (target) l3Table.value = target
   }
   syncTimingVisibility()
   const name = cellDisplay(rec[info.nameField]) || scriptTable
@@ -769,7 +801,7 @@ async function javaReview() {
     script: scriptEd.getValue(),
     kind: scriptKind.value as ScriptKind,
     timing: scriptTiming.value as BrTiming,
-    table: simTable.value.trim() || current?.table || 'incident',
+    table: current?.table || 'incident',
     intent: (el<HTMLTextAreaElement>('script-intent').value || '').trim() || undefined,
   })
   if (!started) {
@@ -784,7 +816,6 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   if (!entry) return
   if (entry.status === 'running') {
     optimizeSection.hidden = true
-    testerSection.hidden = true
     reviewSpinner.hidden = false
     analyzeBtn.disabled = true
     aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester… (keeps running if you close this panel)'
@@ -816,8 +847,10 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   }
   if (testScript) {
     testerEd.setValue(testScript)
-    testerSection.hidden = false
-    testerSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    hasTesterScript = true
+    updateSandboxVisibility() // sandbox appears now that a tester script exists
+    updateSandboxGuard()
+    simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
 
@@ -830,7 +863,7 @@ async function saveOptimizedToRecord() {
   const { host, table, sysId, scriptField } = loadedScriptRecord
   const code = optimizeEd.getValue()
   if (!code.trim()) return
-  if (!confirm(`Overwrite the ${table} record's script with the optimized version on ${host}?`)) return
+  if (!(await confirmDialog(`Overwrite the ${table} record's script with the optimized version on ${host}?`))) return
 
   optimizeSave.disabled = true
   const res = await updateRecord(host, table, sysId, { [scriptField]: code })
@@ -880,17 +913,14 @@ function renderFinding(f: LintFinding) {
   lintResults.append(wrap)
 }
 
-/* ---------- Layer 2 — Sandbox Simulation (M3) ---------- */
+/* ---------- Sandbox — run tester script on the instance (background) ---------- */
 
-const simTable = el<HTMLInputElement>('sim-table')
-const simFill = el<HTMLButtonElement>('sim-fill')
-const simCurrent = el<HTMLTextAreaElement>('sim-current')
-const simPrevious = el<HTMLTextAreaElement>('sim-previous')
+const simGuard = el('sim-guard')
 const simRun = el<HTMLButtonElement>('sim-run')
-const simStatus = el('sim-status')
+const simSpinner = el('sim-spinner')
 const simResults = el('sim-results')
 
-/** Parse "field=value" lines into a map (first '=' splits). */
+/** Parse "field=value" lines into a map (used by Layer 3). */
 function parseFields(text: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const raw of text.split('\n')) {
@@ -903,148 +933,61 @@ function parseFields(text: string): Record<string, string> {
   return out
 }
 
-function fieldsToText(rec: Record<string, unknown>): string {
-  return Object.entries(rec)
-    .filter(([k]) => !k.startsWith('__'))
-    .map(([k, v]) => `${k}=${cellValue(v)}`)
-    .join('\n')
+/** Reflect the prod-guard verdict in the sandbox card + gate the Run button. */
+function updateSandboxGuard() {
+  if (!current) {
+    simGuard.className = 'guard-badge'
+    simGuard.textContent = 'Checking instance…'
+    simRun.disabled = true
+    return
+  }
+  const verdict = classifyInstance(current.host)
+  simGuard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
+  simGuard.textContent = verdict.allowed
+    ? `✓ ${verdict.instance} — sub-prod. Background run permitted.`
+    : `⛔ ${verdict.reason}`
+  simRun.disabled = !verdict.allowed
 }
 
-async function fillFromRecord() {
-  const table = simTable.value.trim()
-  if (!current || !table) return
-  simFill.disabled = true
-  const prev = simFill.textContent
-  simFill.textContent = 'Loading…'
-  const res = await queryRecords(current.host, table, { limit: 1, displayValue: false })
-  simFill.disabled = false
-  simFill.textContent = prev
+/** Best-effort extraction of the script output from sys.scripts.do HTML. */
+function extractBgOutput(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const pres = Array.from(doc.querySelectorAll('pre')).map((p) => p.textContent ?? '').filter(Boolean)
+  if (pres.length) return pres.join('\n\n').trim()
+  // Fallback: visible body text, trimmed.
+  const text = (doc.body?.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim()
+  return text.slice(0, 4000)
+}
+
+async function runOnInstance() {
+  if (!current) return
+  const script = testerEd.getValue()
+  if (!script.trim()) {
+    simResults.replaceChildren(elText('div', 'empty', 'No tester script to run.'))
+    return
+  }
+  if (!(await confirmDialog(`Run this tester script as a REAL background script on ${current.host}?`))) {
+    return
+  }
+  simRun.disabled = true
+  simSpinner.hidden = false
+  simResults.replaceChildren(elText('div', 'empty', 'Running on the instance…'))
+
+  const res = await runBackground(current.host, script)
+  simSpinner.hidden = true
+  simRun.disabled = false
+
   if (!res.ok) {
     simResults.replaceChildren(elText('div', 'error', res.error))
     return
   }
-  if (res.data.length === 0) {
-    simResults.replaceChildren(elText('div', 'empty', `No records in ${table} to sample.`))
-    return
-  }
-  simCurrent.value = fieldsToText(res.data[0])
-}
-
-function runSimulation() {
-  return runSimulationWith(scriptEd.getValue())
-}
-
-async function runSimulationWith(script: string) {
-  if (!script.trim()) {
-    simResults.replaceChildren(elText('div', 'empty', 'Load or paste a script in Layer 1 first.'))
-    return
-  }
-  const job: SimulationJob = {
-    script,
-    kind: scriptKind.value as ScriptKind,
-    timing: scriptTiming.value as BrTiming,
-    table: simTable.value.trim() || 'incident',
-    currentFields: parseFields(simCurrent.value),
-    previousFields: simPrevious.value.trim() ? parseFields(simPrevious.value) : undefined,
-  }
-
-  simRun.disabled = true
-  simStatus.hidden = true
-  simResults.replaceChildren(elText('div', 'empty', 'Running in sandbox…'))
-
-  try {
-    const result = await sandbox.run(job)
-    renderSimResult(result)
-  } catch (err) {
-    simResults.replaceChildren(elText('div', 'error', (err as Error).message))
-  } finally {
-    simRun.disabled = false
-  }
-}
-
-const TRACE_LABEL: Record<TraceEvent['type'], string> = {
-  'field-set': 'set',
-  message: 'msg',
-  log: 'log',
-  abort: 'abort',
-  query: 'query',
-  'write-blocked': 'blocked',
-  call: 'call',
-  exception: 'error',
-}
-
-function traceText(e: TraceEvent): string {
-  switch (e.type) {
-    case 'field-set':
-      return `${e.target}.${e.field}: "${e.from}" → "${e.to}"`
-    case 'message':
-      return `addMessage(${e.level}): ${e.text}`
-    case 'log':
-      return `gs.${e.level}: ${e.text}`
-    case 'abort':
-      return `setAbortAction(${e.value})`
-    case 'query':
-      return `${e.table}.query(${e.encodedQuery || 'no filter'})`
-    case 'write-blocked':
-      return `${e.op}() on ${e.table} — ${e.note}`
-    case 'call':
-      return `${e.api}(${e.detail})`
-    case 'exception':
-      return e.message
-  }
-}
-
-function traceSeverity(e: TraceEvent): 'error' | 'warning' | 'info' {
-  if (e.type === 'exception') return 'error'
-  if (e.type === 'write-blocked' || e.type === 'abort') return 'warning'
-  if (e.type === 'message' && e.level === 'error') return 'warning'
-  return 'info'
-}
-
-function renderSimResult(result: SimulationResult) {
+  const output = extractBgOutput(res.data)
   simResults.replaceChildren()
-  simStatus.hidden = false
-  simStatus.textContent = result.ok
-    ? `${result.events.length} events`
-    : 'threw an exception'
-
-  if (result.events.length === 0 && result.ok) {
-    simResults.append(elText('div', 'ok-banner', '✓ Script ran; no observable Glide effects.'))
-  }
-
-  for (const e of result.events) {
-    const sev = traceSeverity(e)
-    const wrap = document.createElement('div')
-    wrap.className = `finding ${sev}`
-    const head = document.createElement('div')
-    head.className = 'fhead'
-    const rule = document.createElement('span')
-    rule.className = 'rule'
-    rule.append(
-      Object.assign(document.createElement('span'), { className: `sev-dot ${sev}` }),
-      document.createTextNode(TRACE_LABEL[e.type]),
-    )
-    head.append(rule)
-    wrap.append(head, elText('div', 'msg', traceText(e)))
-    simResults.append(wrap)
-  }
-
-  // "current after" summary
-  const after = Object.entries(result.currentAfter)
-  if (after.length) {
-    const box = document.createElement('div')
-    box.className = 'sim-after'
-    box.append(elText('div', 'sim-after-title', 'current (after)'))
-    for (const [k, v] of after) {
-      const r = document.createElement('div')
-      r.className = 'schema-row'
-      r.append(elText('span', 'col', k), elText('span', 'lbl', v))
-      box.append(r)
-    }
-    simResults.append(box)
-  }
-
-  simResults.append(elText('div', 'ai-note', result.note))
+  simResults.append(elText('div', 'chk-group-title', 'Background script output'))
+  const pre = document.createElement('pre')
+  pre.className = 'code-block'
+  pre.textContent = output || '(no textual output captured)'
+  simResults.append(pre)
 }
 
 /* ---------- Layer 3 — Guarded Real Execution (M5) ---------- */
@@ -1085,9 +1028,9 @@ async function createTestRecord() {
   }
   const fields = parseFields(l3Fields.value)
   if (
-    !confirm(
+    !(await confirmDialog(
       `Create a REAL record in "${table}" on ${current.host}?\n\nThis runs the actual Business Rules on the instance.`,
-    )
+    ))
   ) {
     return
   }
@@ -1139,7 +1082,7 @@ function renderL3Result(seed: Record<string, string>, rec: Record<string, unknow
 
 async function deleteTestRecord() {
   if (!current || !l3Created) return
-  if (!confirm(`Delete test record ${l3Created.sysId.slice(0, 8)}… from ${l3Created.table}?`)) return
+  if (!(await confirmDialog(`Delete test record ${l3Created.sysId.slice(0, 8)}… from ${l3Created.table}?`))) return
 
   l3Delete.disabled = true
   const res = await deleteRecord(current.host, l3Created.table, l3Created.sysId)
@@ -1488,12 +1431,11 @@ async function detect() {
     renderStatus('No record detected on this page.')
   }
   updateEnabledState()
+  updateSandboxGuard()
 
-  // Layer 2: default the simulation target to the current table unless it's a
-  // script table (a BR sets the target from its `collection` on auto-load).
-  if (current?.table && !scriptTableInfo(current.table) && !simTable.value.trim()) {
-    simTable.value = current.table
-    if (!l3Table.value.trim()) l3Table.value = current.table
+  // Default the Layer 3 target table to the current data table.
+  if (current?.table && !scriptTableInfo(current.table) && !l3Table.value.trim()) {
+    l3Table.value = current.table
   }
   // Prefill the picker's table filter with the current data table.
   if (current?.table && !scriptTableInfo(current.table) && !pickerTable.value.trim()) {
@@ -1529,10 +1471,6 @@ xmlPaste.addEventListener('click', pasteXml)
 xmlView.addEventListener('click', viewXmlValues)
 testerFormat.addEventListener('click', () => formatEditor(testerEd, testerFormat))
 testerCopy.addEventListener('click', () => copyText(testerEd.getValue()))
-testerRun.addEventListener('click', () => {
-  simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  void runSimulationWith(testerEd.getValue())
-})
 aiSave.addEventListener('click', saveAiSettings)
 el<HTMLButtonElement>('ai-preset-agenthub').addEventListener('click', () => {
   aiFormat.value = 'agenthub'
@@ -1548,15 +1486,14 @@ pickerSearch.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') findScripts()
 })
 syncPickerTableVisibility()
-simFill.addEventListener('click', fillFromRecord)
-simRun.addEventListener('click', runSimulation)
+simRun.addEventListener('click', runOnInstance)
 el<HTMLButtonElement>('sim-bg').addEventListener('click', () => {
   if (!current?.host) {
     showToast('Open a ServiceNow tab first')
     return
   }
-  void copyText(scriptEd.getValue())
-  showToast('Script copied — paste it into Background Scripts')
+  void copyText(testerEd.getValue())
+  showToast('Tester script copied — paste it into Background Scripts')
   void chrome.tabs.create({ url: `https://${current.host}/sys.scripts.do` })
 })
 l3Create.addEventListener('click', createTestRecord)

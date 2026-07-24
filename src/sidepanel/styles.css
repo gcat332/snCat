@@ -457,6 +457,38 @@ button.picker-row:hover {
   opacity: 1;
 }
 
+/* In-panel confirm modal (window.confirm is suppressed in side panels) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 9, 96, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 20px;
+}
+
+.modal-box {
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 16px;
+  max-width: 320px;
+  box-shadow: 0 8px 30px rgba(0, 9, 96, 0.3);
+}
+
+.modal-msg {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  margin-bottom: 12px;
+}
+
+.modal-box .btn-row {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 /* Schema search box spacing/appearance */
 #schema-search {
   margin-top: 10px;

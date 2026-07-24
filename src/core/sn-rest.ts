@@ -122,6 +122,39 @@ async function apiWrite<T>(
   }
 }
 
+/**
+ * Run a server-side background script via the classic sys.scripts.do form.
+ * This executes REAL code on the instance (Rhino), so it is prod-guarded and
+ * needs the session's g_ck. Returns the raw HTML response for the caller to
+ * extract output from.
+ */
+async function apiBgRun(host: string, script: string, deps: RestDeps): Promise<ApiResult<string>> {
+  const verdict = classifyInstance(host, deps.guardConfig)
+  if (!verdict.allowed) return { ok: false, status: 403, error: `Prod guard: ${verdict.reason}` }
+  if (!deps.token) {
+    return { ok: false, status: 401, error: 'Background run needs g_ck; open a classic ServiceNow page and retry.' }
+  }
+  const body = new URLSearchParams()
+  body.set('script', script)
+  body.set('sysparm_ck', deps.token)
+  body.set('runscript', 'Run script')
+  body.set('quota_managed_transaction', 'on')
+
+  let res: Response
+  try {
+    res = await fetch(`https://${host}/sys.scripts.do`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+  } catch (err) {
+    return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
+  }
+  if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` }
+  return { ok: true, data: await res.text() }
+}
+
 type RecordRow = Record<string, unknown>
 
 export async function executeApiRequest(
@@ -157,6 +190,8 @@ export async function executeApiRequest(
       return apiWrite<void>(req.host, buildRecordUrl(req.host, req.table, req.sysId), 'DELETE', deps)
     case 'text':
       return apiGetText(req.url, deps)
+    case 'bgrun':
+      return apiBgRun(req.host, req.script, deps)
     default: {
       const _exhaustive: never = req
       return { ok: false, status: 0, error: `Unknown op: ${JSON.stringify(_exhaustive)}` }

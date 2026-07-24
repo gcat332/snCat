@@ -80,7 +80,9 @@ export function buildReviewPrompt(input: ReviewInput): { system: string; user: s
 
   const user = [
     `Review this ServiceNow ${kind}${when} on table "${input.table}".`,
-    input.intent ? `Stated intent: ${input.intent}` : 'No intent was stated; infer it from the code.',
+    input.intent
+      ? `Intent and requested changes (apply these): ${input.intent}`
+      : 'No intent was stated; infer it from the code.',
     '',
     'SCRIPT:',
     '```javascript',
@@ -88,7 +90,7 @@ export function buildReviewPrompt(input: ReviewInput): { system: string; user: s
     '```',
     '',
     'Return a JSON object with exactly these string/array keys:',
-    '- "optimizedScript": a corrected, optimized version of the script following ServiceNow best practices (fix anti-patterns like current.update() in before rules, unconditioned GlideRecord queries, GlideRecord in client scripts, etc.). Keep it functionally equivalent to the intent.',
+    '- "optimizedScript": a corrected, optimized version of the script following ServiceNow best practices (fix anti-patterns like current.update() in before rules, unconditioned GlideRecord queries, GlideRecord in client scripts, etc.). Apply the requested changes above, and keep it functionally consistent with the intent. Add brief comments where helpful.',
     '- "testScript": a self-contained script that exercises the logic in a sandbox where these globals are pre-defined as mocks: current, previous, gs, GlideRecord, GlideRecordSecure, g_form, g_user. Seed current via current.setValue(field, value), run the logic, and use gs.info(...) to log observable outcomes. Do NOT define these globals yourself.',
     '- "notes": an array of short strings, each one finding or suggestion.',
     '',

@@ -139,3 +139,8 @@ export function deleteRecord(
 export function getText(host: string, url: string): Promise<ApiResult<string>> {
   return call({ op: 'text', host, url })
 }
+
+/** Run a server-side background script (prod-guarded). Returns raw HTML. */
+export function runBackground(host: string, script: string): Promise<ApiResult<string>> {
+  return call({ op: 'bgrun', host, script })
+}
