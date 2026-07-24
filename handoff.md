@@ -150,7 +150,7 @@ extension/
     └── mfec-reveal.css      # brand theme (tokens above)
 ```
 
-- Auth: reuse the browser session (cookies) for same-origin REST calls from the content script, or `host_permissions` + fetch from the service worker with credentials. Also need `X-UserToken` (`g_ck`) for some endpoints — content script can read `window.g_ck` on classic UI pages (needs main-world script injection).
+- Auth (RESOLVED in code, 2026-07-24): REST calls **must run in the content script (page origin)**, not the service worker. A background/SW fetch is cross-site, so ServiceNow's `SameSite=Lax` session cookie is withheld → 401 even when the user is logged in. The side panel messages the top-frame content script (`frameId:0`), which fetches same-origin with the cookie; `X-UserToken` (`g_ck`, read by the main-world bridge) is added for writes. See `core/sn-rest.ts`, `content/index.ts`, `core/api-client.ts`.
 - Detect context on both **classic UI** (`/nav_to.do`, `/<table>.do?sys_id=`) and **Next Experience/polaris** URLs (`/now/nav/ui/classic/params/target/...`) — parsing differs.
 
 ## 6. Suggested milestones

@@ -3,8 +3,6 @@
  * script — it only opens the side panel and relays messages. Script execution
  * happens in sandboxed iframes hosted by the side panel / runner page.
  */
-import type { RuntimeMessage } from '@core/types'
-import { handleApiRequest } from './api'
 
 // Open the side panel when the toolbar icon is clicked.
 chrome.runtime.onInstalled.addListener(() => {
@@ -23,16 +21,5 @@ chrome.action.onClicked.addListener((tab) => {
   }
 })
 
-// REST broker: the side panel asks the background to perform authenticated
-// ServiceNow API calls (background has host_permissions + session cookies).
-chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
-  if (message.kind === 'sncat:api') {
-    handleApiRequest(message.request)
-      .then(sendResponse)
-      .catch((err: unknown) =>
-        sendResponse({ ok: false, status: 0, error: (err as Error).message }),
-      )
-    return true // async response
-  }
-  return undefined
-})
+// Note: ServiceNow REST calls are executed by the content script (page origin)
+// so the session cookie is sent — see core/sn-rest.ts and content/index.ts.

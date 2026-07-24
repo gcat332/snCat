@@ -12,15 +12,25 @@ import type {
 import type { RuntimeMessage } from './types'
 
 async function call<T>(request: ApiRequest): Promise<ApiResult<T>> {
+  // Route to the active tab's top-frame content script, which runs in the
+  // ServiceNow page origin so the session cookie is sent (a background fetch is
+  // cross-site and the SameSite=Lax session cookie would be withheld → 401).
   try {
-    const res = (await chrome.runtime.sendMessage({
-      kind: 'sncat:api',
-      request,
-    } satisfies RuntimeMessage)) as ApiResult<T> | undefined
-    if (!res) return { ok: false, status: 0, error: 'No response from background.' }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (!tab?.id) return { ok: false, status: 0, error: 'No active tab.' }
+    const res = (await chrome.tabs.sendMessage(
+      tab.id,
+      { kind: 'sncat:api', request } satisfies RuntimeMessage,
+      { frameId: 0 },
+    )) as ApiResult<T> | undefined
+    if (!res) return { ok: false, status: 0, error: 'No response from the ServiceNow page.' }
     return res
   } catch (err) {
-    return { ok: false, status: 0, error: (err as Error).message }
+    return {
+      ok: false,
+      status: 0,
+      error: `Can't reach the ServiceNow page — reload the tab, then retry. (${(err as Error).message})`,
+    }
   }
 }
 

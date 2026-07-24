@@ -9,8 +9,21 @@
  */
 import { parseServiceNowContext } from '@core/context'
 import type { GFormSnapshot, PageContext, RuntimeMessage } from '@core/types'
+import { executeApiRequest } from '@core/sn-rest'
+import { DEFAULT_PROD_GUARD_CONFIG, type ProdGuardConfig } from '@core/prod-guard'
 
 let lastGForm: GFormSnapshot | null = null
+
+async function loadGuardConfig(): Promise<ProdGuardConfig> {
+  try {
+    const store = await chrome.storage.local.get('prodGuardConfig')
+    const override = store['prodGuardConfig'] as Partial<ProdGuardConfig> | undefined
+    if (override?.subProdPatterns?.length) return { subProdPatterns: override.subProdPatterns }
+  } catch {
+    /* defaults */
+  }
+  return DEFAULT_PROD_GUARD_CONFIG
+}
 
 // Cache g_ck for the background/REST layer to pick up later (handoff §5).
 window.addEventListener('message', (event) => {
@@ -61,6 +74,18 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ kind: 'sncat:context', context } satisfies RuntimeMessage)
       }, 120)
       return true // keep the message channel open for the async response
+    }
+
+    if (message.kind === 'sncat:api') {
+      // Execute the REST call HERE (page origin) so the session cookie is sent.
+      loadGuardConfig().then((guardConfig) => {
+        executeApiRequest(message.request, { token: lastGForm?.gCk ?? null, guardConfig })
+          .then(sendResponse)
+          .catch((err: unknown) =>
+            sendResponse({ ok: false, status: 0, error: (err as Error).message }),
+          )
+      })
+      return true
     }
     return undefined
   },
