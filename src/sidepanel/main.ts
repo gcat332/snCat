@@ -40,7 +40,6 @@ import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
-let hasTesterScript = false
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
@@ -270,16 +269,19 @@ function renderXmlValues(filter: string) {
   list.replaceChildren()
   list.append(elText('div', 'chk-group-title', `${rows.length} field${rows.length === 1 ? '' : 's'}`))
   for (const [k, v] of rows) {
-    // Same row style as Table schema for consistency.
+    // Same single-line card style as Table schema / the script picker.
     const row = document.createElement('div')
-    row.className = 'schema-row2'
+    row.className = 'info-row'
     const name = document.createElement('button')
     name.type = 'button'
-    name.className = 'col'
+    name.className = 'info-name'
     name.textContent = k
     name.title = `Click to copy the value of ${k}`
     name.addEventListener('click', () => void copyText(v, name))
-    row.append(name, elText('span', 'lbl', v.length > 160 ? v.slice(0, 160) + '…' : v))
+    const meta = document.createElement('span')
+    meta.className = 'info-meta'
+    meta.append(elText('span', 'info-sub', v.length > 80 ? v.slice(0, 80) + '…' : v))
+    row.append(name, meta)
     list.append(row)
   }
 }
@@ -442,21 +444,20 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
   const refTable = cellValue(d.reference as unknown)
 
   const row = document.createElement('div')
-  row.className = 'schema-row2'
+  row.className = 'info-row'
 
   // element name — click to copy the full dot-walk path
   const dotPath = schemaPrefix + element
   const name = document.createElement('button')
   name.type = 'button'
-  name.className = 'col'
+  name.className = 'info-name'
   name.textContent = element
   name.title = `Click to copy "${dotPath}"`
-  name.addEventListener('click', () => {
-    void copyText(dotPath, name)
-  })
+  name.addEventListener('click', () => void copyText(dotPath, name))
   row.append(name)
 
-  row.append(elText('span', 'type', type))
+  const meta = document.createElement('span')
+  meta.className = 'info-meta'
 
   // reference → target table (click to drill in; the field becomes a dot-walk hop)
   if (refTable) {
@@ -465,7 +466,7 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
     ref.textContent = `→ ${refTable}`
     ref.title = `References ${refTable} — click to dot-walk into it`
     ref.addEventListener('click', () => loadSchemaForTable(refTable, element))
-    row.append(ref)
+    meta.append(ref)
   }
 
   // choices — hover (or click) to load + preview
@@ -482,10 +483,12 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
     ch.addEventListener('mouseenter', open)
     ch.addEventListener('mouseleave', close)
     ch.addEventListener('click', open)
-    row.append(ch)
+    meta.append(ch)
   }
 
-  if (label) row.append(elText('span', 'lbl', label))
+  const sub = label ? `${type} · ${label}` : type
+  meta.append(elText('span', 'info-sub', sub))
+  row.append(meta)
   return row
 }
 
@@ -661,9 +664,10 @@ function syncTimingVisibility() {
   updateSandboxVisibility()
 }
 
-/** Sandbox appears only once a tester script exists AND the kind is server-side. */
+/** Sandbox shows for server-side scripts (BR / Script Include). The tester
+ *  editor is pre-filled by Java review when available, or can be pasted. */
 function updateSandboxVisibility() {
-  simCard.hidden = !(hasTesterScript && SERVER_KINDS.has(scriptKind.value))
+  simCard.hidden = !SERVER_KINDS.has(scriptKind.value)
 }
 
 /** Fetch a script record (any script table) and populate the Layer 1 editor. */
@@ -847,8 +851,7 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   }
   if (testScript) {
     testerEd.setValue(testScript)
-    hasTesterScript = true
-    updateSandboxVisibility() // sandbox appears now that a tester script exists
+    updateSandboxVisibility()
     updateSandboxGuard()
     simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
@@ -866,10 +869,17 @@ async function saveOptimizedToRecord() {
   if (!(await confirmDialog(`Overwrite the ${table} record's script with the optimized version on ${host}?`))) return
 
   optimizeSave.disabled = true
+  aiStatus.textContent = 'Saving optimized script to the record…'
   const res = await updateRecord(host, table, sysId, { [scriptField]: code })
   optimizeSave.disabled = false
   if (!res.ok) {
-    showToast(`Save failed: ${res.error.slice(0, 60)}`)
+    const scoped = /^x_/.test(table) || /^x_/.test(current?.table ?? '')
+    aiStatus.textContent =
+      `Save failed (HTTP ${res.status}): ${res.error}` +
+      (scoped
+        ? ' — this record is in a scoped app; Table API writes may be blocked by cross-scope privileges. Use “Open Background Scripts” to apply it, or edit in the platform UI.'
+        : '')
+    showToast('Save failed — see status above')
     return
   }
   scriptEd.setValue(code)

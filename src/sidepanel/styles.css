@@ -341,58 +341,68 @@ button.picker-row:hover {
   font-size: 11px;
 }
 
-/* Schema row v2 — clickable name (copy), reference target, choices.
-   Card style, shared by Table schema and Page-context "View values". */
-.schema-row2 {
-  position: relative;
+/* Info row — same single-line card style as the "Load a script" picker rows.
+   Shared by Table schema and Page-context "View values". */
+.info-row {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: space-between;
   align-items: center;
-  gap: 4px 8px;
-  padding: 7px 9px;
+  gap: 8px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   font-size: 12px;
 }
 
-.schema-row2:hover {
+.info-row:hover {
   border-color: var(--mfec-cyan);
-  background: rgba(0, 162, 233, 0.04);
+  background: rgba(0, 162, 233, 0.06);
 }
 
-.schema-row2 .col {
-  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--ink);
+.info-name {
   background: none;
   border: none;
   padding: 0;
   cursor: pointer;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.schema-row2 .col:hover {
+.info-name:hover {
   color: var(--mfec-blue);
   text-decoration: underline;
 }
 
-.schema-row2 .col.copied {
+.info-name.copied {
   color: var(--mfec-cyan);
 }
 
-.schema-row2 .type {
-  color: var(--ink-soft);
-  font-size: 11px;
+.info-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
-.schema-row2 .lbl {
-  flex: 1 1 100%;
+.info-sub {
   color: var(--ink-soft);
   font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.schema-row2 .ref {
+.ref {
   font-size: 11px;
   color: var(--mfec-blue-dark);
   background: rgba(0, 49, 180, 0.08);
@@ -400,19 +410,21 @@ button.picker-row:hover {
   border-radius: 4px;
   padding: 0 6px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
-.schema-row2 .ref:hover {
+.ref:hover {
   background: rgba(0, 49, 180, 0.16);
 }
 
-.schema-row2 .choices {
+.choices {
   font-size: 11px;
   color: var(--mfec-violet);
   border: 1px dashed rgba(105, 104, 171, 0.4);
   border-radius: 4px;
   padding: 0 6px;
   cursor: help;
+  flex-shrink: 0;
 }
 
 .choice-pop {

@@ -50,7 +50,7 @@ const scriptIncludeSpec = (names: string[], relation: string): FetchSpec[] =>
           relation,
           labelField: 'name',
           fields: ['sys_id', 'name', 'api_name', 'script', 'active'],
-          limit: 50,
+          limit: 1000,
         },
       ]
 
@@ -91,7 +91,7 @@ const resolveCatalogItem: Resolver = (a) => {
       relation: 'variable',
       labelField: 'question_text',
       fields: ['sys_id', 'name', 'question_text', 'type', 'mandatory'],
-      limit: 200,
+      limit: 1000,
     },
     {
       table: 'io_set_item',
@@ -109,7 +109,7 @@ const resolveCatalogItem: Resolver = (a) => {
       relation: 'UI policy',
       labelField: 'short_description',
       fields: ['sys_id', 'short_description', 'active'],
-      limit: 100,
+      limit: 2000,
     },
     {
       table: 'catalog_script_client',
@@ -118,7 +118,7 @@ const resolveCatalogItem: Resolver = (a) => {
       relation: 'catalog client script',
       labelField: 'name',
       fields: ['sys_id', 'name', 'type', 'script'],
-      limit: 100,
+      limit: 2000,
     },
   ]
   const workflow = a.fields['workflow']
@@ -148,7 +148,7 @@ const resolveTable: Resolver = (a) => {
       relation: 'ACL',
       labelField: 'name',
       fields: ['sys_id', 'name', 'operation', 'active', 'admin_overrides'],
-      limit: 200,
+      limit: 1000,
     },
   ]
 }
@@ -162,7 +162,7 @@ const resolveTransformMap: Resolver = (a) => [
     relation: 'field map',
     labelField: 'target_field',
     fields: ['sys_id', 'source_field', 'target_field', 'coalesce'],
-    limit: 500,
+    limit: 2000,
   },
 ]
 
