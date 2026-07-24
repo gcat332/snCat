@@ -37,11 +37,17 @@ describe('composeSpec', () => {
       artifacts: [a('script_include', { sys_id: 's2', name: 'HelperSI', script: 'return 1;' }, 'HelperSI')],
     })
     const logic = doc.sections.find((s) => s.heading === 'Logic')!
-    const codeCaptions = logic.blocks
-      .filter((b): b is Extract<SpecBlock, { kind: 'code' }> => b.kind === 'code')
-      .map((b) => b.caption)
-    expect(codeCaptions).toContain('Script (root)')
-    expect(codeCaptions.some((c) => c?.includes('HelperSI'))).toBe(true)
+    // Root script is a code block; the Script Include appears as its own subheading + code.
+    const codeBlocks = logic.blocks.filter(
+      (b): b is Extract<SpecBlock, { kind: 'code' }> => b.kind === 'code',
+    )
+    expect(codeBlocks.some((b) => b.code === 'gs.info("root");')).toBe(true)
+    expect(codeBlocks.some((b) => b.code === 'return 1;')).toBe(true)
+    const subheads = logic.blocks
+      .filter((b): b is Extract<SpecBlock, { kind: 'subheading' }> => b.kind === 'subheading')
+      .map((b) => b.text)
+    expect(subheads.some((t) => t.includes('HelperSI'))).toBe(true)
+    expect(subheads.some((t) => t.startsWith('Script Includes'))).toBe(true)
   })
 
   it('tabulates catalog variables in Data Model', () => {

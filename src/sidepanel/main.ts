@@ -1497,7 +1497,11 @@ async function createTestRecord() {
   const result = parseSnjava(out, 'snJava:result ')
   const defaults = parseSnjava(out, 'snJava:defaults ') ?? {}
   if (!result?.sys_id) {
-    step(`✗ Insert did not report a sys_id. Output: ${out.slice(0, 200)}`, 'err')
+    step('✗ Could not read the created record’s sys_id (it may still have been created — delete manually if so).', 'err')
+    const pre = document.createElement('pre')
+    pre.className = 'code-block'
+    pre.textContent = out.slice(0, 1500)
+    l3Results.append(pre)
     l3Create.disabled = false
     updateGuard()
     return
@@ -1510,25 +1514,33 @@ async function createTestRecord() {
   updateGuard()
 }
 
-/** Background insert (in scope) that dumps ALL fields after insert + defaults. */
+/** Background insert (in scope) that dumps all fields after insert + defaults. */
 function buildGuardedInsertScript(table: string, fields: Record<string, string>): string {
+  const t = JSON.stringify(table)
   const sets = Object.entries(fields)
     .map(([k, v]) => `gr.setValue(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
     .join('\n  ')
+  const seedKeys = JSON.stringify([
+    ...new Set([...Object.keys(fields), 'number', 'state', 'work_notes', 'approval', 'active', 'assignment_group', 'assigned_to']),
+  ])
   return [
-    `var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `var gr = new GlideRecord(${t});`,
     `gr.initialize();`,
     `  ${sets}`,
     `var id = gr.insert();`,
-    `if (!id) { gs.error('snJava:aborted'); }`,
+    `if (!id) { gs.info('snJava:aborted'); }`,
     `else {`,
     `  gr.get(id);`,
-    `  var def = new GlideRecord(${JSON.stringify(table)}); def.initialize();`,
-    `  var fs = gr.getFields(); var out = {}; var defs = {};`,
-    `  for (var i = 0; i < fs.size(); i++) {`,
-    `    var nm = '' + fs.get(i).getName();`,
-    `    var v = gr.getValue(nm); out[nm] = (v === null ? '' : '' + v);`,
-    `    var d = def.getValue(nm); defs[nm] = (d === null ? '' : '' + d);`,
+    `  var def = new GlideRecord(${t}); def.initialize();`,
+    `  var out = {}; var defs = {};`,
+    `  function grab(nm) { var v = gr.getValue(nm); out[nm] = (v == null ? '' : '' + v); var d = def.getValue(nm); defs[nm] = (d == null ? '' : '' + d); }`,
+    `  try {`,
+    `    var fs = gr.getFields();`,
+    `    for (var i = 0; i < fs.size(); i++) { grab('' + fs.get(i).getName()); }`,
+    `  } catch (e) {`,
+    `    var names = ${seedKeys};`,
+    `    for (var j = 0; j < names.length; j++) { try { grab(names[j]); } catch (e2) {} }`,
+    `    gs.info('snJava:dumpwarn ' + e);`,
     `  }`,
     `  out.sys_id = id;`,
     `  gs.info('snJava:result ' + JSON.stringify(out));`,
@@ -1537,16 +1549,36 @@ function buildGuardedInsertScript(table: string, fields: Record<string, string>)
   ].join('\n')
 }
 
-/** Parse a "marker {json}" line from a background-script output. */
+/** Parse the JSON object that follows a marker (balanced-brace, string-aware). */
 function parseSnjava(output: string, marker: string): Record<string, string> | null {
   const i = output.indexOf(marker)
   if (i === -1) return null
-  const line = output.slice(i + marker.length).split('\n')[0].trim()
-  try {
-    return JSON.parse(line) as Record<string, string>
-  } catch {
-    return null
+  const s = output.slice(i + marker.length)
+  const start = s.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let p = start; p < s.length; p++) {
+    const c = s[p]
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') inStr = false
+    } else if (c === '"') inStr = true
+    else if (c === '{') depth++
+    else if (c === '}') {
+      depth--
+      if (depth === 0) {
+        try {
+          return JSON.parse(s.slice(start, p + 1)) as Record<string, string>
+        } catch {
+          return null
+        }
+      }
+    }
   }
+  return null
 }
 
 /** System-managed fields excluded from the "set by Business Rules" view. */
@@ -1556,46 +1588,39 @@ const L3_NOISE = new Set([
 ])
 
 /**
- * Before → after view: tested (sent) fields, then everything the engine set that
- * we did NOT send and that differs from the table default (isolates BR effects).
+ * Guarded-run report: every field whose final value differs from the table
+ * default (excluding system noise) — i.e. everything this create changed,
+ * whether we sent it or a Business Rule set it. Each row is tagged accordingly.
  */
 function renderL3Diff(seed: Record<string, string>, result: Record<string, string>, defaults: Record<string, string>) {
+  const changed: { field: string; before: string; after: string; sent: boolean }[] = []
+  for (const k of Object.keys(result)) {
+    if (L3_NOISE.has(k)) continue
+    const after = result[k] ?? ''
+    const before = defaults[k] ?? ''
+    if (before !== after) changed.push({ field: k, before, after, sent: k in seed })
+  }
+  // Stable order: sent fields first, then engine-set.
+  changed.sort((a, b) => Number(b.sent) - Number(a.sent) || a.field.localeCompare(b.field))
+
   const box = document.createElement('div')
   box.className = 'sim-after'
+  box.append(elText('div', 'sim-after-title', `${changed.length} field(s) changed`))
+  if (changed.length === 0) box.append(elText('div', 'empty', 'No fields changed from the table defaults.'))
 
-  const testedChanged = Object.keys(seed).filter((k) => seed[k] !== (result[k] ?? '')).length
-  box.append(elText('div', 'sim-after-title', `Tested fields (${testedChanged} changed by the engine)`))
-  for (const [k, before] of Object.entries(seed)) {
-    const after = result[k] ?? ''
-    box.append(diffRow(k, before, after, before !== after))
-  }
-  if (Object.keys(seed).length === 0) box.append(elText('div', 'empty', 'No fields were sent.'))
-
-  // Fields the engine set that we didn't send and that differ from the default.
-  const engineSet = Object.keys(result).filter(
-    (k) => !(k in seed) && !L3_NOISE.has(k) && (result[k] ?? '') !== (defaults[k] ?? '') && (result[k] ?? '') !== '',
-  )
-  if (engineSet.length) {
-    box.append(elText('div', 'sim-after-title', `Set by Business Rules / defaults (${engineSet.length})`))
-    for (const k of engineSet) box.append(diffRow(k, defaults[k] ?? '(default)', result[k], true))
+  for (const c of changed) {
+    const row = document.createElement('div')
+    row.className = 'diff-kv'
+    row.append(elText('span', 'dk-field', c.field))
+    row.append(elText('span', c.sent ? 'dk-tag sent' : 'dk-tag engine', c.sent ? 'you' : 'BR'))
+    row.append(
+      elText('span', 'dk-before', c.before || '(empty)'),
+      elText('span', 'dk-arrow', '→'),
+      elText('span', 'dk-after', c.after || '(empty)'),
+    )
+    box.append(row)
   }
   l3Results.append(box)
-}
-
-function diffRow(field: string, before: string, after: string, changed: boolean): HTMLElement {
-  const row = document.createElement('div')
-  row.className = `diff-kv ${changed ? '' : 'same'}`
-  row.append(elText('span', 'dk-field', field))
-  if (changed) {
-    row.append(
-      elText('span', 'dk-before', before || '(empty)'),
-      elText('span', 'dk-arrow', '→'),
-      elText('span', 'dk-after', after || '(empty)'),
-    )
-  } else {
-    row.append(elText('span', 'dk-same', `= ${after || '(empty)'}`))
-  }
-  return row
 }
 
 async function deleteTestRecord() {

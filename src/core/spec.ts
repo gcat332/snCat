@@ -9,6 +9,7 @@ import type { ArtifactRef } from './graph'
 
 export type SpecBlock =
   | { kind: 'paragraph'; text: string }
+  | { kind: 'subheading'; level: 2 | 3; text: string }
   | { kind: 'keyvalue'; rows: { key: string; value: string }[] }
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'code'; caption?: string; code: string; lang?: 'javascript' | 'text' }
@@ -205,89 +206,117 @@ function dataModelSection(
   return { heading: 'Data Model', blocks }
 }
 
-function logicSection(
-  rootFields: Record<string, string>,
-  artifacts: ArtifactRef[],
-): SpecSection {
+/** A detail key/value block from a list of [label, value] pairs (non-empty only). */
+function detailBlock(pairs: [string, string | undefined][]): SpecBlock {
+  const rows = pairs.filter(([, v]) => v && v.trim()).map(([key, value]) => ({ key, value: value as string }))
+  return { kind: 'keyvalue', rows }
+}
+
+function logicSection(rootFields: Record<string, string>, artifacts: ArtifactRef[]): SpecSection {
   const blocks: SpecBlock[] = []
 
-  const condition = rootFields['condition'] || rootFields['filter_condition']
-  if (condition) blocks.push({ kind: 'code', caption: 'Condition', code: condition })
-  if (rootFields['script']) blocks.push({ kind: 'code', caption: 'Script (root)', code: rootFields['script'], lang: 'javascript' })
+  // If the spec's ROOT is itself a script record, document it first.
+  const rootScript = rootFields['script']
+  const rootCond = rootFields['condition'] || rootFields['filter_condition']
+  if (rootScript || rootCond) {
+    blocks.push({ kind: 'subheading', level: 2, text: 'This record' })
+    if (rootFields['description']) blocks.push({ kind: 'paragraph', text: rootFields['description'] })
+    if (rootCond) blocks.push({ kind: 'code', caption: 'Condition', code: rootCond, lang: 'text' })
+    if (rootScript) blocks.push({ kind: 'code', caption: 'Script', code: rootScript, lang: 'javascript' })
+  }
 
-  for (const br of byType(artifacts, 'business_rule')) {
-    const acts = (['insert', 'update', 'delete', 'query'] as const).filter((a) => br.fields[`action_${a}`] === 'true')
-    const meta = [
-      br.fields['when'],
-      br.fields['order'] ? `order ${br.fields['order']}` : '',
-      acts.length ? `on: ${acts.join(', ')}` : '',
-      br.fields['active'] === 'false' ? 'inactive' : '',
-    ]
-      .filter(Boolean)
-      .join(' · ')
-    const suffix = meta ? ` — ${meta}` : ''
-    if (br.fields['description']) blocks.push({ kind: 'paragraph', text: `${br.label}: ${br.fields['description']}` })
-    const cond = br.fields['condition'] || br.fields['filter_condition']
-    if (cond) blocks.push({ kind: 'code', caption: `Business Rule condition: ${br.label}${suffix}`, code: cond })
-    if (br.fields['script']) blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${suffix}`, code: br.fields['script'], lang: 'javascript' })
-  }
-  for (const cs of byType(artifacts, 'client_script')) {
-    const meta = [
-      cs.fields['type'] || 'client script',
-      cs.fields['field'] ? `field: ${cs.fields['field']}` : '',
-      cs.fields['global'] === 'true' ? 'global' : '',
-      cs.fields['active'] === 'false' ? 'inactive' : '',
-    ]
-      .filter(Boolean)
-      .join(' · ')
-    if (cs.fields['description']) blocks.push({ kind: 'paragraph', text: `${cs.label}: ${cs.fields['description']}` })
-    if (cs.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label} — ${meta}`, code: cs.fields['script'], lang: 'javascript' })
-    }
-  }
-  for (const si of byType(artifacts, 'script_include')) {
-    if (si.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Script Include: ${si.label}`, code: si.fields['script'], lang: 'javascript' })
-    }
-  }
-  for (const cs of byType(artifacts, 'catalog_client_script')) {
-    if (cs.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Catalog Client Script: ${cs.label}`, code: cs.fields['script'], lang: 'javascript' })
+  // Business Rules
+  const brs = byType(artifacts, 'business_rule')
+  if (brs.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Business Rules (${brs.length})` })
+    for (const br of brs) {
+      const acts = (['insert', 'update', 'delete', 'query'] as const).filter((a) => br.fields[`action_${a}`] === 'true')
+      blocks.push({ kind: 'subheading', level: 3, text: br.label })
+      blocks.push(
+        detailBlock([
+          ['When', br.fields['when']],
+          ['Order', br.fields['order']],
+          ['Runs on', acts.join(', ')],
+          ['Active', br.fields['active']],
+          ['Description', br.fields['description']],
+        ]),
+      )
+      const cond = br.fields['condition'] || br.fields['filter_condition']
+      if (cond) blocks.push({ kind: 'code', caption: 'Condition', code: cond, lang: 'text' })
+      if (br.fields['script']) blocks.push({ kind: 'code', caption: 'Script', code: br.fields['script'], lang: 'javascript' })
     }
   }
 
+  // Client Scripts
+  const css = byType(artifacts, 'client_script')
+  if (css.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Client Scripts (${css.length})` })
+    for (const cs of css) {
+      blocks.push({ kind: 'subheading', level: 3, text: cs.label })
+      blocks.push(
+        detailBlock([
+          ['Type', cs.fields['type']],
+          ['Field', cs.fields['field']],
+          ['Global', cs.fields['global']],
+          ['Active', cs.fields['active']],
+          ['Description', cs.fields['description']],
+        ]),
+      )
+      if (cs.fields['script']) blocks.push({ kind: 'code', caption: 'Script', code: cs.fields['script'], lang: 'javascript' })
+    }
+  }
+
+  // Script Includes
+  const sis = byType(artifacts, 'script_include')
+  if (sis.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Script Includes (${sis.length})` })
+    for (const si of sis) {
+      blocks.push({ kind: 'subheading', level: 3, text: si.label })
+      blocks.push(
+        detailBlock([
+          ['API name', si.fields['api_name']],
+          ['Active', si.fields['active']],
+          ['Description', si.fields['description']],
+        ]),
+      )
+      if (si.fields['script']) blocks.push({ kind: 'code', caption: 'Script', code: si.fields['script'], lang: 'javascript' })
+    }
+  }
+
+  // Catalog Client Scripts
+  const ccs = byType(artifacts, 'catalog_client_script')
+  if (ccs.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Catalog Client Scripts (${ccs.length})` })
+    for (const c of ccs) {
+      blocks.push({ kind: 'subheading', level: 3, text: c.label })
+      if (c.fields['script']) blocks.push({ kind: 'code', caption: 'Script', code: c.fields['script'], lang: 'javascript' })
+    }
+  }
+
+  // UI Policies (+ actions grouped under each)
   const policies = byType(artifacts, 'ui_policy')
-  const actions = byType(artifacts, 'ui_policy_action')
-  for (const p of policies) {
-    const meta = [
-      p.fields['on_load'] === 'true' ? 'on load' : '',
-      p.fields['reverse_if_false'] === 'true' ? 'reverses' : '',
-      p.fields['active'] === 'false' ? 'inactive' : '',
-    ]
-      .filter(Boolean)
-      .join(' · ')
-    blocks.push({ kind: 'paragraph', text: `UI Policy: ${p.label || p.fields['short_description'] || ''}${meta ? ` — ${meta}` : ''}` })
-    if (p.fields['conditions']) blocks.push({ kind: 'code', caption: 'When (condition)', code: p.fields['conditions'], lang: 'text' })
-    const mine = actions.filter((x) => x.fields['ui_policy'] === p.sysId)
-    if (mine.length) {
-      blocks.push({
-        kind: 'table',
-        columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
-        rows: mine.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
-      })
-    } else {
-      blocks.push({ kind: 'paragraph', text: '(no field actions)' })
+  const uiActions = byType(artifacts, 'ui_policy_action')
+  if (policies.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `UI Policies (${policies.length})` })
+    for (const p of policies) {
+      blocks.push({ kind: 'subheading', level: 3, text: p.label || p.fields['short_description'] || '(UI policy)' })
+      blocks.push(
+        detailBlock([
+          ['On load', p.fields['on_load']],
+          ['Reverse if false', p.fields['reverse_if_false']],
+          ['Active', p.fields['active']],
+        ]),
+      )
+      if (p.fields['conditions']) blocks.push({ kind: 'code', caption: 'When (condition)', code: p.fields['conditions'], lang: 'text' })
+      const mine = uiActions.filter((x) => x.fields['ui_policy'] === p.sysId)
+      if (mine.length) {
+        blocks.push({
+          kind: 'table',
+          columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
+          rows: mine.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
+        })
+      }
     }
-  }
-  // Any actions whose parent policy wasn't discovered.
-  const orphan = actions.filter((x) => !policies.some((p) => p.sysId === x.fields['ui_policy']))
-  if (orphan.length) {
-    blocks.push({ kind: 'paragraph', text: 'Other UI policy actions:' })
-    blocks.push({
-      kind: 'table',
-      columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
-      rows: orphan.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
-    })
   }
 
   if (!blocks.length) blocks.push(emptyNote('No script logic discovered.'))

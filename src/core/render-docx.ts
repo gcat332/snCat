@@ -68,6 +68,14 @@ function blockToChildren(block: SpecBlock): (Paragraph | Table)[] {
   switch (block.kind) {
     case 'paragraph':
       return [new Paragraph({ children: [new TextRun({ text: block.text, color: INK })] })]
+    case 'subheading':
+      return [
+        new Paragraph({
+          heading: block.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3,
+          spacing: { before: block.level === 2 ? 220 : 140 },
+          children: [new TextRun({ text: block.text, color: block.level === 2 ? BLUE_DARK : INK, bold: true })],
+        }),
+      ]
     case 'keyvalue':
       return [dataTable(['Field', 'Value'], block.rows.map((r) => [r.key, r.value]))]
     case 'table':

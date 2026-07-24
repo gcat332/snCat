@@ -35,6 +35,10 @@ function renderBlock(block: SpecBlock): string {
   switch (block.kind) {
     case 'paragraph':
       return `<p>${esc(block.text)}</p>`
+    case 'subheading':
+      return block.level === 2
+        ? `<h3 class="sub2">${esc(block.text)}</h3>`
+        : `<h4 class="sub3">${esc(block.text)}</h4>`
     case 'keyvalue':
       return `<table class="kv"><tbody>${block.rows
         .map((r) => `<tr><th>${esc(r.key)}</th><td>${esc(r.value)}</td></tr>`)
@@ -75,6 +79,8 @@ body{font-family:'Prompt',system-ui,sans-serif;font-weight:300;color:var(--ink);
 main{padding:36px 56px 64px;max-width:900px}
 section{margin-bottom:48px;padding-bottom:8px}
 h2{color:#fff;background:var(--gradient);font-weight:600;font-size:18px;padding:10px 14px;border-radius:8px;margin:0 0 18px}
+h3.sub2{color:var(--blue-dark);font-weight:600;font-size:15px;margin:26px 0 8px;padding-bottom:5px;border-bottom:2px solid var(--cyan)}
+h4.sub3{color:var(--ink);font-weight:600;font-size:13px;margin:18px 0 6px;padding-left:9px;border-left:3px solid var(--purple)}
 p{margin:0 0 12px}
 ul{margin:0 0 12px;padding-left:20px}
 li{margin:3px 0}

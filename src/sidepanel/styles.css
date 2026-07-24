@@ -964,12 +964,31 @@ button.picker-row:hover {
 /* Before → after diff rows */
 .diff-kv {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   gap: 6px 8px;
   align-items: baseline;
   padding: 4px 6px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
+}
+
+.dk-tag {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.dk-tag.sent {
+  background: rgba(0, 98, 236, 0.12);
+  color: var(--mfec-blue-dark);
+}
+
+.dk-tag.engine {
+  background: rgba(144, 99, 205, 0.14);
+  color: var(--mfec-violet);
 }
 
 .diff-kv .dk-field {
