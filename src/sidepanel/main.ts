@@ -446,7 +446,7 @@ async function pasteXml() {
   const noun = fieldsList.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record (system fields dropped), in scope "${scopeLabel()}"${
+      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${scopeLabel()}"${
         selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
       }.`,
     ))
@@ -509,6 +509,7 @@ function buildMultiInsertScript(table: string, records: Record<string, string>[]
     `  try {`,
     `    var gr = new GlideRecord(${JSON.stringify(table)});`,
     `    gr.initialize();`,
+    `    gr.setWorkflow(false);`, // ignore business rules / workflows on this insert
     `    var row = rows[i];`,
     `    for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
     `    var id = gr.insert();`,
