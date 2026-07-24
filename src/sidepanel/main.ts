@@ -151,6 +151,47 @@ function scopeLabel(): string {
   return selScope.value.trim() || 'Global'
 }
 
+/**
+ * Resolve the typed scope for a WRITE, refusing the dangerous silent fallback.
+ * Blank / "global" stays the legitimate explicit global default. A NON-EMPTY
+ * name that doesn't map to a known sys_id is blocked with a visible error and
+ * returns null — never silently rewritten to 'global', which would create the
+ * record somewhere the confirm dialog didn't name. `label` matches the real
+ * target so callers can show it in the confirmation.
+ */
+async function checkScope(): Promise<{ scope: string; label: string } | null> {
+  const v = selScope.value.trim()
+  if (!v || v.toLowerCase() === 'global') return { scope: 'global', label: 'global' }
+  const id = scopeByName.get(v)
+  if (id) return { scope: id, label: v }
+  await confirmDialog(`Unknown scope "${v}" — reload the scope list and pick a real scope. Nothing was written.`)
+  return null
+}
+
+/**
+ * Full write target (scope + update set) with the same anti-silent-fallback
+ * guard as checkScope. A non-empty update-set name that doesn't resolve is
+ * blocked too, so the confirm never names an update set the write wouldn't use.
+ * Returns the runBackground opts plus display labels, or null (write must not
+ * proceed). Blank update set = "leave the current one" (undefined), unchanged.
+ */
+async function checkTarget(): Promise<
+  { opts: { scope?: string; updateSet?: string }; scopeLabel: string; usLabel: string } | null
+> {
+  const sc = await checkScope()
+  if (!sc) return null
+  const uv = selUpdateSet.value.trim()
+  let updateSet: string | undefined
+  if (uv) {
+    updateSet = usByName.get(uv)
+    if (!updateSet) {
+      await confirmDialog(`Unknown update set "${uv}" — reload the update-set list and pick a real one. Nothing was written.`)
+      return null
+    }
+  }
+  return { opts: { scope: sc.scope, updateSet }, scopeLabel: sc.label, usLabel: uv }
+}
+
 async function populateScopeBar() {
   if (!current) return
   scopebar.hidden = false
@@ -202,7 +243,9 @@ async function createUpdateSet() {
   if (!current) return
   const name = await promptDialog('New update set name:', 'e.g. snJava changes')
   if (!name) return
-  const scopeId = resolveScope()
+  const sc = await checkScope()
+  if (!sc) return
+  const scopeId = sc.scope
   const bg = [
     `var us = new GlideRecord('sys_update_set');`,
     `us.initialize();`,
@@ -474,10 +517,12 @@ async function pasteXml() {
   }
   const fieldsList = rawRecords.map((f) => importableFields(f))
   const noun = fieldsList.length === 1 ? 'record' : 'records'
+  const tgt = await checkTarget()
+  if (!tgt) return
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${scopeLabel()}"${
-        selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
+      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${tgt.scopeLabel}"${
+        tgt.usLabel ? ` and update set "${tgt.usLabel}"` : ''
       }.`,
     ))
   ) {
@@ -488,7 +533,7 @@ async function pasteXml() {
   // Import via background inserts so they land in the selected scope + update set
   // (Table API writes bypass update-set capture).
   const bg = buildMultiInsertScript(clip.table, fieldsList)
-  const res = await runBackground(current.host, bg, writeTargetOpts())
+  const res = await runBackground(current.host, bg, tgt.opts)
   xmlPaste.disabled = false
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
@@ -503,7 +548,7 @@ async function pasteXml() {
       elText(
         'div',
         done === total ? 'ok-banner' : 'error',
-        `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${scopeLabel()})`,
+        `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${tgt.scopeLabel})`,
       ),
     )
     if (errm) {
@@ -1343,10 +1388,12 @@ async function saveOptimizedToRecord() {
   const { host, table, sysId, scriptField } = loadedScriptRecord
   const code = optimizeEd.getValue()
   if (!code.trim()) return
+  const tgt = await checkTarget()
+  if (!tgt) return
   if (
     !(await confirmDialog(
-      `Save the optimized script to ${table} on ${host}?\n\nRuns as a background script in scope "${scopeLabel()}"${
-        selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
+      `Save the optimized script to ${table} on ${host}?\n\nRuns as a background script in scope "${tgt.scopeLabel}"${
+        tgt.usLabel ? ` and update set "${tgt.usLabel}"` : ''
       }.`,
     ))
   ) {
@@ -1356,7 +1403,7 @@ async function saveOptimizedToRecord() {
   optimizeSave.disabled = true
   aiStatus.textContent = 'Saving via background script…'
   const bg = buildRecordUpdateScript(table, sysId, scriptField, code)
-  const res = await runBackground(host, bg, writeTargetOpts())
+  const res = await runBackground(host, bg, tgt.opts)
   optimizeSave.disabled = false
 
   if (!res.ok) {
@@ -1608,7 +1655,10 @@ const l3Delete = el<HTMLButtonElement>('l3-delete')
 const l3Results = simResults // shared results area in the Test Runner card
 
 let l3Allowed = false
-let l3Created: { table: string; sysId: string } | null = null
+// Host-pinned so a Delete always targets the instance the record was created on
+// (sys_ids collide across update-set-migrated instances — deleting by sys_id on
+// the wrong host can destroy a real record). Cleared on any host change.
+let l3Created: { host: string; table: string; sysId: string } | null = null
 
 /** Prefill the guarded-real fields from the current record (or a seed query). */
 async function l3FillFromRecord() {
@@ -1645,10 +1695,12 @@ async function createTestRecord() {
     return
   }
   const fields = parseFields(l3Fields.value)
+  const tgt = await checkTarget()
+  if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create a REAL record in "${table}" on ${current.host}?\n\nRuns the actual Business Rules, in scope "${scopeLabel()}"${
-        selUpdateSet.value.trim() ? ` / update set "${selUpdateSet.value.trim()}"` : ''
+      `Create a REAL record in "${table}" on ${current.host}?\n\nRuns the actual Business Rules, in scope "${tgt.scopeLabel}"${
+        tgt.usLabel ? ` / update set "${tgt.usLabel}"` : ''
       }. Then read the result and delete.`,
     ))
   ) {
@@ -1661,12 +1713,12 @@ async function createTestRecord() {
   l3Results.replaceChildren(elText('div', 'sim-after-title', 'Guarded run'), log)
   const step = (text: string, cls = '') => log.append(elText('div', `log-step ${cls}`, `• ${text}`))
 
-  step(`Creating a ${table} record on ${current.host} (scope ${scopeLabel()})…`)
+  step(`Creating a ${table} record on ${current.host} (scope ${tgt.scopeLabel})…`)
   const t0 = Date.now()
   // Create via a background insert so it runs in the chosen scope + update set
   // (Table API 403s on scoped-app tables). Dumps ALL fields + a default record
   // so we can show exactly what the Business Rules changed.
-  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields), writeTargetOpts())
+  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields), tgt.opts)
   if (!res.ok) {
     step(`✗ Create failed (HTTP ${res.status}): ${res.error}`, 'err')
     l3Create.disabled = false
@@ -1693,7 +1745,7 @@ async function createTestRecord() {
     updateGuard()
     return
   }
-  l3Created = { table, sysId }
+  l3Created = { host: current.host, table, sysId }
   step(`✓ Created ${sysId.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
   renderL3Diff(fields, result as Record<string, L3Cell>, defaults as Record<string, L3Cell>)
   step('Done. Delete the test record when finished.')
@@ -1854,16 +1906,19 @@ function renderL3Diff(seed: Record<string, string>, result: Record<string, L3Cel
 
 async function deleteTestRecord() {
   if (!current || !l3Created) return
-  if (!(await confirmDialog(`Delete test record ${l3Created.sysId.slice(0, 8)}… from ${l3Created.table}?`))) return
+  // Pin every reference to the creation host captured at create time — detect()
+  // may have reassigned `current` to a different instance since then.
+  const target = l3Created
+  if (!(await confirmDialog(`Delete test record ${target.sysId.slice(0, 8)}… from ${target.table} on ${target.host}?`))) return
 
   l3Delete.disabled = true
   // Delete via a background script too, so it runs in the same scope.
   const bg = [
-    `var gr = new GlideRecord(${JSON.stringify(l3Created.table)});`,
-    `if (gr.get(${JSON.stringify(l3Created.sysId)})) { gr.deleteRecord(); gs.info('snJava:deleted'); }`,
+    `var gr = new GlideRecord(${JSON.stringify(target.table)});`,
+    `if (gr.get(${JSON.stringify(target.sysId)})) { gr.deleteRecord(); gs.info('snJava:deleted'); }`,
     `else { gs.error('snJava:notfound'); }`,
   ].join('\n')
-  const res = await runBackground(current.host, bg, writeTargetOpts())
+  const res = await runBackground(target.host, bg, writeTargetOpts())
   if (!res.ok || !/snJava:deleted/.test(extractBgOutput(res.data))) {
     l3Results.append(elText('div', 'error', `Delete failed: ${res.ok ? extractBgOutput(res.data).slice(0, 120) : res.error}`))
     l3Delete.disabled = false
@@ -2327,10 +2382,12 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
 /** Create several artifacts back-to-back, reporting progress in genStatus. */
 async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) {
   if (!current) return
+  const tgt = await checkTarget()
+  if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create ${list.length} artifact(s) on ${current.host}?\n\nScope "${scopeLabel()}"${
-        selUpdateSet.value.trim() ? `, update set "${selUpdateSet.value.trim()}"` : ''
+      `Create ${list.length} artifact(s) on ${current.host}?\n\nScope "${tgt.scopeLabel}"${
+        tgt.usLabel ? `, update set "${tgt.usLabel}"` : ''
       }.`,
     ))
   ) {
@@ -2340,7 +2397,7 @@ async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) 
   let ok = 0
   for (let i = 0; i < list.length; i++) {
     genStatus.textContent = `Creating ${i + 1}/${list.length}: ${list[i].title}…`
-    const res = await createArtifactCore(list[i])
+    const res = await createArtifactCore(list[i], tgt.opts)
     if (res.ok) ok++
     else showToast(`Failed: ${list[i].title.slice(0, 40)} — ${res.error?.slice(0, 40) ?? ''}`)
   }
@@ -2415,13 +2472,16 @@ function showArtifact(a: PlanArtifact) {
 }
 
 /** Insert one planned record via a scope-aware background script. No UI. */
-async function createArtifactCore(a: PlanArtifact): Promise<{ ok: boolean; sysId?: string; error?: string }> {
+async function createArtifactCore(
+  a: PlanArtifact,
+  opts: { scope?: string; updateSet?: string },
+): Promise<{ ok: boolean; sysId?: string; error?: string }> {
   if (!current || !a.targetTable || !a.fields) return { ok: false, error: 'nothing to create' }
   if (createsScope(a)) return { ok: false, error: 'refused: would create a new scope/app' }
   // Never let the plan choose the scope — records go into the scope selected in
   // the header (via sys_scope form field + GlideUpdateSet in the background run).
   const bg = buildRecordInsertScript(a.targetTable, stripScopeFields(a.fields))
-  const res = await runBackground(current.host, bg, writeTargetOpts())
+  const res = await runBackground(current.host, bg, opts)
   if (!res.ok) return { ok: false, error: res.error }
   const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)
   return m ? { ok: true, sysId: m[1] } : { ok: false, error: 'no sys_id reported' }
@@ -2430,10 +2490,12 @@ async function createArtifactCore(a: PlanArtifact): Promise<{ ok: boolean; sysId
 /** Create a planned customization record via a background insert (scope-aware). */
 async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: HTMLElement) {
   if (!current || !a.targetTable || !a.fields) return
+  const tgt = await checkTarget()
+  if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create this ${a.kind} in ${a.targetTable} on ${current.host}?\n\nScope "${scopeLabel()}"${
-        selUpdateSet.value.trim() ? `, update set "${selUpdateSet.value.trim()}"` : ''
+      `Create this ${a.kind} in ${a.targetTable} on ${current.host}?\n\nScope "${tgt.scopeLabel}"${
+        tgt.usLabel ? `, update set "${tgt.usLabel}"` : ''
       }.`,
     ))
   ) {
@@ -2441,7 +2503,7 @@ async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: 
   }
   btn.disabled = true
   btn.textContent = 'Creating…'
-  const res = await createArtifactCore(a)
+  const res = await createArtifactCore(a, tgt.opts)
   btn.disabled = false
   btn.textContent = 'Create in instance'
   if (res.ok) {
@@ -2517,6 +2579,10 @@ async function detect() {
     renderStatus('No record detected on this page.')
   }
   updateEnabledState()
+  // Host-pin safety: if the active tab moved to a different instance (or off
+  // ServiceNow), drop the guarded test record so its Delete can never fire
+  // against the wrong host. updateGuard() then disables the Delete button.
+  if (l3Created && (!current || current.host !== l3Created.host)) l3Created = null
   updateGuard()
   void populateScopeBar()
 
