@@ -125,6 +125,8 @@ Business Rules run server-side (Rhino), Client Scripts run in the browser — te
 - **Business Rule:** create a real test record on sub-prod → read outcome (changed fields, work notes, `sys_audit`) → delete the record. Alternative/preferred where ATF is adopted: generate an ATF test and run it via API (aligns with the existing `itsm-deploy` ATF regression work; leaves a reusable regression asset).
 - **Hard prod guard** (decision #5 above).
 
+**M5 status (2026-07-24):** Implemented — the **Business Rule test-record flow** (create real record on sub-prod → read back → highlight engine-changed fields → delete) behind the **hard prod guard** (`core/prod-guard.ts`, default-deny). Writes require `X-UserToken` and are refused before any network I/O on prod. **Deferred to later passes:** client-script live capture (needs live `g_form` interaction in the page main world) and ATF test generation/run (aligns with `itsm-deploy`; larger sub-project).
+
 ### Condition Tester (cheap, high value — build alongside Layer 1)
 Before testing the script, test the BR condition/filter itself: run the encoded query via Table API and show which records match. Many "bugs" are mis-triggering conditions, not script logic.
 

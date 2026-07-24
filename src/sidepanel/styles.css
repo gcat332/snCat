@@ -455,6 +455,27 @@ body {
   margin-bottom: 4px;
 }
 
+/* Layer 3 guard badge */
+.guard-badge {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.guard-badge.ok {
+  background: rgba(0, 162, 233, 0.12);
+  color: var(--mfec-blue-dark);
+  border: 1px solid rgba(0, 49, 180, 0.2);
+}
+
+.guard-badge.blocked {
+  background: rgba(182, 35, 42, 0.1);
+  color: #b4232a;
+  border: 1px solid rgba(182, 35, 42, 0.3);
+}
+
 /* Design Spec checklist */
 .chk-group-title {
   margin-top: 8px;

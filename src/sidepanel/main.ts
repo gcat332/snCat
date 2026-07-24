@@ -6,7 +6,15 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { cellDisplay, cellValue, pickLabel } from '@core/api'
-import { countRecords, getDictionary, getRecord, queryRecords } from '@core/api-client'
+import {
+  countRecords,
+  createRecord,
+  deleteRecord,
+  getDictionary,
+  getRecord,
+  queryRecords,
+} from '@core/api-client'
+import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { normalizeTiming, scriptTableInfo } from '@core/script-meta'
 import { SandboxRunner } from '@core/sandbox-host'
@@ -222,10 +230,13 @@ async function maybeAutoLoadScript() {
   if (info.timingField) {
     scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
   }
-  // Layer 2: point `current` at the table this script runs against.
+  // Layer 2/3: point the target table at what this script runs against.
   if (info.tableField) {
     const target = cellValue(rec[info.tableField])
-    if (target) simTable.value = target
+    if (target) {
+      simTable.value = target
+      l3Table.value = target
+    }
   }
   syncTimingVisibility()
   const name = cellDisplay(rec[info.nameField]) || current.table
@@ -442,6 +453,112 @@ function renderSimResult(result: SimulationResult) {
   simResults.append(elText('div', 'ai-note', result.note))
 }
 
+/* ---------- Layer 3 — Guarded Real Execution (M5) ---------- */
+
+const l3Guard = el('l3-guard')
+const l3Table = el<HTMLInputElement>('l3-table')
+const l3Fields = el<HTMLTextAreaElement>('l3-fields')
+const l3Create = el<HTMLButtonElement>('l3-create')
+const l3Delete = el<HTMLButtonElement>('l3-delete')
+const l3Results = el('l3-results')
+
+let l3Allowed = false
+let l3Created: { table: string; sysId: string } | null = null
+
+function updateProdGuard() {
+  if (!current) {
+    l3Guard.className = 'guard-badge'
+    l3Guard.textContent = 'Checking instance…'
+    l3Allowed = false
+  } else {
+    const verdict = classifyInstance(current.host)
+    l3Allowed = verdict.allowed
+    l3Guard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
+    l3Guard.textContent = verdict.allowed
+      ? `✓ ${verdict.instance} — sub-prod. Real execution permitted.`
+      : `⛔ ${verdict.reason}`
+  }
+  l3Create.disabled = !(l3Allowed && current)
+  l3Delete.disabled = !(l3Allowed && l3Created)
+}
+
+async function createTestRecord() {
+  if (!current || !l3Allowed) return
+  const table = l3Table.value.trim()
+  if (!table) {
+    l3Results.replaceChildren(elText('div', 'error', 'Enter a target table.'))
+    return
+  }
+  const fields = parseFields(l3Fields.value)
+  if (
+    !confirm(
+      `Create a REAL record in "${table}" on ${current.host}?\n\nThis runs the actual Business Rules on the instance.`,
+    )
+  ) {
+    return
+  }
+
+  l3Create.disabled = true
+  l3Results.replaceChildren(elText('div', 'empty', 'Creating record…'))
+
+  const res = await createRecord(current.host, table, fields)
+  if (!res.ok) {
+    l3Results.replaceChildren(elText('div', 'error', res.error))
+    updateProdGuard()
+    return
+  }
+  const sysId = cellValue(res.data['sys_id'])
+  l3Created = { table, sysId }
+
+  // Read the created record back to observe what the engine actually did.
+  const back = await getRecord(current.host, table, sysId)
+  renderL3Result(fields, back.ok ? back.data : res.data, sysId)
+  updateProdGuard()
+}
+
+function renderL3Result(seed: Record<string, string>, rec: Record<string, unknown>, sysId: string) {
+  l3Results.replaceChildren()
+  l3Results.append(elText('div', 'ok-banner', `✓ Created ${l3Created?.table} record ${sysId.slice(0, 8)}…`))
+
+  // Highlight fields the engine changed vs. what we sent.
+  const changed: string[] = []
+  for (const [k, v] of Object.entries(rec)) {
+    const after = cellValue(v)
+    if (k in seed && seed[k] !== after) changed.push(`${k}: "${seed[k]}" → "${after}"`)
+  }
+  const engineFields = ['sys_created_by', 'sys_updated_on', 'work_notes', 'state', 'number', 'sys_created_on']
+  const box = document.createElement('div')
+  box.className = 'sim-after'
+  box.append(elText('div', 'sim-after-title', changed.length ? 'Changed by the engine' : 'Result (key fields)'))
+  const rows = changed.length
+    ? changed
+    : engineFields.filter((f) => f in rec).map((f) => `${f}: ${cellValue(rec[f])}`)
+  for (const line of rows) {
+    const r = document.createElement('div')
+    r.className = 'schema-row'
+    r.append(elText('span', 'lbl', line))
+    box.append(r)
+  }
+  l3Results.append(box)
+  l3Results.append(elText('div', 'ai-note', 'Remember to delete the test record when done.'))
+}
+
+async function deleteTestRecord() {
+  if (!current || !l3Created) return
+  if (!confirm(`Delete test record ${l3Created.sysId.slice(0, 8)}… from ${l3Created.table}?`)) return
+
+  l3Delete.disabled = true
+  const res = await deleteRecord(current.host, l3Created.table, l3Created.sysId)
+  if (!res.ok) {
+    l3Results.append(elText('div', 'error', `Delete failed: ${res.error}`))
+    l3Delete.disabled = false
+    return
+  }
+  l3Results.replaceChildren(elText('div', 'ok-banner', '✓ Test record deleted.'))
+  l3Created = null
+  updateProdGuard()
+}
+
 /* ---------- Design Spec Generator (M4 / F1) ---------- */
 
 const specWalk = el<HTMLButtonElement>('spec-walk')
@@ -647,7 +764,9 @@ async function detect() {
   // script table (a BR sets the target from its `collection` on auto-load).
   if (current?.table && !scriptTableInfo(current.table) && !simTable.value.trim()) {
     simTable.value = current.table
+    if (!l3Table.value.trim()) l3Table.value = current.table
   }
+  updateProdGuard()
   void maybeAutoLoadScript()
 }
 
@@ -661,6 +780,8 @@ scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', analyze)
 simFill.addEventListener('click', fillFromRecord)
 simRun.addEventListener('click', runSimulation)
+l3Create.addEventListener('click', createTestRecord)
+l3Delete.addEventListener('click', deleteTestRecord)
 specWalk.addEventListener('click', discoverArtifacts)
 specHtmlBtn.addEventListener('click', exportHtml)
 specPdfBtn.addEventListener('click', exportPdf)

@@ -158,6 +158,33 @@
           </div>
           <div class="results" id="sim-results"></div>
         </section>
+
+        <section class="card" id="l3-card">
+          <h2 class="card-title">Layer 3 — Guarded Real Execution</h2>
+          <div class="guard-badge" id="l3-guard">Checking instance…</div>
+          <p class="hint">
+            Creates a <strong>real</strong> record on a sub-prod so the actual
+            engine runs, reads the result, then lets you delete it.
+            <strong>Hard-blocked on production.</strong>
+          </p>
+
+          <label class="field-label" for="l3-table">Target table</label>
+          <input id="l3-table" class="query-input" placeholder="incident" />
+
+          <label class="field-label" for="l3-fields">Test record fields (field=value per line)</label>
+          <textarea
+            id="l3-fields"
+            class="query-input code"
+            rows="4"
+            placeholder="short_description=snCat Layer 3 test&#10;priority=3"
+          ></textarea>
+
+          <div class="btn-row">
+            <button class="btn" id="l3-create" type="button" disabled>Create test record</button>
+            <button class="btn btn-ghost" id="l3-delete" type="button" disabled>Delete test record</button>
+          </div>
+          <div class="results" id="l3-results"></div>
+        </section>
       </div>
 
       <!-- ============ DESIGN SPEC (F1) ============ -->

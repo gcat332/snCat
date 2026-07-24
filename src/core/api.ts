@@ -49,6 +49,9 @@ export type ApiRequest =
   | { op: 'count'; host: string; table: string; query?: string }
   | { op: 'record'; host: string; table: string; sysId: string; fields?: string[] }
   | { op: 'dictionary'; host: string; table: string }
+  // Layer 3 WRITES — gated by the prod guard in the background before any fetch.
+  | { op: 'create'; host: string; table: string; fields: Record<string, string> }
+  | { op: 'delete'; host: string; table: string; sysId: string }
 
 const API_BASE = '/api/now'
 
@@ -84,6 +87,14 @@ export function buildRecordUrl(
   params.set('sysparm_display_value', 'all')
   params.set('sysparm_exclude_reference_link', 'true')
   return `${origin(host)}${API_BASE}/table/${encodeURIComponent(table)}/${encodeURIComponent(sysId)}?${params.toString()}`
+}
+
+/** Build the Table API collection URL (for create/POST). */
+export function buildCreateUrl(host: string, table: string): string {
+  const params = new URLSearchParams()
+  params.set('sysparm_display_value', 'all')
+  params.set('sysparm_exclude_reference_link', 'true')
+  return `${origin(host)}${API_BASE}/table/${encodeURIComponent(table)}?${params.toString()}`
 }
 
 /** Build an Aggregate (stats) API URL that returns a row count for a query. */

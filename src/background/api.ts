@@ -12,10 +12,12 @@ import {
   buildRecordUrl,
   buildStatsCountUrl,
   buildDictionaryUrl,
+  buildCreateUrl,
   type ApiRequest,
   type ApiResult,
   type DictionaryField,
 } from '@core/api'
+import { classifyInstance, DEFAULT_PROD_GUARD_CONFIG, type ProdGuardConfig } from '@core/prod-guard'
 
 async function getUserToken(host: string): Promise<string | null> {
   try {
@@ -55,6 +57,73 @@ async function apiGet<T>(host: string, url: string): Promise<ApiResult<T>> {
   }
 }
 
+/** Load prod-guard config (defaults + any user overrides in local storage). */
+async function loadGuardConfig(): Promise<ProdGuardConfig> {
+  try {
+    const store = await chrome.storage.local.get('prodGuardConfig')
+    const override = store['prodGuardConfig'] as Partial<ProdGuardConfig> | undefined
+    if (override?.subProdPatterns?.length) {
+      return { subProdPatterns: override.subProdPatterns }
+    }
+  } catch {
+    /* fall through to defaults */
+  }
+  return DEFAULT_PROD_GUARD_CONFIG
+}
+
+/** A write (POST/DELETE). Hard-blocked by the prod guard before any network I/O. */
+async function apiWrite<T>(
+  host: string,
+  url: string,
+  method: 'POST' | 'DELETE',
+  body?: unknown,
+): Promise<ApiResult<T>> {
+  // HARD GATE (handoff §2 decision 5): refuse to write unless sub-prod.
+  const verdict = classifyInstance(host, await loadGuardConfig())
+  if (!verdict.allowed) {
+    return { ok: false, status: 403, error: `Prod guard: ${verdict.reason}` }
+  }
+
+  const token = await getUserToken(host)
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'Writes need X-UserToken (g_ck). Open a classic ServiceNow page in this tab so the token can be captured, then retry.',
+    }
+  }
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-UserToken': token,
+  }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method,
+      credentials: 'include',
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch (err) {
+    return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
+  }
+
+  if (!res.ok) {
+    const detail = await safeErrorDetail(res)
+    return { ok: false, status: res.status, error: detail || `HTTP ${res.status}` }
+  }
+  // DELETE returns 204 no content.
+  if (res.status === 204) return { ok: true, data: undefined as T }
+  try {
+    const parsed = (await res.json()) as { result: T }
+    return { ok: true, data: parsed.result }
+  } catch {
+    return { ok: true, data: undefined as T }
+  }
+}
+
 async function safeErrorDetail(res: Response): Promise<string | null> {
   try {
     const body = (await res.json()) as { error?: { message?: string; detail?: string } }
@@ -89,6 +158,16 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResult<unkno
       const count = Number(res.data.stats?.count ?? '0')
       return { ok: true, data: { count } }
     }
+
+    case 'create':
+      return apiWrite<RecordRow>(req.host, buildCreateUrl(req.host, req.table), 'POST', req.fields)
+
+    case 'delete':
+      return apiWrite<void>(
+        req.host,
+        buildRecordUrl(req.host, req.table, req.sysId),
+        'DELETE',
+      )
 
     default: {
       const _exhaustive: never = req

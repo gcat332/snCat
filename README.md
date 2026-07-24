@@ -67,7 +67,14 @@ Then load the extension in Chrome:
 - **Renderers**: HTML (`render-html.ts`, self-contained, MFEC light theme + logo + print CSS, HTML-escaped — unit-tested) and Word `.docx` (`render-docx.ts`, `docx` lib — pack-tested).
 - Side panel **Design Spec** tab: discover artifacts → include/exclude checklist → export **HTML / PDF (print) / Word**.
 
-Next: **M5** — Script Tester Layer 3 (guarded real execution / ATF) + prod guard.
+**M5 — Script Tester Layer 3 (guarded real execution) + prod guard** ✅
+- **Prod guard** (`src/core/prod-guard.ts`): default-DENY hostname classifier — writes are only allowed on confirmed sub-prods (`dev`/`test`/`uat`/`sandbox`/`demo`/…, configurable); explicit production markers hard-block even if a sub-prod marker is also present. 15 unit tests.
+- Guarded write ops in the REST client (`create`/`delete`): the background classifies the host and refuses the write **before any network I/O** on prod; writes also require `X-UserToken` (g_ck).
+- Side panel **Layer 3** card: prod-guard badge, create a real test record on a sub-prod → read it back → highlight fields the engine changed → delete it (all with explicit confirmation; disabled on prod).
+
+> ⚠️ **Real-browser smoke test items:** M1 auth (session/g_ck), M3 sandbox iframe round-trip, M4 resolver table/field names per instance version, and M5 writes (create/delete on the sub-prod). Pure logic is unit-tested; live I/O needs `dist/` loaded in Chrome against `mfecplcdemo10`.
+
+Next: **F3** — XML Mover (design in handoff §9). Optional later: LLM enhancement layer (Layer 1 intent review, F1 prose), ATF-based Layer 3.
 
 ## Layout
 
