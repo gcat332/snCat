@@ -67,25 +67,36 @@ function emptyNote(text: string): SpecBlock {
 export function composeSpec(input: ComposeInput): SpecDocument {
   const { instance, rootTable, rootLabel, rootFields, artifacts, primaryTable, schema } = input
   const rootKind = TYPE_LABEL[rootTable] ?? rootTable
+  // A "table spec" documents the whole table/module; a "record spec" documents a
+  // single customization record (BR, Script Include, Catalog Item, Transform Map).
+  const isTableSpec = !TYPE_LABEL[rootTable]
+  const table = primaryTable ?? rootTable
 
-  const title = rootLabel || rootKind
-  const subtitle = `${rootKind} · Design Specification`
+  const title = isTableSpec ? table : rootLabel || rootKind
+  const subtitle = isTableSpec ? 'Table / Module Design Specification' : `${rootKind} · Design Specification`
 
-  const meta = [
-    { key: 'Instance', value: instance },
-    { key: 'Artifact type', value: rootKind },
-    { key: 'Table', value: rootTable },
-    { key: 'sys_id', value: rootFields['sys_id'] ?? '' },
-    { key: 'Artifacts included', value: String(artifacts.length + 1) },
-  ]
+  const meta = isTableSpec
+    ? [
+        { key: 'Instance', value: instance },
+        { key: 'Table', value: table },
+        { key: 'Generated from', value: `${rootLabel} (${rootFields['sys_id'] ?? ''})` },
+        { key: 'Artifacts documented', value: String(artifacts.length) },
+      ]
+    : [
+        { key: 'Instance', value: instance },
+        { key: 'Artifact type', value: rootKind },
+        { key: 'Table', value: rootTable },
+        { key: 'sys_id', value: rootFields['sys_id'] ?? '' },
+        { key: 'Artifacts included', value: String(artifacts.length + 1) },
+      ]
 
   return {
     title,
     subtitle,
     meta,
     sections: [
-      overviewSection(rootKind, rootLabel, instance, rootFields),
-      dataModelSection(primaryTable ?? rootTable, rootFields, artifacts, schema),
+      overviewSection(rootKind, isTableSpec ? table : rootLabel, instance, rootFields, isTableSpec),
+      dataModelSection(table, rootFields, artifacts, schema),
       logicSection(rootFields, artifacts),
       integrationSection(artifacts),
       securitySection(artifacts),
@@ -98,26 +109,33 @@ function overviewSection(
   label: string,
   instance: string,
   f: Record<string, string>,
+  isTableSpec: boolean,
 ): SpecSection {
   const rows: { key: string; value: string }[] = []
   const add = (k: string, v?: string) => {
     if (v) rows.push({ key: k, value: v })
   }
-  add('Name', f['name'] || label)
-  add('When', f['when'])
-  add('Order', f['order'])
-  add('Active', f['active'])
-  add('Table / Collection', f['collection'])
-  add('Application', f['sys_scope'])
-  add('Short description', f['short_description'])
+  if (isTableSpec) {
+    add('Table', label)
+    add('Application', f['sys_scope'])
+  } else {
+    add('Name', f['name'] || label)
+    add('When', f['when'])
+    add('Order', f['order'])
+    add('Active', f['active'])
+    add('Table / Collection', f['collection'])
+    add('Application', f['sys_scope'])
+    add('Short description', f['short_description'])
+  }
+
+  const intro = isTableSpec
+    ? `This Design Specification documents the "${label}" table on ${instance} — its data model (fields), business rules, client scripts, UI policies, notifications, and security (ACLs / data policies).`
+    : `This Design Specification documents the ${kind} "${label}" on ${instance}. It was generated automatically from the record and its bounded dependency graph (depth 2).`
 
   return {
     heading: 'Overview',
     blocks: [
-      {
-        kind: 'paragraph',
-        text: `This Design Specification documents the ${kind} "${label}" on ${instance}. It was generated automatically from the record and its bounded dependency graph (depth 2).`,
-      },
+      { kind: 'paragraph', text: intro },
       rows.length ? { kind: 'keyvalue', rows } : emptyNote('No overview metadata available.'),
     ],
   }

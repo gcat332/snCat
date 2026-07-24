@@ -813,6 +813,35 @@ button.picker-row:hover {
   font-style: italic;
 }
 
+.trigger-box {
+  margin: 6px 0 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mfec-cyan);
+  border-radius: 6px;
+  background: var(--surface-alt);
+  font-size: 11.5px;
+  color: var(--ink);
+}
+
+.trigger-box .tg-label {
+  font-weight: 500;
+  color: var(--mfec-blue-dark);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  margin-right: 6px;
+}
+
+.trigger-box .tg-cond {
+  display: block;
+  margin-top: 3px;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
 .finding {
   border: 1px solid var(--border);
   border-left-width: 3px;

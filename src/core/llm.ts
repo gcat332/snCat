@@ -24,6 +24,8 @@ export interface ReviewInput {
   timing?: BrTiming
   table: string
   intent?: string
+  /** Trigger summary: BR when/actions/condition, or client-script type/field. */
+  trigger?: string
   /** How the tester script should seed `current`. */
   seedMode?: 'blank' | 'record' | 'query'
   seedSysId?: string
@@ -95,28 +97,28 @@ export function buildReviewPrompt(input: ReviewInput): { system: string; user: s
   ].join(' ')
 
   const user = [
-    `Review this ServiceNow ${kind}${when} on table "${input.table}".`,
+    `Review this ServiceNow ${kind}${when} on table "${input.table}". Be concise.`,
+    input.trigger ? `Trigger: ${input.trigger}` : '',
     input.intent
       ? `Intent and requested changes (apply these): ${input.intent}`
-      : 'No intent was stated; infer it from the code.',
+      : 'No intent stated; infer it from the code.',
     '',
     'SCRIPT:',
     '```javascript',
     input.script,
     '```',
     '',
-    'Return a JSON object with exactly these string/array keys:',
-    '- "optimizedScript": a corrected, optimized version of the script following ServiceNow best practices (fix anti-patterns like current.update() in before rules, unconditioned GlideRecord queries, GlideRecord in client scripts, etc.). Apply the requested changes above, and keep it functionally consistent with the intent. Add brief comments where helpful.',
-    '- "testScript": a COMPLETE, self-contained ServiceNow **background script** (Scripts - Background, server-side, Rhino/ES5) that will be run as-is on the instance. Requirements:',
-    `  * gs and GlideRecord exist globally; current/previous/g_form do NOT — build them yourself.`,
+    'Reply with a JSON object with these keys:',
+    '- "optimizedScript": corrected/optimized version following ServiceNow best practices (fix anti-patterns: current.update() in before rules, unconditioned GlideRecord queries, GlideRecord in client scripts, etc.). Apply the requested changes; keep behavior consistent with intent + trigger. Brief comments only.',
+    '- "testScript": a COMPLETE self-contained background script (server-side, Rhino/ES5) runnable as-is. gs/GlideRecord exist; current/previous do NOT — build them yourself.',
     seedInstruction(input),
-    '  * Wrap the logic under test in a function and call it against your constructed current/previous, OR inline it. Cover 2-3 labeled cases.',
-    '  * Print every observable outcome with gs.info("Case1 field=" + current.getValue("field")).',
-    '  * MUST NOT persist anything: never call insert(), update(), deleteRecord(), or setAbortAction side effects on real data — operate only on the in-memory initialized GlideRecord. If the original logic calls current.update(), omit that call in the test.',
-    '- "notes": an array of short strings, each one finding or suggestion.',
+    '  Wrap the logic in a function, cover up to 2 cases, print outcomes with gs.info(...). MUST NOT persist: no insert()/update()/deleteRecord() on real data; drop current.update() in the test.',
+    '- "notes": up to 5 short findings.',
     '',
     'Respond with ONLY the JSON object.',
-  ].join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
 
   return { system, user }
 }

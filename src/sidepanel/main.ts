@@ -871,6 +871,42 @@ const optimizeSave = el<HTMLButtonElement>('optimize-save')
 
 /** The script record currently loaded into the tester (for "Save to record"). */
 let loadedScriptRecord: { host: string; table: string; sysId: string; scriptField: string } | null = null
+/** Trigger summary of the loaded script (BR when/actions/condition, CS type/field). */
+let loadedTrigger = ''
+const testerTrigger = el('tester-trigger')
+
+/** Show and remember the loaded script's trigger + condition. */
+function showTrigger(kind: ScriptKind, rec: Record<string, unknown>) {
+  const cv = (k: string) => cellValue(rec[k])
+  let summary = ''
+  let condition = ''
+  if (kind === 'business_rule') {
+    const acts = ['insert', 'update', 'delete', 'query'].filter((a) => cv(`action_${a}`) === 'true')
+    const when = cv('when')
+    const table = cv('collection')
+    summary = [when && `when: ${when}`, table && `table: ${table}`, acts.length && `on: ${acts.join(', ')}`]
+      .filter(Boolean)
+      .join(' · ')
+    condition = cv('condition') || cv('filter_condition')
+  } else if (kind === 'client_script') {
+    const type = cv('type')
+    const field = cv('field')
+    summary = [type && `type: ${type}`, field && `field: ${field}`].filter(Boolean).join(' · ')
+  } else {
+    testerTrigger.hidden = true
+    loadedTrigger = ''
+    return
+  }
+  loadedTrigger = [summary, condition && `condition: ${condition}`].filter(Boolean).join(' · ')
+  testerTrigger.hidden = !summary && !condition
+  testerTrigger.replaceChildren()
+  if (summary) {
+    const line = document.createElement('div')
+    line.append(elText('span', 'tg-label', 'Trigger'), document.createTextNode(summary))
+    testerTrigger.append(line)
+  }
+  if (condition) testerTrigger.append(elText('code', 'tg-cond', `condition: ${condition}`))
+}
 const testerEd = createCodeEditor(el('tester-editor'))
 const testerFormat = el<HTMLButtonElement>('tester-format')
 const testerCopy = el<HTMLButtonElement>('tester-copy')
@@ -902,6 +938,12 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   const fields = [info.scriptField, info.nameField, 'sys_scope']
   if (info.timingField) fields.push(info.timingField)
   if (info.tableField) fields.push(info.tableField)
+  // Trigger/condition fields per kind.
+  if (info.kind === 'business_rule') {
+    fields.push('condition', 'filter_condition', 'action_insert', 'action_update', 'action_delete', 'action_query')
+  } else if (info.kind === 'client_script') {
+    fields.push('type', 'field')
+  }
 
   const res = await getRecord(host, scriptTable, sysId, fields)
   if (!res.ok) {
@@ -910,6 +952,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   }
   const rec = res.data
   loadedScriptRecord = { host, table: scriptTable, sysId, scriptField: info.scriptField }
+  showTrigger(info.kind, rec)
   scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
   if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
@@ -1034,6 +1077,7 @@ async function javaReview() {
     timing: scriptTiming.value as BrTiming,
     table: current?.table || 'incident',
     intent: (el<HTMLTextAreaElement>('script-intent').value || '').trim() || undefined,
+    trigger: loadedTrigger || undefined,
     ...seedInfo(),
   })
   if (!started) {
@@ -1232,17 +1276,14 @@ function parseFields(text: string): Record<string, string> {
 
 /** One prod-guard verdict for the whole Test Runner (Simulate + Guarded real). */
 function updateGuard() {
-  if (!current) {
-    simGuard.className = 'guard-badge'
-    simGuard.textContent = 'Checking instance…'
-    l3Allowed = false
+  l3Allowed = !!current && classifyInstance(current.host).allowed
+  // Only surface the guard when execution is BLOCKED (prod); stay quiet on sub-prod.
+  if (current && !l3Allowed) {
+    simGuard.hidden = false
+    simGuard.className = 'guard-badge blocked'
+    simGuard.textContent = `⛔ ${classifyInstance(current.host).reason}`
   } else {
-    const verdict = classifyInstance(current.host)
-    l3Allowed = verdict.allowed
-    simGuard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
-    simGuard.textContent = verdict.allowed
-      ? `✓ ${verdict.instance} — sub-prod. Real execution permitted.`
-      : `⛔ ${verdict.reason}`
+    simGuard.hidden = true
   }
   simRun.disabled = !l3Allowed
   l3Create.disabled = !(l3Allowed && current)
