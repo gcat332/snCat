@@ -1498,6 +1498,8 @@ const specDocxBtn = el<HTMLButtonElement>('spec-docx')
 
 let specRoot: ArtifactRef | null = null
 let specArtifacts: ArtifactRef[] = []
+let specPrimaryTable = ''
+let specSchema: import('@core/spec').SpecSchemaField[] = []
 const specExcluded = new Set<string>()
 let logoDataUriCache: string | undefined
 
@@ -1548,9 +1550,13 @@ async function discoverArtifacts() {
   specChecklist.replaceChildren(elText('div', 'empty', 'Walking dependency graph…'))
 
   try {
-    const outcome = await walkSpecGraph(host, root)
+    const outcome = await walkSpecGraph(host, root, (n) => {
+      specChecklist.replaceChildren(elText('div', 'empty', `Discovering… ${n} artifacts`))
+    })
     specRoot = outcome.root
     specArtifacts = outcome.artifacts
+    specPrimaryTable = outcome.primaryTable
+    specSchema = outcome.schema
     specExcluded.clear()
     renderChecklist()
   } catch (err) {
@@ -1609,6 +1615,8 @@ function buildSpecDoc(): SpecDocument | null {
     rootLabel: specRoot.label,
     rootFields: specRoot.fields,
     artifacts: included,
+    primaryTable: specPrimaryTable,
+    schema: specSchema,
   })
 }
 

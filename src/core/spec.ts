@@ -33,6 +33,17 @@ export interface ComposeInput {
   rootFields: Record<string, string>
   /** All discovered artifacts EXCLUDING the root. */
   artifacts: ArtifactRef[]
+  /** Primary data table whose schema is documented in Data Model. */
+  primaryTable?: string
+  /** Dictionary fields of the primary table. */
+  schema?: SpecSchemaField[]
+}
+
+export interface SpecSchemaField {
+  element: string
+  type: string
+  label: string
+  reference: string
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -51,7 +62,7 @@ function emptyNote(text: string): SpecBlock {
 }
 
 export function composeSpec(input: ComposeInput): SpecDocument {
-  const { instance, rootTable, rootLabel, rootFields, artifacts } = input
+  const { instance, rootTable, rootLabel, rootFields, artifacts, primaryTable, schema } = input
   const rootKind = TYPE_LABEL[rootTable] ?? rootTable
 
   const title = rootLabel || rootKind
@@ -71,7 +82,7 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     meta,
     sections: [
       overviewSection(rootKind, rootLabel, instance, rootFields),
-      dataModelSection(rootTable, rootFields, artifacts),
+      dataModelSection(primaryTable ?? rootTable, rootFields, artifacts, schema),
       logicSection(rootFields, artifacts),
       integrationSection(artifacts),
       securitySection(artifacts),
@@ -110,11 +121,22 @@ function overviewSection(
 }
 
 function dataModelSection(
-  rootTable: string,
+  primaryTable: string,
   rootFields: Record<string, string>,
   artifacts: ArtifactRef[],
+  schema?: SpecSchemaField[],
 ): SpecSection {
   const blocks: SpecBlock[] = []
+
+  // The primary table's own schema (fields) — the core of the data model.
+  if (schema && schema.length) {
+    blocks.push({ kind: 'paragraph', text: `Primary table: ${primaryTable} (${schema.length} fields).` })
+    blocks.push({
+      kind: 'table',
+      columns: ['Field', 'Type', 'Label', 'References'],
+      rows: schema.map((f) => [f.element, f.type, f.label, f.reference]),
+    })
+  }
 
   const variables = byType(artifacts, 'variable')
   if (variables.length) {
@@ -149,7 +171,7 @@ function dataModelSection(
 
   if (!blocks.length) {
     blocks.push(
-      emptyNote(`Primary table: ${rootFields['collection'] || rootTable}. No additional data-model artifacts were discovered within the depth limit.`),
+      emptyNote(`Primary table: ${rootFields['collection'] || primaryTable}. No additional data-model artifacts were discovered within the depth limit.`),
     )
   }
   return { heading: 'Data Model', blocks }

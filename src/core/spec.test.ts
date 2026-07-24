@@ -59,6 +59,26 @@ describe('composeSpec', () => {
     expect(table).toBeTruthy()
   })
 
+  it('documents the primary table schema in Data Model', () => {
+    const doc = composeSpec({
+      instance: 'x',
+      rootTable: 'sys_script',
+      rootLabel: 'BR',
+      rootFields: { sys_id: 'r1', collection: 'incident' },
+      artifacts: [],
+      primaryTable: 'incident',
+      schema: [
+        { element: 'state', type: 'Choice', label: 'State', reference: '' },
+        { element: 'caller_id', type: 'Reference', label: 'Caller', reference: 'sys_user' },
+      ],
+    })
+    const dm = doc.sections.find((s) => s.heading === 'Data Model')!
+    const table = dm.blocks.find((b) => b.kind === 'table')
+    expect(table).toBeTruthy()
+    expect(JSON.stringify(table)).toContain('caller_id')
+    expect(JSON.stringify(table)).toContain('sys_user')
+  })
+
   it('lists ACLs in the Security section', () => {
     const doc = composeSpec({
       instance: 'x',

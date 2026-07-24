@@ -4,10 +4,11 @@
  * maps rows into ArtifactRefs. A failed fetch (e.g. a table absent on this
  * instance) yields no artifacts rather than aborting the whole walk.
  */
-import { cellValue, pickLabel } from './api'
-import { getRecord, queryRecords } from './api-client'
+import { cellDisplay, cellValue, pickLabel } from './api'
+import { getDictionary, getRecord, queryRecords } from './api-client'
 import { makeId, walkGraph, type ArtifactRef, type FetchSpec } from './graph'
 import { RESOLVERS } from './resolvers'
+import type { SpecSchemaField } from './spec'
 
 /** Flatten a Table API row (raw or {value} cells) into a string map. */
 function rawFields(rec: Record<string, unknown>): Record<string, string> {
@@ -55,6 +56,13 @@ export async function loadRootArtifact(
 export interface WalkOutcome {
   root: ArtifactRef
   artifacts: ArtifactRef[] // discovered, excluding root
+  primaryTable: string
+  schema: SpecSchemaField[]
+}
+
+/** The data table a spec is about: BR's collection, else the root table. */
+function primaryTableOf(root: ArtifactRef): string {
+  return root.fields['collection'] || root.table
 }
 
 export async function walkSpecGraph(
@@ -74,5 +82,19 @@ export async function walkSpecGraph(
   }
 
   const all = await walkGraph(root, RESOLVERS, { maxDepth: 2, fetchPage, onProgress })
-  return { root, artifacts: all.filter((a) => a.id !== root.id) }
+
+  // Fetch the primary table's schema for the Data Model section.
+  const primaryTable = primaryTableOf(root)
+  let schema: SpecSchemaField[] = []
+  const dict = await getDictionary(host, primaryTable)
+  if (dict.ok) {
+    schema = dict.data.map((d) => ({
+      element: cellValue(d.element as unknown),
+      type: cellDisplay(d.internal_type as unknown) || cellValue(d.internal_type as unknown),
+      label: cellDisplay(d.column_label as unknown),
+      reference: cellValue(d.reference as unknown),
+    }))
+  }
+
+  return { root, artifacts: all.filter((a) => a.id !== root.id), primaryTable, schema }
 }
