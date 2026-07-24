@@ -16,6 +16,7 @@ import {
   WidthType,
   ShadingType,
   BorderStyle,
+  TableOfContents,
 } from 'docx'
 import type { SpecBlock, SpecDocument } from './spec'
 
@@ -95,6 +96,13 @@ export function buildDocxDocument(doc: SpecDocument): Document {
 
   const metaRows = doc.meta.filter((m) => m.value).map((m) => [m.key, m.value])
   if (metaRows.length) children.push(dataTable(['Field', 'Value'], metaRows))
+
+  // Table of contents (built from Heading 1/2 styles; Word updates page numbers
+  // on open / F9). Uses hyperlinks so it is navigable even before updating.
+  children.push(
+    new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 240 }, children: [new TextRun({ text: 'Contents', color: BLUE_DARK })] }),
+  )
+  children.push(new TableOfContents('Contents', { hyperlink: true, headingStyleRange: '1-2' }))
 
   for (const section of doc.sections) {
     children.push(

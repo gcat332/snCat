@@ -97,7 +97,7 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     sections: [
       overviewSection(rootKind, isTableSpec ? table : rootLabel, instance, rootFields, isTableSpec),
       dataModelSection(table, rootFields, artifacts, schema),
-      logicSection(rootFields, artifacts),
+      logicSection(rootFields, artifacts, isTableSpec ? '' : `${rootKind}: ${rootLabel || rootKind}`),
       integrationSection(artifacts),
       securitySection(artifacts),
       apiSpecSection(instance, table, schema),
@@ -216,7 +216,7 @@ function overviewSection(
 
   const intro = isTableSpec
     ? `This Design Specification documents the "${label}" table on ${instance} — its data model (fields), business rules, client scripts, UI policies, notifications, and security (ACLs / data policies).`
-    : `This Design Specification documents the ${kind} "${label}" on ${instance}. It was generated automatically from the record and its bounded dependency graph (depth 2).`
+    : `This Design Specification documents the ${kind} "${label}" on ${instance}, together with the related configuration it depends on (scripts, policies, and security).`
 
   return {
     heading: 'Overview',
@@ -303,14 +303,14 @@ function detailBlock(pairs: [string, string | undefined][]): SpecBlock {
   return { kind: 'keyvalue', rows }
 }
 
-function logicSection(rootFields: Record<string, string>, artifacts: ArtifactRef[]): SpecSection {
+function logicSection(rootFields: Record<string, string>, artifacts: ArtifactRef[], rootTitle: string): SpecSection {
   const blocks: SpecBlock[] = []
 
-  // If the spec's ROOT is itself a script record, document it first.
+  // If the spec's ROOT is itself a script record, document it first, by name.
   const rootScript = rootFields['script']
   const rootCond = rootFields['condition'] || rootFields['filter_condition']
   if (rootScript || rootCond) {
-    blocks.push({ kind: 'subheading', level: 2, text: 'This record' })
+    blocks.push({ kind: 'subheading', level: 2, text: rootTitle || 'Primary logic' })
     if (rootFields['description']) blocks.push({ kind: 'paragraph', text: rootFields['description'] })
     if (rootCond) blocks.push({ kind: 'code', caption: 'Condition', code: rootCond, lang: 'text' })
     if (rootScript) blocks.push({ kind: 'code', caption: 'Script', code: rootScript, lang: 'javascript' })
@@ -457,26 +457,47 @@ function securitySection(artifacts: ArtifactRef[]): SpecSection {
     return { heading: 'Security / ACL', blocks: [emptyNote('No ACLs or data policies discovered for this artifact.')] }
   }
   const blocks: SpecBlock[] = []
+
   if (acls.length) {
-    blocks.push({
-      kind: 'table',
-      columns: ['ACL', 'Operation', 'Active', 'Admin overrides', 'Condition', 'Script?'],
-      rows: acls.map((a) => [
-        a.fields['name'] ?? '',
-        a.fields['operation'] ?? '',
-        a.fields['active'] ?? '',
-        a.fields['admin_overrides'] ?? '',
-        a.fields['condition'] ?? '',
-        a.fields['script']?.trim() ? 'yes' : '',
-      ]),
-    })
+    blocks.push({ kind: 'subheading', level: 2, text: `Access Controls (${acls.length})` })
+
+    // A compact index first, but only when there is more than one ACL.
+    if (acls.length > 1) {
+      blocks.push({
+        kind: 'table',
+        columns: ['ACL', 'Operation', 'Active', 'Admin overrides'],
+        rows: acls.map((a) => [
+          a.fields['name'] ?? '',
+          a.fields['operation'] ?? '',
+          a.fields['active'] ?? '',
+          a.fields['admin_overrides'] ?? '',
+        ]),
+      })
+    }
+
+    // Each ACL as one unit: its details, condition, and script together.
     for (const a of acls) {
-      if (a.fields['script']?.trim()) {
-        blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'], lang: 'javascript' })
-      }
+      const name = a.fields['name'] || a.label || '(acl)'
+      const op = a.fields['operation']
+      blocks.push({ kind: 'subheading', level: 3, text: op ? `${name} — ${op}` : name })
+      blocks.push(
+        detailBlock([
+          ['Operation', a.fields['operation']],
+          ['Type', a.fields['type']],
+          ['Active', a.fields['active']],
+          ['Admin overrides', a.fields['admin_overrides']],
+          ['Requires role', a.fields['roles'] || a.fields['role']],
+          ['Description', a.fields['description']],
+        ]),
+      )
+      const cond = a.fields['condition']
+      if (cond?.trim()) blocks.push({ kind: 'code', caption: 'Condition', code: cond, lang: 'text' })
+      if (a.fields['script']?.trim()) blocks.push({ kind: 'code', caption: 'Script', code: a.fields['script'], lang: 'javascript' })
     }
   }
+
   if (dataPolicies.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Data Policies (${dataPolicies.length})` })
     blocks.push({
       kind: 'table',
       columns: ['Data Policy', 'Enforce UI', 'Import set', 'Active'],

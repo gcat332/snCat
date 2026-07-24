@@ -86,15 +86,32 @@ describe('composeSpec', () => {
     expect(JSON.stringify(table)).toContain('sys_user')
   })
 
-  it('lists ACLs in the Security section', () => {
+  it('documents each ACL with its condition and script together', () => {
     const doc = composeSpec({
       instance: 'x',
       rootTable: 'sys_script',
       rootLabel: 'BR',
       rootFields: { sys_id: 'r1' },
-      artifacts: [a('acl', { sys_id: 'a1', name: 'incident', operation: 'read', active: 'true' })],
+      artifacts: [
+        a('acl', {
+          sys_id: 'a1',
+          name: 'incident',
+          operation: 'read',
+          active: 'true',
+          condition: 'active=true',
+          script: 'answer = gs.hasRole("itil");',
+        }),
+      ],
     })
     const sec = doc.sections.find((s) => s.heading === 'Security / ACL')!
-    expect(sec.blocks.some((b) => b.kind === 'table')).toBe(true)
+    // The ACL appears as its own subheading, and its condition + script are both
+    // rendered as code blocks within the same section (grouped, not split apart).
+    const subheads = sec.blocks
+      .filter((b): b is Extract<SpecBlock, { kind: 'subheading' }> => b.kind === 'subheading')
+      .map((b) => b.text)
+    expect(subheads.some((t) => t.includes('incident') && t.includes('read'))).toBe(true)
+    const code = sec.blocks.filter((b): b is Extract<SpecBlock, { kind: 'code' }> => b.kind === 'code')
+    expect(code.some((b) => b.code === 'active=true')).toBe(true)
+    expect(code.some((b) => b.code.includes('hasRole'))).toBe(true)
   })
 })
