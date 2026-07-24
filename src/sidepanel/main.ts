@@ -10,8 +10,6 @@ import { buildChoicesQuery, buildRecordXmlUrl, cellDisplay, cellValue } from '@c
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
-  createRecord,
-  deleteRecord,
   getDictionary,
   getRecord,
   getText,
@@ -1419,7 +1417,9 @@ async function createTestRecord() {
   const fields = parseFields(l3Fields.value)
   if (
     !(await confirmDialog(
-      `Create a REAL record in "${table}" on ${current.host}?\n\nThis runs the actual Business Rules on the instance.`,
+      `Create a REAL record in "${table}" on ${current.host}?\n\nRuns the actual Business Rules, in scope "${scopeLabel()}"${
+        selUpdateSet.value.trim() ? ` / update set "${selUpdateSet.value.trim()}"` : ''
+      }. Then read the result and delete.`,
     ))
   ) {
     return
@@ -1431,26 +1431,70 @@ async function createTestRecord() {
   l3Results.replaceChildren(elText('div', 'sim-after-title', 'Guarded run'), log)
   const step = (text: string, cls = '') => log.append(elText('div', `log-step ${cls}`, `• ${text}`))
 
-  step(`Creating a ${table} record on ${current.host}…`)
+  step(`Creating a ${table} record on ${current.host} (scope ${scopeLabel()})…`)
   const t0 = Date.now()
-  const res = await createRecord(current.host, table, fields)
+  // Create via a background insert so it runs in the chosen scope + update set
+  // (Table API 403s on scoped-app tables).
+  const dumpFields = [
+    ...new Set([
+      ...Object.keys(fields),
+      'number', 'state', 'work_notes', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'approval',
+    ]),
+  ]
+  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields, dumpFields), writeTargetOpts())
   if (!res.ok) {
     step(`✗ Create failed (HTTP ${res.status}): ${res.error}`, 'err')
     l3Create.disabled = false
     updateGuard()
     return
   }
-  const sysId = cellValue(res.data['sys_id'])
-  l3Created = { table, sysId }
-  step(`✓ Created ${sysId.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
-
-  step('Reading the record back to see what the engine did…')
-  const back = await getRecord(current.host, table, sysId)
-  const rec = back.ok ? back.data : res.data
-  renderL3Diff(fields, rec)
+  const out = extractBgOutput(res.data)
+  const result = parseSnjavaResult(out)
+  if (!result?.sys_id) {
+    step(`✗ Insert did not report a sys_id. Output: ${out.slice(0, 200)}`, 'err')
+    l3Create.disabled = false
+    updateGuard()
+    return
+  }
+  l3Created = { table, sysId: result.sys_id }
+  step(`✓ Created ${result.sys_id.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
+  renderL3Diff(fields, result)
   step('Done. Delete the test record when finished.')
   l3Create.disabled = false
   updateGuard()
+}
+
+/** Background insert that runs in-scope and prints the resulting field values. */
+function buildGuardedInsertScript(table: string, fields: Record<string, string>, dump: string[]): string {
+  const sets = Object.entries(fields)
+    .map(([k, v]) => `gr.setValue(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
+    .join('\n  ')
+  return [
+    `var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `gr.initialize();`,
+    `  ${sets}`,
+    `var id = gr.insert();`,
+    `if (id) {`,
+    `  gr.get(id);`,
+    `  var fs = ${JSON.stringify(dump)}; var out = {};`,
+    `  for (var i = 0; i < fs.length; i++) { var v = gr.getValue(fs[i]); out[fs[i]] = (v === null ? '' : '' + v); }`,
+    `  out.sys_id = id;`,
+    `  gs.info('snJava:result ' + JSON.stringify(out));`,
+    `} else { gs.error('snJava:insert failed'); }`,
+  ].join('\n')
+}
+
+/** Parse the "snJava:result {json}" line from a background-script output. */
+function parseSnjavaResult(output: string): Record<string, string> | null {
+  const marker = 'snJava:result '
+  const i = output.indexOf(marker)
+  if (i === -1) return null
+  const line = output.slice(i + marker.length).split('\n')[0].trim()
+  try {
+    return JSON.parse(line) as Record<string, string>
+  } catch {
+    return null
+  }
 }
 
 /** Show before (sent) → after (engine result) for changed + engine-populated fields. */
@@ -1494,13 +1538,19 @@ async function deleteTestRecord() {
   if (!(await confirmDialog(`Delete test record ${l3Created.sysId.slice(0, 8)}… from ${l3Created.table}?`))) return
 
   l3Delete.disabled = true
-  const res = await deleteRecord(current.host, l3Created.table, l3Created.sysId)
-  if (!res.ok) {
-    l3Results.append(elText('div', 'error', `Delete failed: ${res.error}`))
+  // Delete via a background script too, so it runs in the same scope.
+  const bg = [
+    `var gr = new GlideRecord(${JSON.stringify(l3Created.table)});`,
+    `if (gr.get(${JSON.stringify(l3Created.sysId)})) { gr.deleteRecord(); gs.info('snJava:deleted'); }`,
+    `else { gs.error('snJava:notfound'); }`,
+  ].join('\n')
+  const res = await runBackground(current.host, bg, writeTargetOpts())
+  if (!res.ok || !/snJava:deleted/.test(extractBgOutput(res.data))) {
+    l3Results.append(elText('div', 'error', `Delete failed: ${res.ok ? extractBgOutput(res.data).slice(0, 120) : res.error}`))
     l3Delete.disabled = false
     return
   }
-  l3Results.replaceChildren(elText('div', 'ok-banner', '✓ Test record deleted.'))
+  l3Results.append(elText('div', 'ok-banner', '✓ Test record deleted.'))
   l3Created = null
   updateGuard()
 }
