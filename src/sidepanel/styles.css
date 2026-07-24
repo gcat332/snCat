@@ -913,7 +913,39 @@ button.picker-row:hover {
   margin-bottom: 4px;
 }
 
-/* Layer 3 guard badge */
+/* Segmented control (Test Runner mode) */
+.seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.seg-btn {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border);
+}
+
+.seg-btn.is-active {
+  background: var(--mfec-blue);
+  color: #fff;
+}
+
+/* Guard badge */
 .guard-badge {
   padding: 8px 10px;
   border-radius: 6px;

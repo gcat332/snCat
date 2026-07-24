@@ -188,54 +188,64 @@
 
         </section>
 
-        <section class="card" id="sim-card">
-          <h2 class="card-title">Sandbox — Run tester on instance</h2>
+        <section class="card" id="runner-card">
+          <h2 class="card-title">Test Runner</h2>
           <div class="guard-badge" id="sim-guard">Checking instance…</div>
-          <p class="hint">
-            Runs the tester script as a real <strong>background script</strong> on
-            this instance and shows the output below. <strong>Hard-blocked on production.</strong>
-          </p>
-          <div class="editor-toolbar">
-            <span class="editor-title">Tester script</span>
-            <span class="editor-tools">
-              <button class="tool-btn" id="tester-format" type="button">⧉ Format</button>
-              <button class="tool-btn" id="tester-copy" type="button">⧉ Copy</button>
-            </span>
+
+          <div class="seg" id="runner-mode">
+            <button class="seg-btn is-active" id="mode-btn-simulate" type="button" data-mode="simulate">Simulate (no write)</button>
+            <button class="seg-btn" id="mode-btn-real" type="button" data-mode="real">Guarded real</button>
           </div>
-          <div class="cm-host" id="tester-editor"></div>
-          <div class="btn-row">
-            <button class="btn" id="sim-run" type="button">Run on instance</button>
-            <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts</button>
-            <span class="spinner" id="sim-spinner" hidden></span>
+
+          <label class="field-label" for="seed-source">Seed current from</label>
+          <div class="field-inline">
+            <select id="seed-source" class="select">
+              <option value="record">This record</option>
+              <option value="blank">Blank (AI values)</option>
+              <option value="query">Query</option>
+            </select>
+            <input id="seed-query" class="query-input" placeholder="active=true^priority=1" hidden />
           </div>
+
+          <!-- SIMULATE -->
+          <div id="mode-simulate">
+            <p class="hint">
+              Runs the tester script as a <strong>background script</strong> (no persistence) and shows the output.
+              The seed above tells Java review how to build <code>current</code>.
+            </p>
+            <div class="editor-toolbar">
+              <span class="editor-title">Tester script</span>
+              <span class="editor-tools">
+                <button class="tool-btn" id="tester-format" type="button">⧉ Format</button>
+                <button class="tool-btn" id="tester-copy" type="button">⧉ Copy</button>
+              </span>
+            </div>
+            <div class="cm-host" id="tester-editor"></div>
+            <div class="btn-row">
+              <button class="btn" id="sim-run" type="button">Run on instance</button>
+              <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts</button>
+              <span class="spinner" id="sim-spinner" hidden></span>
+            </div>
+          </div>
+
+          <!-- GUARDED REAL -->
+          <div id="mode-real" hidden>
+            <p class="hint">
+              Creates a <strong>real</strong> record so the actual engine runs, reads the result, then delete.
+              <strong>Hard-blocked on production.</strong>
+            </p>
+            <label class="field-label" for="l3-table">Target table</label>
+            <input id="l3-table" class="query-input" placeholder="incident" />
+            <label class="field-label" for="l3-fields">Test record fields (field=value per line)</label>
+            <textarea id="l3-fields" class="query-input code" rows="4" placeholder="short_description=snJava test&#10;priority=3"></textarea>
+            <div class="btn-row">
+              <button class="btn btn-ghost" id="l3-fill" type="button">Fill from this record</button>
+              <button class="btn" id="l3-create" type="button" disabled>Create test record</button>
+              <button class="btn btn-ghost" id="l3-delete" type="button" disabled>Delete test record</button>
+            </div>
+          </div>
+
           <div class="results" id="sim-results"></div>
-        </section>
-
-        <section class="card" id="l3-card">
-          <h2 class="card-title">Guarded Real Execution</h2>
-          <div class="guard-badge" id="l3-guard">Checking instance…</div>
-          <p class="hint">
-            Creates a <strong>real</strong> record on a sub-prod so the actual
-            engine runs, reads the result, then lets you delete it.
-            <strong>Hard-blocked on production.</strong>
-          </p>
-
-          <label class="field-label" for="l3-table">Target table</label>
-          <input id="l3-table" class="query-input" placeholder="incident" />
-
-          <label class="field-label" for="l3-fields">Test record fields (field=value per line)</label>
-          <textarea
-            id="l3-fields"
-            class="query-input code"
-            rows="4"
-            placeholder="short_description=snJava test&#10;priority=3"
-          ></textarea>
-
-          <div class="btn-row">
-            <button class="btn" id="l3-create" type="button" disabled>Create test record</button>
-            <button class="btn btn-ghost" id="l3-delete" type="button" disabled>Delete test record</button>
-          </div>
-          <div class="results" id="l3-results"></div>
         </section>
       </div>
 

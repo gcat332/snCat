@@ -1035,6 +1035,7 @@ async function javaReview() {
     timing: scriptTiming.value as BrTiming,
     table: current?.table || 'incident',
     intent: (el<HTMLTextAreaElement>('script-intent').value || '').trim() || undefined,
+    ...seedInfo(),
   })
   if (!started) {
     aiStatus.textContent = 'Open a ServiceNow tab first.'
@@ -1079,7 +1080,7 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   }
   if (testScript) {
     testerEd.setValue(testScript)
-    updateSandboxGuard()
+    updateGuard()
     simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
@@ -1186,6 +1187,36 @@ const simGuard = el('sim-guard')
 const simRun = el<HTMLButtonElement>('sim-run')
 const simSpinner = el('sim-spinner')
 const simResults = el('sim-results')
+const seedSource = el<HTMLSelectElement>('seed-source')
+const seedQuery = el<HTMLInputElement>('seed-query')
+const modeSimulate = el('mode-simulate')
+const modeReal = el('mode-real')
+
+/** Current seed choice for the tester/guarded flows. */
+function seedInfo(): { seedMode: 'blank' | 'record' | 'query'; seedSysId?: string; seedQuery?: string } {
+  const mode = seedSource.value as 'blank' | 'record' | 'query'
+  return {
+    seedMode: mode,
+    seedSysId: mode === 'record' ? current?.sysId ?? undefined : undefined,
+    seedQuery: mode === 'query' ? seedQuery.value.trim() || undefined : undefined,
+  }
+}
+
+function initRunnerMode() {
+  seedSource.addEventListener('change', () => {
+    seedQuery.hidden = seedSource.value !== 'query'
+  })
+  const btns = [el<HTMLButtonElement>('mode-btn-simulate'), el<HTMLButtonElement>('mode-btn-real')]
+  for (const b of btns) {
+    b.addEventListener('click', () => {
+      btns.forEach((x) => x.classList.remove('is-active'))
+      b.classList.add('is-active')
+      const real = b.dataset.mode === 'real'
+      modeSimulate.hidden = real
+      modeReal.hidden = !real
+    })
+  }
+}
 
 /** Parse "field=value" lines into a map (used by Layer 3). */
 function parseFields(text: string): Record<string, string> {
@@ -1200,20 +1231,23 @@ function parseFields(text: string): Record<string, string> {
   return out
 }
 
-/** Reflect the prod-guard verdict in the sandbox card + gate the Run button. */
-function updateSandboxGuard() {
+/** One prod-guard verdict for the whole Test Runner (Simulate + Guarded real). */
+function updateGuard() {
   if (!current) {
     simGuard.className = 'guard-badge'
     simGuard.textContent = 'Checking instance…'
-    simRun.disabled = true
-    return
+    l3Allowed = false
+  } else {
+    const verdict = classifyInstance(current.host)
+    l3Allowed = verdict.allowed
+    simGuard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
+    simGuard.textContent = verdict.allowed
+      ? `✓ ${verdict.instance} — sub-prod. Real execution permitted.`
+      : `⛔ ${verdict.reason}`
   }
-  const verdict = classifyInstance(current.host)
-  simGuard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
-  simGuard.textContent = verdict.allowed
-    ? `✓ ${verdict.instance} — sub-prod. Background run permitted.`
-    : `⛔ ${verdict.reason}`
-  simRun.disabled = !verdict.allowed
+  simRun.disabled = !l3Allowed
+  l3Create.disabled = !(l3Allowed && current)
+  l3Delete.disabled = !(l3Allowed && l3Created)
 }
 
 /** Open the Background Scripts page and pre-fill it with the given script. */
@@ -1337,33 +1371,42 @@ async function runOnInstance() {
   simResults.append(pre)
 }
 
-/* ---------- Layer 3 — Guarded Real Execution (M5) ---------- */
+/* ---------- Guarded Real Execution (create → observe → delete) ---------- */
 
-const l3Guard = el('l3-guard')
 const l3Table = el<HTMLInputElement>('l3-table')
 const l3Fields = el<HTMLTextAreaElement>('l3-fields')
 const l3Create = el<HTMLButtonElement>('l3-create')
 const l3Delete = el<HTMLButtonElement>('l3-delete')
-const l3Results = el('l3-results')
+const l3Results = simResults // shared results area in the Test Runner card
 
 let l3Allowed = false
 let l3Created: { table: string; sysId: string } | null = null
 
-function updateProdGuard() {
-  if (!current) {
-    l3Guard.className = 'guard-badge'
-    l3Guard.textContent = 'Checking instance…'
-    l3Allowed = false
-  } else {
-    const verdict = classifyInstance(current.host)
-    l3Allowed = verdict.allowed
-    l3Guard.className = `guard-badge ${verdict.allowed ? 'ok' : 'blocked'}`
-    l3Guard.textContent = verdict.allowed
-      ? `✓ ${verdict.instance} — sub-prod. Real execution permitted.`
-      : `⛔ ${verdict.reason}`
+/** Prefill the guarded-real fields from the current record (or a seed query). */
+async function l3FillFromRecord() {
+  if (!current) return
+  const table = l3Table.value.trim() || current.table
+  if (!table) return
+  l3Results.replaceChildren(elText('div', 'empty', 'Loading record…'))
+  let rec: Record<string, unknown> | null = null
+  if (seedSource.value === 'query' && seedQuery.value.trim()) {
+    const q = await queryRecords(current.host, table, { query: seedQuery.value.trim(), limit: 1, displayValue: false })
+    rec = q.ok && q.data[0] ? q.data[0] : null
+  } else if (current.sysId) {
+    const r = await getRecord(current.host, table, current.sysId)
+    rec = r.ok ? r.data : null
   }
-  l3Create.disabled = !(l3Allowed && current)
-  l3Delete.disabled = !(l3Allowed && l3Created)
+  if (!rec) {
+    l3Results.replaceChildren(elText('div', 'error', 'No record to fill from.'))
+    return
+  }
+  const fields = importableFields(
+    Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, cellValue(v)])),
+  )
+  l3Fields.value = Object.entries(fields)
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n')
+  l3Results.replaceChildren(elText('div', 'ok-banner', `Filled ${Object.keys(fields).length} fields from a ${table} record.`))
 }
 
 async function createTestRecord() {
@@ -1388,7 +1431,7 @@ async function createTestRecord() {
   const res = await createRecord(current.host, table, fields)
   if (!res.ok) {
     l3Results.replaceChildren(elText('div', 'error', res.error))
-    updateProdGuard()
+    updateGuard()
     return
   }
   const sysId = cellValue(res.data['sys_id'])
@@ -1397,7 +1440,7 @@ async function createTestRecord() {
   // Read the created record back to observe what the engine actually did.
   const back = await getRecord(current.host, table, sysId)
   renderL3Result(fields, back.ok ? back.data : res.data, sysId)
-  updateProdGuard()
+  updateGuard()
 }
 
 function renderL3Result(seed: Record<string, string>, rec: Record<string, unknown>, sysId: string) {
@@ -1440,7 +1483,7 @@ async function deleteTestRecord() {
   }
   l3Results.replaceChildren(elText('div', 'ok-banner', '✓ Test record deleted.'))
   l3Created = null
-  updateProdGuard()
+  updateGuard()
 }
 
 /* ---------- Design Spec Generator (M4 / F1) ---------- */
@@ -1880,7 +1923,7 @@ async function detect() {
     renderStatus('No record detected on this page.')
   }
   updateEnabledState()
-  updateSandboxGuard()
+  updateGuard()
   void populateScopeBar()
 
   // Default the Layer 3 target table to the current data table.
@@ -1891,7 +1934,7 @@ async function detect() {
   if (current?.table && !scriptTableInfo(current.table) && !pickerTable.value.trim()) {
     pickerTable.value = current.table
   }
-  updateProdGuard()
+  updateGuard()
   void refreshXmlControls()
   void maybeAutoLoadScript()
 }
@@ -1950,6 +1993,8 @@ el<HTMLButtonElement>('sim-bg').addEventListener('click', () => {
 })
 l3Create.addEventListener('click', createTestRecord)
 l3Delete.addEventListener('click', deleteTestRecord)
+el<HTMLButtonElement>('l3-fill').addEventListener('click', l3FillFromRecord)
+initRunnerMode()
 specWalk.addEventListener('click', discoverArtifacts)
 specHtmlBtn.addEventListener('click', exportHtml)
 specPdfBtn.addEventListener('click', exportPdf)

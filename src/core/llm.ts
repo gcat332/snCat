@@ -71,6 +71,18 @@ const KIND_LABEL: Record<ScriptKind, string> = {
   unknown: 'server-side script',
 }
 
+/** How the tester should obtain `current`, per the chosen seed mode. */
+function seedInstruction(input: ReviewInput): string {
+  const t = JSON.stringify(input.table)
+  if (input.seedMode === 'record' && input.seedSysId) {
+    return `  * Seed from the REAL record: "var current = new GlideRecord(${t}); current.get(${JSON.stringify(input.seedSysId)}); var previous = new GlideRecord(${t}); previous.get(${JSON.stringify(input.seedSysId)});" then mutate copies of field values as needed. Do NOT invent field values — read them from this record.`
+  }
+  if (input.seedMode === 'query' && input.seedQuery) {
+    return `  * Seed from a QUERY: "var current = new GlideRecord(${t}); current.addEncodedQuery(${JSON.stringify(input.seedQuery)}); current.query(); current.next(); var previous = new GlideRecord(${t}); previous.get(current.getUniqueValue());".`
+  }
+  return `  * Seed with representative values: "var current = new GlideRecord(${t}); current.initialize(); current.setValue('field', 'value');" and a "previous" the same way when needed.`
+}
+
 /** System + user prompt for the review. The model must reply with strict JSON. */
 export function buildReviewPrompt(input: ReviewInput): { system: string; user: string } {
   const kind = KIND_LABEL[input.kind]
@@ -96,7 +108,8 @@ export function buildReviewPrompt(input: ReviewInput): { system: string; user: s
     'Return a JSON object with exactly these string/array keys:',
     '- "optimizedScript": a corrected, optimized version of the script following ServiceNow best practices (fix anti-patterns like current.update() in before rules, unconditioned GlideRecord queries, GlideRecord in client scripts, etc.). Apply the requested changes above, and keep it functionally consistent with the intent. Add brief comments where helpful.',
     '- "testScript": a COMPLETE, self-contained ServiceNow **background script** (Scripts - Background, server-side, Rhino/ES5) that will be run as-is on the instance. Requirements:',
-    `  * gs and GlideRecord exist globally; current/previous/g_form do NOT — build them yourself: "var current = new GlideRecord(${JSON.stringify(input.table)}); current.initialize(); current.setValue('field', 'value');" and a "previous" the same way when needed.`,
+    `  * gs and GlideRecord exist globally; current/previous/g_form do NOT — build them yourself.`,
+    seedInstruction(input),
     '  * Wrap the logic under test in a function and call it against your constructed current/previous, OR inline it. Cover 2-3 labeled cases.',
     '  * Print every observable outcome with gs.info("Case1 field=" + current.getValue("field")).',
     '  * MUST NOT persist anything: never call insert(), update(), deleteRecord(), or setAbortAction side effects on real data — operate only on the in-memory initialized GlideRecord. If the original logic calls current.update(), omit that call in the test.',
