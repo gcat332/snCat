@@ -178,7 +178,8 @@ The section-7 open questions were resolved as follows:
 ## 8. Reference notes
 
 - Brand tokens sourced from `MFEC_Company_Profile_2026_version_1.pptx` — theme1.xml accents + frequency analysis of slide XML + visual render. Keep the PPTX for future re-extraction if branding updates.
-- **MFEC logo assets — extracted** from the PPTX (`ppt/media/`) into `public/brand/`: `mfec-logo-dark.png` (dark wordmark for white pages), `mfec-logo-light.png` (white wordmark for gradient cover band). Extension icons in `public/icons/` from the square arrow mark. The `.pptx` itself is **git-ignored** (43 MB) but kept locally for re-extraction.
+- **MFEC logo assets — extracted** from the PPTX (`ppt/media/`) into `public/brand/`: `mfec-logo-dark.png` (dark wordmark for white pages, used in side-panel header + as the F1 doc logo source), `mfec-logo-light.png` (white wordmark for the F1 gradient cover band). The `.pptx` itself is **git-ignored** (43 MB) but kept locally for re-extraction.
+- **Extension icon** = `public/brand/extension-icon.svg` ("น้อง Java" dog emoji, user-supplied), rasterized to `public/icons/icon-{16,32,48,128}.png` via macOS `qlmanage` after squaring the viewBox. Re-rasterize from the SVG if it changes.
 - **Stack chosen: TypeScript + Vite + `@crxjs/vite-plugin`** (MV3, HMR, side panel support). Vitest for the context-parser unit tests.
 - Related prior work by Gust that connects here: `itsm-deploy` ATF regression gates (Layer 3), Chesterton's Fence refactoring framing (Impact Analysis future feature), reasoning-trace skill (could drive the graph-walk audit trail).
 

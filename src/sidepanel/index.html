@@ -24,6 +24,9 @@
       <button class="tab" id="tab-tester" data-panel="panel-tester" role="tab">
         Script Tester
       </button>
+      <button class="tab" id="tab-spec" data-panel="panel-spec" role="tab">
+        Design Spec
+      </button>
     </nav>
 
     <main class="app-main">
@@ -154,6 +157,32 @@
             <span class="count-badge" id="sim-status" hidden></span>
           </div>
           <div class="results" id="sim-results"></div>
+        </section>
+      </div>
+
+      <!-- ============ DESIGN SPEC (F1) ============ -->
+      <div class="panel" id="panel-spec">
+        <section class="card" id="spec-card">
+          <h2 class="card-title">Design Spec Generator</h2>
+          <p class="hint" id="spec-hint">
+            Open a Business Rule, Catalog Item, Script Include, or Transform Map,
+            then generate a spec from it and its dependencies (depth 2).
+          </p>
+          <div class="btn-row" style="margin-top: 0">
+            <button class="btn" id="spec-walk" type="button" disabled>Discover artifacts</button>
+            <span class="count-badge" id="spec-status" hidden></span>
+          </div>
+          <div class="results" id="spec-checklist"></div>
+
+          <div id="spec-output" hidden>
+            <label class="field-label">Export</label>
+            <div class="btn-row" style="margin-top: 0">
+              <button class="btn" id="spec-html" type="button">HTML</button>
+              <button class="btn" id="spec-pdf" type="button">PDF</button>
+              <button class="btn" id="spec-docx" type="button">Word</button>
+            </div>
+            <p class="ai-note">Template output — no AI-generated prose (LLM off).</p>
+          </div>
         </section>
       </div>
     </main>

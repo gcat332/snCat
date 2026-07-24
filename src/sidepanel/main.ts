@@ -11,6 +11,11 @@ import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@c
 import { normalizeTiming, scriptTableInfo } from '@core/script-meta'
 import { SandboxRunner } from '@core/sandbox-host'
 import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
+import type { ArtifactRef } from '@core/graph'
+import { composeSpec, type SpecDocument } from '@core/spec'
+import { renderSpecHtml } from '@core/render-html'
+import { renderSpecDocxBlob } from '@core/render-docx'
+import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
 let current: PageContext | null = null
 const sandbox = new SandboxRunner()
@@ -104,6 +109,7 @@ function updateEnabledState() {
   condRun.disabled = !hasTable
   schemaLoad.disabled = !hasTable
   condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
+  specWalk.disabled = !(current?.table && current.sysId)
 }
 
 async function runCondition() {
@@ -436,6 +442,179 @@ function renderSimResult(result: SimulationResult) {
   simResults.append(elText('div', 'ai-note', result.note))
 }
 
+/* ---------- Design Spec Generator (M4 / F1) ---------- */
+
+const specWalk = el<HTMLButtonElement>('spec-walk')
+const specStatus = el('spec-status')
+const specChecklist = el('spec-checklist')
+const specOutput = el('spec-output')
+const specHtmlBtn = el<HTMLButtonElement>('spec-html')
+const specPdfBtn = el<HTMLButtonElement>('spec-pdf')
+const specDocxBtn = el<HTMLButtonElement>('spec-docx')
+
+let specRoot: ArtifactRef | null = null
+let specArtifacts: ArtifactRef[] = []
+const specExcluded = new Set<string>()
+let logoDataUriCache: string | undefined
+
+const ARTIFACT_GROUP: Record<string, string> = {
+  table: 'Data model',
+  variable: 'Variables',
+  variable_set: 'Variable sets',
+  ui_policy: 'UI policies',
+  script_include: 'Script Includes',
+  catalog_client_script: 'Catalog client scripts',
+  workflow: 'Integration',
+  transform_map: 'Transform maps',
+  transform_entry: 'Transform entries',
+  acl: 'ACLs',
+}
+
+async function getLogoDataUri(): Promise<string | undefined> {
+  if (logoDataUriCache !== undefined) return logoDataUriCache
+  try {
+    const res = await fetch(chrome.runtime.getURL('public/brand/mfec-logo-light.png'))
+    const blob = await res.blob()
+    logoDataUriCache = await new Promise<string>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    logoDataUriCache = undefined
+  }
+  return logoDataUriCache
+}
+
+async function discoverArtifacts() {
+  if (!current?.table || !current.sysId) return
+  const { host, table, sysId } = current
+
+  specWalk.disabled = true
+  specOutput.hidden = true
+  specStatus.hidden = true
+  specChecklist.replaceChildren(elText('div', 'empty', 'Loading root record…'))
+
+  const root = await loadRootArtifact(host, table, sysId)
+  if (!root) {
+    specChecklist.replaceChildren(elText('div', 'error', 'Could not load the root record.'))
+    specWalk.disabled = false
+    return
+  }
+  specChecklist.replaceChildren(elText('div', 'empty', 'Walking dependency graph…'))
+
+  try {
+    const outcome = await walkSpecGraph(host, root)
+    specRoot = outcome.root
+    specArtifacts = outcome.artifacts
+    specExcluded.clear()
+    renderChecklist()
+  } catch (err) {
+    specChecklist.replaceChildren(elText('div', 'error', (err as Error).message))
+  } finally {
+    specWalk.disabled = false
+  }
+}
+
+function renderChecklist() {
+  specChecklist.replaceChildren()
+  specStatus.hidden = false
+  specStatus.textContent = `${specArtifacts.length} discovered`
+
+  if (specArtifacts.length === 0) {
+    specChecklist.append(
+      elText('div', 'empty', 'No related artifacts found within depth 2. You can still export the root spec.'),
+    )
+  }
+
+  const groups = new Map<string, ArtifactRef[]>()
+  for (const a of specArtifacts) {
+    const g = ARTIFACT_GROUP[a.type] ?? a.type
+    if (!groups.has(g)) groups.set(g, [])
+    groups.get(g)!.push(a)
+  }
+
+  for (const [group, items] of groups) {
+    specChecklist.append(elText('div', 'chk-group-title', `${group} (${items.length})`))
+    for (const a of items) {
+      const rowEl = document.createElement('label')
+      rowEl.className = 'chk-item'
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.checked = true
+      cb.addEventListener('change', () => {
+        if (cb.checked) specExcluded.delete(a.id)
+        else specExcluded.add(a.id)
+      })
+      const label = elText('span', 'chk-label', a.label || a.sysId)
+      const rel = elText('span', 'chk-rel', a.relation)
+      rowEl.append(cb, label, rel)
+      specChecklist.append(rowEl)
+    }
+  }
+
+  specOutput.hidden = false
+}
+
+function buildSpecDoc(): SpecDocument | null {
+  if (!specRoot || !current) return null
+  const included = specArtifacts.filter((a) => !specExcluded.has(a.id))
+  return composeSpec({
+    instance: current.host,
+    rootTable: specRoot.table,
+    rootLabel: specRoot.label,
+    rootFields: specRoot.fields,
+    artifacts: included,
+  })
+}
+
+function safeName(): string {
+  return (specRoot?.label || 'design-spec').replace(/[^\w.-]+/g, '_').slice(0, 60)
+}
+
+function download(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 4000)
+}
+
+async function exportHtml() {
+  const doc = buildSpecDoc()
+  if (!doc) return
+  const html = renderSpecHtml(doc, { logoDataUri: await getLogoDataUri() })
+  download(new Blob([html], { type: 'text/html' }), `${safeName()}.html`)
+}
+
+async function exportPdf() {
+  const doc = buildSpecDoc()
+  if (!doc) return
+  const html = renderSpecHtml(doc, { logoDataUri: await getLogoDataUri() }).replace(
+    '</body>',
+    '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},350)})</script></body>',
+  )
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+  // Open in a normal tab so the user can Save as PDF (auto-print dialog).
+  await chrome.tabs.create({ url })
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
+}
+
+async function exportDocx() {
+  const doc = buildSpecDoc()
+  if (!doc) return
+  specDocxBtn.disabled = true
+  try {
+    const blob = await renderSpecDocxBlob(doc)
+    download(blob, `${safeName()}.docx`)
+  } finally {
+    specDocxBtn.disabled = false
+  }
+}
+
 /* ---------- detect + wiring ---------- */
 
 async function detect() {
@@ -482,6 +661,10 @@ scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', analyze)
 simFill.addEventListener('click', fillFromRecord)
 simRun.addEventListener('click', runSimulation)
+specWalk.addEventListener('click', discoverArtifacts)
+specHtmlBtn.addEventListener('click', exportHtml)
+specPdfBtn.addEventListener('click', exportPdf)
+specDocxBtn.addEventListener('click', exportDocx)
 
 chrome.tabs.onActivated.addListener(detect)
 chrome.tabs.onUpdated.addListener((_id, info, tab) => {

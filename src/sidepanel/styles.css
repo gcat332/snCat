@@ -454,3 +454,40 @@ body {
   color: var(--mfec-blue-dark);
   margin-bottom: 4px;
 }
+
+/* Design Spec checklist */
+.chk-group-title {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--mfec-blue-dark);
+}
+
+.chk-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.chk-item input {
+  accent-color: var(--mfec-blue);
+}
+
+.chk-item .chk-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.chk-item .chk-rel {
+  color: var(--ink-soft);
+  font-size: 11px;
+  flex-shrink: 0;
+}

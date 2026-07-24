@@ -60,7 +60,14 @@ Then load the extension in Chrome:
 
 > ⚠️ **Needs a real-browser smoke test:** the engine logic is proven by unit tests, but the iframe postMessage round-trip + classic-script load in the sandboxed opaque origin can only be confirmed by loading `dist/` in Chrome. Everything else in M0–M3 is verified.
 
-Next: **M4** — F1 Design Spec Generator (graph walker + templated PDF/docx/HTML).
+**M4 — F1 Design Spec Generator** ✅ (LLM-free, template-driven)
+- **Graph walker** (`src/core/graph.ts`): bounded BFS (depth 2), dedupe, injected fetch — unit-tested.
+- **Resolvers** (`src/core/resolvers.ts`): Business Rule (target table + referenced Script Includes via script scan), Catalog Item (variables, variable sets, UI policies, catalog client scripts, workflow), Script Include (recursive refs), Table→ACLs, Transform Map→entries — unit-tested pure helpers.
+- **Composer** (`src/core/spec.ts`): artifacts → SpecDocument with the fixed skeleton (Overview → Data Model → Logic → Integration Points → Security/ACL) — unit-tested.
+- **Renderers**: HTML (`render-html.ts`, self-contained, MFEC light theme + logo + print CSS, HTML-escaped — unit-tested) and Word `.docx` (`render-docx.ts`, `docx` lib — pack-tested).
+- Side panel **Design Spec** tab: discover artifacts → include/exclude checklist → export **HTML / PDF (print) / Word**.
+
+Next: **M5** — Script Tester Layer 3 (guarded real execution / ATF) + prod guard.
 
 ## Layout
 
