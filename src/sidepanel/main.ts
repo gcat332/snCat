@@ -2110,6 +2110,7 @@ function initGenerate() {
       table: current?.table ?? undefined,
       sysId: current?.sysId ?? undefined,
       fields,
+      scope: scopeLabel(),
     })
     if (!started) {
       genStatus.textContent = 'Open a ServiceNow tab first.'
@@ -2147,6 +2148,32 @@ function applyGenerateJob(entry: LlmJobEntry | undefined) {
   renderPlan(outcome.result.summary, outcome.result.artifacts)
 }
 
+/** Tables whose creation would spin up a new scope/app/update set — never allowed. */
+const SCOPE_CREATING_TABLES = new Set([
+  'sys_scope',
+  'sys_app',
+  'sys_store_app',
+  'sys_remote_update_set',
+  'sys_update_set',
+])
+
+/** Record fields that would place a record in a different/new scope — stripped on create. */
+const SCOPE_FIELDS = new Set(['sys_scope', 'sys_package', 'sys_scope.name', 'sys_policy'])
+
+/** An artifact that would create a new scope/app instead of using the selected one. */
+function createsScope(a: PlanArtifact): boolean {
+  return a.action === 'create' && !!a.targetTable && SCOPE_CREATING_TABLES.has(a.targetTable)
+}
+
+/** Drop any scope/app-defining fields so the record lands in the selected scope only. */
+function stripScopeFields(fields: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(fields)) {
+    if (!SCOPE_FIELDS.has(k)) out[k] = v
+  }
+  return out
+}
+
 /**
  * A create-a-field artifact whose target column already exists on the table.
  * Matches scope-prefixed proposals too (e.g. u_x / x_app_x for an existing "x").
@@ -2169,14 +2196,20 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
     return
   }
 
-  // Drop fields that already exist on the table — we don't offer them at all.
+  // Drop fields that already exist and any artifact that would create a new scope.
   const skipped = artifacts.filter(fieldAlreadyExists)
-  const shown = artifacts.filter((a) => !fieldAlreadyExists(a))
+  const scopeAttempts = artifacts.filter(createsScope)
+  const shown = artifacts.filter((a) => !fieldAlreadyExists(a) && !createsScope(a))
   genStatus.textContent = summary || `${shown.length} artifact(s) proposed.`
 
   if (skipped.length) {
     const names = skipped.map((a) => a.fields?.['element'] || a.title).join(', ')
     const note = elText('div', 'info-sub', `Skipped ${skipped.length} field(s) that already exist on ${current?.table ?? 'the table'}: ${names}`)
+    note.style.marginBottom = '6px'
+    genList.append(note)
+  }
+  if (scopeAttempts.length) {
+    const note = elText('div', 'info-sub', `Ignored ${scopeAttempts.length} artifact(s) that would create a new scope/app — records use the scope selected above (${scopeLabel()}).`)
     note.style.marginBottom = '6px'
     genList.append(note)
   }
@@ -2311,7 +2344,10 @@ function showArtifact(a: PlanArtifact) {
 /** Insert one planned record via a scope-aware background script. No UI. */
 async function createArtifactCore(a: PlanArtifact): Promise<{ ok: boolean; sysId?: string; error?: string }> {
   if (!current || !a.targetTable || !a.fields) return { ok: false, error: 'nothing to create' }
-  const bg = buildRecordInsertScript(a.targetTable, a.fields)
+  if (createsScope(a)) return { ok: false, error: 'refused: would create a new scope/app' }
+  // Never let the plan choose the scope — records go into the scope selected in
+  // the header (via sys_scope form field + GlideUpdateSet in the background run).
+  const bg = buildRecordInsertScript(a.targetTable, stripScopeFields(a.fields))
   const res = await runBackground(current.host, bg, writeTargetOpts())
   if (!res.ok) return { ok: false, error: res.error }
   const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)

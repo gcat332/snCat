@@ -13,7 +13,7 @@ interface LlmRunMessage {
   kind: 'snjava:llm-run'
   tabId: number
   op: 'review' | 'generate'
-  payload: ReviewInput & { requirement?: string; table?: string; sysId?: string; fields?: string[] }
+  payload: ReviewInput & { requirement?: string; table?: string; sysId?: string; fields?: string[]; scope?: string }
 }
 
 function jobKey(tabId: number, op: string): string {
@@ -32,6 +32,7 @@ async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
             table: msg.payload.table,
             sysId: msg.payload.sysId,
             fields: msg.payload.fields,
+            scope: msg.payload.scope,
           })
     entry = { status: 'done', op: msg.op, outcome }
   } catch (err) {

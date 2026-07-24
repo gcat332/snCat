@@ -217,6 +217,8 @@ export interface PlanContext {
   sysId?: string
   /** Existing field names on the table, for grounding. */
   fields?: string[]
+  /** The scope/application the user selected in the UI; artifacts target this. */
+  scope?: string
 }
 
 /** Prompt: turn a requirement + current context into a plan of artifacts. */
@@ -233,6 +235,8 @@ export function buildPlanPrompt(requirement: string, ctx: PlanContext): { system
     requirement,
     '',
     ctx.table ? `Current table: ${ctx.table}` : 'No specific table.',
+    `Target application scope: ${ctx.scope || 'Global'}. All artifacts are created in THIS scope, which the user already selected in the UI.`,
+    'SCOPE RULES (hard): Never propose creating an application or scope (no sys_scope / sys_app / sys_store_app / sys_update_set artifacts). Never set a "sys_scope" or "sys_package" field on any artifact — the platform places it in the selected scope automatically.',
     ctx.fields?.length
       ? [
           `EXISTING fields on ${ctx.table} (already on the table — treat as READ-ONLY inventory):`,
