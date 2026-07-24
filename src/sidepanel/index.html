@@ -72,9 +72,33 @@
 
       <!-- ============ SCRIPT TESTER ============ -->
       <div class="panel" id="panel-tester">
+        <section class="card" id="picker-card">
+          <h2 class="card-title">Load a script from the instance</h2>
+          <p class="hint" id="picker-hint">Browse scripts on the current table, or search by name.</p>
+          <div class="field-inline">
+            <div>
+              <label class="field-label" for="picker-type">Type</label>
+              <select id="picker-type" class="select">
+                <option value="sys_script">Business Rules</option>
+                <option value="sys_script_client">Client Scripts</option>
+                <option value="sys_script_include">Script Includes</option>
+              </select>
+            </div>
+            <div id="picker-table-wrap">
+              <label class="field-label" for="picker-table">Table</label>
+              <input id="picker-table" class="query-input" placeholder="incident" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <input id="picker-search" class="query-input" style="flex: 1" placeholder="name contains… (optional)" />
+            <button class="btn" id="picker-find" type="button">Find</button>
+          </div>
+          <div class="results" id="picker-results"></div>
+        </section>
+
         <section class="card" id="tester-card">
           <h2 class="card-title">Layer 1 — Static Analysis</h2>
-          <p class="hint" id="tester-source">Paste a script, or open a Business Rule / Client Script / Script Include record to auto-load it.</p>
+          <p class="hint" id="tester-source">Paste a script, pick one above, or open a Business Rule / Client Script / Script Include record to auto-load it.</p>
 
           <div class="field-inline">
             <div>

@@ -17,7 +17,7 @@ import {
 } from '@core/api-client'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
-import { normalizeTiming, scriptTableInfo } from '@core/script-meta'
+import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
 import { SandboxRunner } from '@core/sandbox-host'
 import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
 import type { ArtifactRef } from '@core/graph'
@@ -209,28 +209,25 @@ function syncTimingVisibility() {
   timingWrap.style.display = scriptKind.value === 'business_rule' ? '' : 'none'
 }
 
-/** If the current record is a script table, pull its script into the tester. */
-async function maybeAutoLoadScript() {
-  if (!current?.table || !current.sysId) return
-  const info = scriptTableInfo(current.table)
+/** Fetch a script record (any script table) and populate the Layer 1 editor. */
+async function loadScriptIntoTester(host: string, scriptTable: string, sysId: string) {
+  const info = scriptTableInfo(scriptTable)
   if (!info) return
+  testerSource.textContent = 'Loading script…'
 
-  testerSource.textContent = 'Loading script from record…'
   const fields = [info.scriptField, info.nameField]
   if (info.timingField) fields.push(info.timingField)
   if (info.tableField) fields.push(info.tableField)
 
-  const res = await getRecord(current.host, current.table, current.sysId, fields)
+  const res = await getRecord(host, scriptTable, sysId, fields)
   if (!res.ok) {
-    testerSource.textContent = `Could not auto-load: ${res.error}`
+    testerSource.textContent = `Could not load: ${res.error}`
     return
   }
   const rec = res.data
   scriptBody.value = cellValue(rec[info.scriptField])
   scriptKind.value = info.kind
-  if (info.timingField) {
-    scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
-  }
+  if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
   // Layer 2/3: point the target table at what this script runs against.
   if (info.tableField) {
     const target = cellValue(rec[info.tableField])
@@ -240,8 +237,76 @@ async function maybeAutoLoadScript() {
     }
   }
   syncTimingVisibility()
-  const name = cellDisplay(rec[info.nameField]) || current.table
+  const name = cellDisplay(rec[info.nameField]) || scriptTable
   testerSource.textContent = `Loaded "${name}" (${info.kind.replace('_', ' ')}).`
+  scriptBody.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
+
+/** If the current record is itself a script record, pull it into the tester. */
+async function maybeAutoLoadScript() {
+  if (!current?.table || !current.sysId) return
+  if (!scriptTableInfo(current.table)) return
+  await loadScriptIntoTester(current.host, current.table, current.sysId)
+}
+
+/* ---------- Script picker (browse scripts on a table) ---------- */
+
+const pickerType = el<HTMLSelectElement>('picker-type')
+const pickerTableWrap = el('picker-table-wrap')
+const pickerTable = el<HTMLInputElement>('picker-table')
+const pickerSearch = el<HTMLInputElement>('picker-search')
+const pickerFind = el<HTMLButtonElement>('picker-find')
+const pickerResults = el('picker-results')
+
+const PICKER_META: Record<string, { detail: (r: Record<string, unknown>) => string }> = {
+  sys_script: { detail: (r) => `${cellValue(r['when']) || 'when?'} · ${cellValue(r['active']) === 'true' ? 'active' : 'inactive'}` },
+  sys_script_client: { detail: (r) => `${cellValue(r['type']) || 'type?'} · ${cellValue(r['active']) === 'true' ? 'active' : 'inactive'}` },
+  sys_script_include: { detail: (r) => cellValue(r['api_name']) },
+}
+
+function syncPickerTableVisibility() {
+  // Script Includes are global (no table scope).
+  pickerTableWrap.style.display = pickerType.value === 'sys_script_include' ? 'none' : ''
+}
+
+async function findScripts() {
+  if (!current) return
+  const scriptTable = pickerType.value
+  const tableFilter = pickerTable.value.trim() || undefined
+  const nameSearch = pickerSearch.value.trim() || undefined
+
+  pickerFind.disabled = true
+  pickerResults.replaceChildren(elText('div', 'empty', 'Searching…'))
+
+  const query = buildScriptBrowseQuery(scriptTable, tableFilter, nameSearch)
+  const fields = ['sys_id', 'name', 'active', 'when', 'type', 'api_name']
+  const res = await queryRecords(current.host, scriptTable, { query, fields, limit: 50, displayValue: false })
+  pickerFind.disabled = false
+
+  if (!res.ok) {
+    pickerResults.replaceChildren(elText('div', 'error', res.error))
+    return
+  }
+  pickerResults.replaceChildren()
+  if (res.data.length === 0) {
+    pickerResults.append(elText('div', 'empty', 'No scripts found for this filter.'))
+    return
+  }
+  const detailFn = PICKER_META[scriptTable]?.detail ?? (() => '')
+  for (const rec of res.data) {
+    const sysId = cellValue(rec['sys_id'])
+    const rowEl = document.createElement('button')
+    rowEl.type = 'button'
+    rowEl.className = 'result-row picker-row'
+    rowEl.append(
+      elText('span', 'label', cellValue(rec['name']) || sysId.slice(0, 8)),
+      elText('span', 'sysid', detailFn(rec)),
+    )
+    rowEl.addEventListener('click', () => {
+      void loadScriptIntoTester(current!.host, scriptTable, sysId)
+    })
+    pickerResults.append(rowEl)
+  }
 }
 
 function analyze() {
@@ -783,6 +848,10 @@ async function detect() {
     simTable.value = current.table
     if (!l3Table.value.trim()) l3Table.value = current.table
   }
+  // Prefill the picker's table filter with the current data table.
+  if (current?.table && !scriptTableInfo(current.table) && !pickerTable.value.trim()) {
+    pickerTable.value = current.table
+  }
   updateProdGuard()
   void maybeAutoLoadScript()
 }
@@ -795,6 +864,12 @@ condRun.addEventListener('click', runCondition)
 schemaLoad.addEventListener('click', loadSchema)
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', analyze)
+pickerType.addEventListener('change', syncPickerTableVisibility)
+pickerFind.addEventListener('click', findScripts)
+pickerSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') findScripts()
+})
+syncPickerTableVisibility()
 simFill.addEventListener('click', fillFromRecord)
 simRun.addEventListener('click', runSimulation)
 l3Create.addEventListener('click', createTestRecord)

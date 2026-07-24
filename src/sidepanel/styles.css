@@ -291,6 +291,19 @@ body {
   flex-shrink: 0;
 }
 
+button.picker-row {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  align-items: center;
+}
+
+button.picker-row:hover {
+  border-color: var(--mfec-cyan);
+  background: rgba(0, 162, 233, 0.06);
+}
+
 .schema-row {
   display: grid;
   grid-template-columns: 1fr auto;
