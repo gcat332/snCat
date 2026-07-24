@@ -102,6 +102,36 @@ body {
   border-bottom-color: var(--mfec-cyan);
 }
 
+.scopebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.scopebar-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.scopebar-select {
+  flex: 1 1 40%;
+  min-width: 100px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surface);
+}
+
 .app-main {
   padding: 14px;
 }

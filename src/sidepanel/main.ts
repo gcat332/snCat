@@ -17,7 +17,6 @@ import {
   getText,
   queryRecords,
   runBackground,
-  updateRecord,
 } from '@core/api-client'
 import { importableFields, parseUnloadXml } from '@core/xml'
 import { classifyInstance } from '@core/prod-guard'
@@ -109,6 +108,60 @@ function initTabs() {
       tab.classList.add('is-active')
       el(tab.dataset.panel!).classList.add('is-active')
     })
+  }
+}
+
+/* ---------- scope + update set bar ---------- */
+
+const scopebar = el('scopebar')
+const selScope = el<HTMLSelectElement>('sel-scope')
+const selUpdateSet = el<HTMLSelectElement>('sel-updateset')
+let lastScopeHost = ''
+
+/** Writes/background runs target this scope + update set. */
+function writeTargetOpts(): { scope?: string; updateSet?: string } {
+  return {
+    scope: selScope.value || undefined,
+    updateSet: selUpdateSet.value || undefined,
+  }
+}
+
+function scopeLabel(): string {
+  return selScope.options[selScope.selectedIndex]?.text || 'Global'
+}
+
+async function populateScopeBar() {
+  if (!current) return
+  scopebar.hidden = false
+  if (lastScopeHost === current.host) return // populated for this instance already
+  lastScopeHost = current.host
+
+  const scopes = await queryRecords(current.host, 'sys_scope', {
+    query: 'ORDERBYname',
+    fields: ['sys_id', 'name', 'scope'],
+    limit: 500,
+    displayValue: false,
+  })
+  if (scopes.ok) {
+    const keep = selScope.value
+    selScope.replaceChildren(new Option('Global', 'global'))
+    for (const s of scopes.data) {
+      selScope.append(new Option(cellValue(s['name']) || cellValue(s['scope']), cellValue(s['sys_id'])))
+    }
+    selScope.value = keep || 'global'
+  }
+
+  const sets = await queryRecords(current.host, 'sys_update_set', {
+    query: 'state=in progress^ORDERBYname',
+    fields: ['sys_id', 'name'],
+    limit: 200,
+    displayValue: false,
+  })
+  if (sets.ok) {
+    const keep = selUpdateSet.value
+    selUpdateSet.replaceChildren(new Option('Default (current)', ''))
+    for (const u of sets.data) selUpdateSet.append(new Option(cellValue(u['name']), cellValue(u['sys_id'])))
+    selUpdateSet.value = keep || ''
   }
 }
 
@@ -651,23 +704,14 @@ const aiFormat = el<HTMLSelectElement>('ai-format')
 const aiSave = el<HTMLButtonElement>('ai-save')
 const aiSaved = el('ai-saved')
 
-const SERVER_KINDS = new Set(['business_rule', 'script_include', 'unknown'])
-
 /** Switch to a named tab programmatically. */
 function activateTab(tabId: string) {
   document.getElementById(tabId)?.dispatchEvent(new MouseEvent('click'))
 }
 
-/** Toggle the BR timing selector; sandbox visibility is handled separately. */
+/** Toggle the BR timing selector. */
 function syncTimingVisibility() {
   timingWrap.style.display = scriptKind.value === 'business_rule' ? '' : 'none'
-  updateSandboxVisibility()
-}
-
-/** Sandbox shows for server-side scripts (BR / Script Include). The tester
- *  editor is pre-filled by Java review when available, or can be pasted. */
-function updateSandboxVisibility() {
-  simCard.hidden = !SERVER_KINDS.has(scriptKind.value)
 }
 
 /** Fetch a script record (any script table) and populate the Layer 1 editor. */
@@ -851,13 +895,30 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   }
   if (testScript) {
     testerEd.setValue(testScript)
-    updateSandboxVisibility()
     updateSandboxGuard()
     simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
 }
 
-/** Write the optimized script back over the source record (prod-guarded). */
+/** Background script that updates one field of one record (scope-aware). */
+function buildRecordUpdateScript(table: string, sysId: string, field: string, code: string): string {
+  return [
+    `var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `if (gr.get(${JSON.stringify(sysId)})) {`,
+    `  gr.setValue(${JSON.stringify(field)}, ${JSON.stringify(code)});`,
+    `  gr.update();`,
+    `  gs.info('snJava: updated ' + gr.getUniqueValue());`,
+    `} else {`,
+    `  gs.error('snJava: record not found: ' + ${JSON.stringify(sysId)});`,
+    `}`,
+  ].join('\n')
+}
+
+/**
+ * Save the optimized script back to the record. Runs as a background script in
+ * the selected Scope + Update Set, so it works for scoped-app records that the
+ * Table API rejects with a cross-scope 403.
+ */
 async function saveOptimizedToRecord() {
   if (!loadedScriptRecord) {
     showToast('Load a script from a record first (picker or open the record)')
@@ -866,24 +927,36 @@ async function saveOptimizedToRecord() {
   const { host, table, sysId, scriptField } = loadedScriptRecord
   const code = optimizeEd.getValue()
   if (!code.trim()) return
-  if (!(await confirmDialog(`Overwrite the ${table} record's script with the optimized version on ${host}?`))) return
-
-  optimizeSave.disabled = true
-  aiStatus.textContent = 'Saving optimized script to the record…'
-  const res = await updateRecord(host, table, sysId, { [scriptField]: code })
-  optimizeSave.disabled = false
-  if (!res.ok) {
-    const scoped = /^x_/.test(table) || /^x_/.test(current?.table ?? '')
-    aiStatus.textContent =
-      `Save failed (HTTP ${res.status}): ${res.error}` +
-      (scoped
-        ? ' — this record is in a scoped app; Table API writes may be blocked by cross-scope privileges. Use “Open Background Scripts” to apply it, or edit in the platform UI.'
-        : '')
-    showToast('Save failed — see status above')
+  if (
+    !(await confirmDialog(
+      `Save the optimized script to ${table} on ${host}?\n\nRuns as a background script in scope "${scopeLabel()}"${
+        selUpdateSet.value ? ` and update set "${selUpdateSet.options[selUpdateSet.selectedIndex].text}"` : ''
+      }.`,
+    ))
+  ) {
     return
   }
-  scriptEd.setValue(code)
-  showToast('Saved optimized script to the record ✓')
+
+  optimizeSave.disabled = true
+  aiStatus.textContent = 'Saving via background script…'
+  const bg = buildRecordUpdateScript(table, sysId, scriptField, code)
+  const res = await runBackground(host, bg, writeTargetOpts())
+  optimizeSave.disabled = false
+
+  if (!res.ok) {
+    aiStatus.textContent = `Save failed (HTTP ${res.status}): ${res.error}`
+    showToast('Save failed — see status')
+    return
+  }
+  const out = extractBgOutput(res.data)
+  if (/snJava: updated/.test(out)) {
+    scriptEd.setValue(code)
+    aiStatus.textContent = 'Saved optimized script to the record ✓'
+    showToast('Saved ✓')
+  } else {
+    aiStatus.textContent = `Save may have failed — output: ${out.slice(0, 300)}`
+    showToast('Check status')
+  }
 }
 
 async function formatEditor(ed: { getValue: () => string; setValue: (v: string) => void }, btn: HTMLButtonElement) {
@@ -961,7 +1034,7 @@ function updateSandboxGuard() {
 
 /** Open the Background Scripts page and pre-fill it with the given script. */
 async function openBackgroundScripts(host: string, script: string) {
-  const tab = await chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
+  const tab = await chrome.tabs.create({ url: `https://${host}/sys.scripts.modern.do` })
   const tabId = tab.id
   if (tabId == null) return
   void copyText(script) // clipboard fallback in case the field can't be filled
@@ -1012,7 +1085,7 @@ async function runOnInstance() {
   simSpinner.hidden = false
   simResults.replaceChildren(elText('div', 'empty', 'Running on the instance…'))
 
-  const res = await runBackground(current.host, script)
+  const res = await runBackground(current.host, script, writeTargetOpts())
   simSpinner.hidden = true
   simRun.disabled = false
 
@@ -1471,6 +1544,7 @@ async function detect() {
   }
   updateEnabledState()
   updateSandboxGuard()
+  void populateScopeBar()
 
   // Default the Layer 3 target table to the current data table.
   if (current?.table && !scriptTableInfo(current.table) && !l3Table.value.trim()) {

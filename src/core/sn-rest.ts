@@ -128,17 +128,27 @@ async function apiWrite<T>(
  * needs the session's g_ck. Returns the raw HTML response for the caller to
  * extract output from.
  */
-async function apiBgRun(host: string, script: string, deps: RestDeps): Promise<ApiResult<string>> {
+async function apiBgRun(
+  host: string,
+  script: string,
+  deps: RestDeps,
+  opts: { scope?: string; updateSet?: string } = {},
+): Promise<ApiResult<string>> {
   const verdict = classifyInstance(host, deps.guardConfig)
   if (!verdict.allowed) return { ok: false, status: 403, error: `Prod guard: ${verdict.reason}` }
   if (!deps.token) {
     return { ok: false, status: 401, error: 'Background run needs g_ck; open a classic ServiceNow page and retry.' }
   }
+  // Run inside the chosen update set by switching it at the top of the script.
+  const full = opts.updateSet
+    ? `new GlideUpdateSet().set(${JSON.stringify(opts.updateSet)});\n${script}`
+    : script
   const body = new URLSearchParams()
-  body.set('script', script)
+  body.set('script', full)
   body.set('sysparm_ck', deps.token)
   body.set('runscript', 'Run script')
   body.set('quota_managed_transaction', 'on')
+  if (opts.scope) body.set('sys_scope', opts.scope)
 
   let res: Response
   try {
@@ -191,7 +201,7 @@ export async function executeApiRequest(
     case 'text':
       return apiGetText(req.url, deps)
     case 'bgrun':
-      return apiBgRun(req.host, req.script, deps)
+      return apiBgRun(req.host, req.script, deps, { scope: req.scope, updateSet: req.updateSet })
     default: {
       const _exhaustive: never = req
       return { ok: false, status: 0, error: `Unknown op: ${JSON.stringify(_exhaustive)}` }

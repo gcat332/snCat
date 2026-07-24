@@ -25,6 +25,17 @@
       <button class="tab" id="tab-settings" data-panel="panel-settings" role="tab">Settings</button>
     </nav>
 
+    <div class="scopebar" id="scopebar" hidden>
+      <label class="scopebar-label">Scope</label>
+      <select id="sel-scope" class="scopebar-select" title="Application scope for writes / background runs">
+        <option value="global">Global</option>
+      </select>
+      <label class="scopebar-label">Update Set</label>
+      <select id="sel-updateset" class="scopebar-select" title="Update set for writes / background runs">
+        <option value="">Default (current)</option>
+      </select>
+    </div>
+
     <main class="app-main">
       <!-- ============ INSPECT ============ -->
       <div class="panel is-active" id="panel-inspect">
@@ -171,7 +182,7 @@
 
         </section>
 
-        <section class="card" id="sim-card" hidden>
+        <section class="card" id="sim-card">
           <h2 class="card-title">Sandbox — Run tester on instance</h2>
           <div class="guard-badge" id="sim-guard">Checking instance…</div>
           <p class="hint">

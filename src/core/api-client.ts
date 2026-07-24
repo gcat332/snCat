@@ -141,6 +141,10 @@ export function getText(host: string, url: string): Promise<ApiResult<string>> {
 }
 
 /** Run a server-side background script (prod-guarded). Returns raw HTML. */
-export function runBackground(host: string, script: string): Promise<ApiResult<string>> {
-  return call({ op: 'bgrun', host, script })
+export function runBackground(
+  host: string,
+  script: string,
+  opts: { scope?: string; updateSet?: string } = {},
+): Promise<ApiResult<string>> {
+  return call({ op: 'bgrun', host, script, scope: opts.scope, updateSet: opts.updateSet })
 }
