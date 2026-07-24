@@ -341,16 +341,24 @@ button.picker-row:hover {
   font-size: 11px;
 }
 
-/* Schema row v2 — clickable name (copy), reference target, choices */
+/* Schema row v2 — clickable name (copy), reference target, choices.
+   Card style, shared by Table schema and Page-context "View values". */
 .schema-row2 {
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 4px 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
   font-size: 12px;
+}
+
+.schema-row2:hover {
+  border-color: var(--mfec-cyan);
+  background: rgba(0, 162, 233, 0.04);
 }
 
 .schema-row2 .col {

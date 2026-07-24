@@ -949,6 +949,35 @@ function updateSandboxGuard() {
   simRun.disabled = !verdict.allowed
 }
 
+/** Open the Background Scripts page and pre-fill it with the given script. */
+async function openBackgroundScripts(host: string, script: string) {
+  const tab = await chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
+  const tabId = tab.id
+  if (tabId == null) return
+  void copyText(script) // clipboard fallback in case the field can't be filled
+  const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo) => {
+    if (id !== tabId || info.status !== 'complete') return
+    chrome.tabs.onUpdated.removeListener(onUpdated)
+    chrome.scripting
+      .executeScript({
+        target: { tabId, allFrames: true },
+        func: (code: string) => {
+          const ta = document.querySelector(
+            'textarea#script, textarea[name="script"], textarea[name="script.script"]',
+          ) as HTMLTextAreaElement | null
+          if (ta) {
+            ta.value = code
+            ta.dispatchEvent(new Event('input', { bubbles: true }))
+            ta.dispatchEvent(new Event('change', { bubbles: true }))
+          }
+        },
+        args: [script],
+      })
+      .catch(() => {})
+  }
+  chrome.tabs.onUpdated.addListener(onUpdated)
+}
+
 /** Best-effort extraction of the script output from sys.scripts.do HTML. */
 function extractBgOutput(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -1330,7 +1359,7 @@ function initGenerate() {
       showToast('Open a ServiceNow tab first')
       return
     }
-    void chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
+    void openBackgroundScripts(host, genEd!.getValue())
   })
 }
 
@@ -1492,9 +1521,7 @@ el<HTMLButtonElement>('sim-bg').addEventListener('click', () => {
     showToast('Open a ServiceNow tab first')
     return
   }
-  void copyText(testerEd.getValue())
-  showToast('Tester script copied — paste it into Background Scripts')
-  void chrome.tabs.create({ url: `https://${current.host}/sys.scripts.do` })
+  void openBackgroundScripts(current.host, testerEd.getValue())
 })
 l3Create.addEventListener('click', createTestRecord)
 l3Delete.addEventListener('click', deleteTestRecord)
