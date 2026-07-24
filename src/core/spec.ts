@@ -206,9 +206,19 @@ function dataModelSection(
   return { heading: 'Data Model', blocks }
 }
 
-/** A detail key/value block from a list of [label, value] pairs (non-empty only). */
+const DESCRIPTION_PLACEHOLDER = '— (add a description in ServiceNow)'
+
+/**
+ * A detail key/value block. Empty values are dropped, EXCEPT "Description",
+ * which is always shown (with a placeholder) so authors can fill it in.
+ */
 function detailBlock(pairs: [string, string | undefined][]): SpecBlock {
-  const rows = pairs.filter(([, v]) => v && v.trim()).map(([key, value]) => ({ key, value: value as string }))
+  const rows = pairs
+    .filter(([key, v]) => key === 'Description' || (v && v.trim()))
+    .map(([key, value]) => ({
+      key,
+      value: value && value.trim() ? value : key === 'Description' ? DESCRIPTION_PLACEHOLDER : '',
+    }))
   return { kind: 'keyvalue', rows }
 }
 

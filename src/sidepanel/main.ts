@@ -1494,9 +1494,10 @@ async function createTestRecord() {
     updateGuard()
     return
   }
-  const result = parseSnjava(out, 'snJava:result ')
+  const result = parseSnjava(out, 'snJava:result ') ?? {}
   const defaults = parseSnjava(out, 'snJava:defaults ') ?? {}
-  if (!result?.sys_id) {
+  const sysId = typeof result['sys_id'] === 'string' ? (result['sys_id'] as string) : ''
+  if (!sysId) {
     step('✗ Could not read the created record’s sys_id (it may still have been created — delete manually if so).', 'err')
     const pre = document.createElement('pre')
     pre.className = 'code-block'
@@ -1506,9 +1507,9 @@ async function createTestRecord() {
     updateGuard()
     return
   }
-  l3Created = { table, sysId: result.sys_id }
-  step(`✓ Created ${result.sys_id.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
-  renderL3Diff(fields, result, defaults)
+  l3Created = { table, sysId }
+  step(`✓ Created ${sysId.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
+  renderL3Diff(fields, result as Record<string, L3Cell>, defaults as Record<string, L3Cell>)
   step('Done. Delete the test record when finished.')
   l3Create.disabled = false
   updateGuard()
@@ -1533,7 +1534,12 @@ function buildGuardedInsertScript(table: string, fields: Record<string, string>)
     `  gr.get(id);`,
     `  var def = new GlideRecord(${t}); def.initialize();`,
     `  var out = {}; var defs = {};`,
-    `  function grab(nm) { var v = gr.getValue(nm); out[nm] = (v == null ? '' : '' + v); var d = def.getValue(nm); defs[nm] = (d == null ? '' : '' + d); }`,
+    `  function grab(nm) {`,
+    `    var v = gr.getValue(nm), dv = gr.getDisplayValue(nm);`,
+    `    out[nm] = { v: (v == null ? '' : '' + v), d: (dv == null ? '' : '' + dv) };`,
+    `    var dfv = def.getValue(nm), dfd = def.getDisplayValue(nm);`,
+    `    defs[nm] = { v: (dfv == null ? '' : '' + dfv), d: (dfd == null ? '' : '' + dfd) };`,
+    `  }`,
     `  try {`,
     `    var fs = gr.getFields();`,
     `    for (var i = 0; i < fs.size(); i++) { grab('' + fs.get(i).getName()); }`,
@@ -1550,7 +1556,7 @@ function buildGuardedInsertScript(table: string, fields: Record<string, string>)
 }
 
 /** Parse the JSON object that follows a marker (balanced-brace, string-aware). */
-function parseSnjava(output: string, marker: string): Record<string, string> | null {
+function parseSnjava(output: string, marker: string): Record<string, unknown> | null {
   const i = output.indexOf(marker)
   if (i === -1) return null
   const s = output.slice(i + marker.length)
@@ -1571,7 +1577,7 @@ function parseSnjava(output: string, marker: string): Record<string, string> | n
       depth--
       if (depth === 0) {
         try {
-          return JSON.parse(s.slice(start, p + 1)) as Record<string, string>
+          return JSON.parse(s.slice(start, p + 1)) as Record<string, unknown>
         } catch {
           return null
         }
@@ -1587,21 +1593,42 @@ const L3_NOISE = new Set([
   'sys_mod_count', 'sys_domain', 'sys_domain_path', 'sys_tags', 'sys_class_name',
 ])
 
+interface L3Cell {
+  v: string
+  d: string
+}
+
+function cellOf(x: unknown): L3Cell {
+  if (x && typeof x === 'object' && 'v' in (x as object)) {
+    const c = x as Partial<L3Cell>
+    return { v: c.v ?? '', d: c.d ?? '' }
+  }
+  return { v: typeof x === 'string' ? x : '', d: typeof x === 'string' ? x : '' }
+}
+
 /**
  * Guarded-run report: every field whose final value differs from the table
- * default (excluding system noise) — i.e. everything this create changed,
- * whether we sent it or a Business Rule set it. Each row is tagged accordingly.
+ * default (excluding system noise). Tagged 'you' when we set exactly that value,
+ * otherwise 'engine' (a Business Rule / flow / the platform set it). Shows
+ * display values.
  */
-function renderL3Diff(seed: Record<string, string>, result: Record<string, string>, defaults: Record<string, string>) {
-  const changed: { field: string; before: string; after: string; sent: boolean }[] = []
+function renderL3Diff(seed: Record<string, string>, result: Record<string, L3Cell>, defaults: Record<string, L3Cell>) {
+  const changed: { field: string; before: string; after: string; you: boolean }[] = []
   for (const k of Object.keys(result)) {
-    if (L3_NOISE.has(k)) continue
-    const after = result[k] ?? ''
-    const before = defaults[k] ?? ''
-    if (before !== after) changed.push({ field: k, before, after, sent: k in seed })
+    if (k === 'sys_id' || L3_NOISE.has(k)) continue
+    const after = cellOf(result[k])
+    const before = cellOf(defaults[k])
+    if (after.v === before.v) continue // unchanged from the table default
+    // "you" only if we sent exactly this value (the engine didn't override it).
+    const you = k in seed && seed[k] === after.v
+    changed.push({
+      field: k,
+      before: before.d || before.v,
+      after: after.d || after.v,
+      you,
+    })
   }
-  // Stable order: sent fields first, then engine-set.
-  changed.sort((a, b) => Number(b.sent) - Number(a.sent) || a.field.localeCompare(b.field))
+  changed.sort((a, b) => Number(b.you) - Number(a.you) || a.field.localeCompare(b.field))
 
   const box = document.createElement('div')
   box.className = 'sim-after'
@@ -1612,7 +1639,7 @@ function renderL3Diff(seed: Record<string, string>, result: Record<string, strin
     const row = document.createElement('div')
     row.className = 'diff-kv'
     row.append(elText('span', 'dk-field', c.field))
-    row.append(elText('span', c.sent ? 'dk-tag sent' : 'dk-tag engine', c.sent ? 'you' : 'BR'))
+    row.append(elText('span', c.you ? 'dk-tag sent' : 'dk-tag engine', c.you ? 'you' : 'engine'))
     row.append(
       elText('span', 'dk-before', c.before || '(empty)'),
       elText('span', 'dk-arrow', '→'),
