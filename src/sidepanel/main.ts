@@ -1426,48 +1426,67 @@ async function createTestRecord() {
   }
 
   l3Create.disabled = true
-  l3Results.replaceChildren(elText('div', 'empty', 'Creating record…'))
+  const log = document.createElement('div')
+  log.className = 'runlog'
+  l3Results.replaceChildren(elText('div', 'sim-after-title', 'Guarded run'), log)
+  const step = (text: string, cls = '') => log.append(elText('div', `log-step ${cls}`, `• ${text}`))
 
+  step(`Creating a ${table} record on ${current.host}…`)
+  const t0 = Date.now()
   const res = await createRecord(current.host, table, fields)
   if (!res.ok) {
-    l3Results.replaceChildren(elText('div', 'error', res.error))
+    step(`✗ Create failed (HTTP ${res.status}): ${res.error}`, 'err')
+    l3Create.disabled = false
     updateGuard()
     return
   }
   const sysId = cellValue(res.data['sys_id'])
   l3Created = { table, sysId }
+  step(`✓ Created ${sysId.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
 
-  // Read the created record back to observe what the engine actually did.
+  step('Reading the record back to see what the engine did…')
   const back = await getRecord(current.host, table, sysId)
-  renderL3Result(fields, back.ok ? back.data : res.data, sysId)
+  const rec = back.ok ? back.data : res.data
+  renderL3Diff(fields, rec)
+  step('Done. Delete the test record when finished.')
+  l3Create.disabled = false
   updateGuard()
 }
 
-function renderL3Result(seed: Record<string, string>, rec: Record<string, unknown>, sysId: string) {
-  l3Results.replaceChildren()
-  l3Results.append(elText('div', 'ok-banner', `✓ Created ${l3Created?.table} record ${sysId.slice(0, 8)}…`))
-
-  // Highlight fields the engine changed vs. what we sent.
-  const changed: string[] = []
+/** Show before (sent) → after (engine result) for changed + engine-populated fields. */
+function renderL3Diff(seed: Record<string, string>, rec: Record<string, unknown>) {
+  const changed: { field: string; before: string; after: string }[] = []
   for (const [k, v] of Object.entries(rec)) {
     const after = cellValue(v)
-    if (k in seed && seed[k] !== after) changed.push(`${k}: "${seed[k]}" → "${after}"`)
+    if (k in seed && seed[k] !== after) changed.push({ field: k, before: seed[k], after })
   }
-  const engineFields = ['sys_created_by', 'sys_updated_on', 'work_notes', 'state', 'number', 'sys_created_on']
+  // Engine-populated fields we didn't send (surfaced for visibility).
+  const engineFields = ['number', 'state', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'work_notes', 'approval']
+  const populated = engineFields
+    .filter((f) => !(f in seed) && f in rec && cellValue(rec[f]))
+    .map((f) => ({ field: f, before: '(unset)', after: cellValue(rec[f]) }))
+
   const box = document.createElement('div')
   box.className = 'sim-after'
-  box.append(elText('div', 'sim-after-title', changed.length ? 'Changed by the engine' : 'Result (key fields)'))
-  const rows = changed.length
-    ? changed
-    : engineFields.filter((f) => f in rec).map((f) => `${f}: ${cellValue(rec[f])}`)
-  for (const line of rows) {
-    const r = document.createElement('div')
-    r.className = 'schema-row'
-    r.append(elText('span', 'lbl', line))
-    box.append(r)
+  box.append(
+    elText('div', 'sim-after-title', `Engine changed ${changed.length} field(s)`),
+  )
+  const all = [...changed, ...populated]
+  if (all.length === 0) {
+    box.append(elText('div', 'empty', 'No observable field changes.'))
+  }
+  for (const c of all) {
+    const row = document.createElement('div')
+    row.className = 'diff-kv'
+    row.append(
+      elText('span', 'dk-field', c.field),
+      elText('span', 'dk-before', c.before || '(empty)'),
+      elText('span', 'dk-arrow', '→'),
+      elText('span', 'dk-after', c.after || '(empty)'),
+    )
+    box.append(row)
   }
   l3Results.append(box)
-  l3Results.append(elText('div', 'ai-note', 'Remember to delete the test record when done.'))
 }
 
 async function deleteTestRecord() {

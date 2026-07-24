@@ -913,6 +913,66 @@ button.picker-row:hover {
   margin-bottom: 4px;
 }
 
+/* Guarded run: step log */
+.runlog {
+  margin-bottom: 8px;
+}
+
+.log-step {
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 2px 0;
+}
+
+.log-step.ok {
+  color: #1a7f37;
+}
+
+.log-step.err {
+  color: #b4232a;
+}
+
+/* Before → after diff rows */
+.diff-kv {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 6px 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.diff-kv .dk-field {
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.diff-kv .dk-before {
+  color: #b4232a;
+  text-decoration: line-through;
+  opacity: 0.8;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-kv .dk-arrow {
+  color: var(--ink-soft);
+}
+
+.diff-kv .dk-after {
+  color: #1a7f37;
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Segmented control (Test Runner mode) */
 .seg {
   display: flex;
