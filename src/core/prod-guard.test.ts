@@ -50,6 +50,52 @@ describe('classifyInstance — blocked prod / unknown', () => {
   })
 })
 
+describe('classifyInstance — vanity / custom domains (default-DENY)', () => {
+  it('does NOT classify a vanity prod host as sub-prod from its first label', () => {
+    // 'dev.acmecorp.com' first label is 'dev' but this is NOT a service-now host.
+    // The first-label sub-prod heuristic must not apply → default-DENY.
+    const v = classifyInstance('dev.acmecorp.com')
+    expect(v.allowed).toBe(false)
+    expect(v.classification).toBe('unknown')
+  })
+
+  it('blocks a real sub-prod on a vanity domain by default (no auto-allow off-service-now)', () => {
+    // 'snow.acmedev.com' — heuristic on the bare first label would mis-handle this;
+    // off-service-now hosts are simply default-DENY unless an explicit allow matches.
+    const v = classifyInstance('snow.acmedev.com')
+    expect(v.allowed).toBe(false)
+    expect(v.classification).toBe('unknown')
+  })
+
+  it('is case-insensitive about the service-now suffix', () => {
+    const v = classifyInstance('acmedev.SERVICE-NOW.COM')
+    expect(v.allowed).toBe(true)
+    expect(v.classification).toBe('sub-prod')
+  })
+})
+
+describe('classifyInstance — service-now hosts unchanged', () => {
+  it('allows standard sub-prod service-now hosts', () => {
+    for (const host of ['mfecplcdemo10.service-now.com', 'acmedev.service-now.com']) {
+      const v = classifyInstance(host)
+      expect(v.allowed).toBe(true)
+      expect(v.classification).toBe('sub-prod')
+    }
+  })
+
+  it('blocks a genuine prod service-now host with no sub-prod marker', () => {
+    const v = classifyInstance('acme.service-now.com')
+    expect(v.allowed).toBe(false)
+    expect(v.classification).toBe('unknown')
+  })
+
+  it('hard-blocks a FORCED_PROD service-now host', () => {
+    const v = classifyInstance('acmeprod.service-now.com')
+    expect(v.allowed).toBe(false)
+    expect(v.classification).toBe('prod')
+  })
+})
+
 describe('config', () => {
   it('respects a custom sub-prod pattern', () => {
     const v = classifyInstance(sn('acmelab'), { subProdPatterns: ['lab'] })

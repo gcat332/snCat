@@ -44,6 +44,20 @@ export function classifyInstance(
 ): GuardVerdict {
   const instance = instanceLabel(host)
 
+  // The first-DNS-label sub-prod heuristic is only trustworthy for standard
+  // *.service-now.com hosts. On a vanity/custom domain (allowed via
+  // optional_host_permissions https://*/*) the first label carries no such
+  // meaning — e.g. prod at 'dev.acmecorp.com' would look sub-prod. So for any
+  // non-service-now host we default-DENY (unknown) rather than auto-classify.
+  if (!/\.service-now\.com$/i.test(host)) {
+    return {
+      allowed: false,
+      classification: 'unknown',
+      instance,
+      reason: `"${host}" is not a *.service-now.com host — the sub-prod heuristic does not apply; blocked by default (safe).`,
+    }
+  }
+
   if (FORCED_PROD.test(instance)) {
     return {
       allowed: false,
