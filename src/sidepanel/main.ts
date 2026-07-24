@@ -19,6 +19,7 @@ import {
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
+import { loadLlmConfig, runJavaReview, saveLlmConfig, type LlmConfig, type LlmFormat } from '@core/llm'
 import { SandboxRunner } from '@core/sandbox-host'
 import type { SimulationJob, SimulationResult, TraceEvent } from '@core/trace'
 import type { ArtifactRef } from '@core/graph'
@@ -239,19 +240,20 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
     row.append(ref)
   }
 
-  // choices — hover to load + preview
+  // choices — hover (or click) to load + preview
   if (choiceMode && choiceMode !== '0') {
     const ch = document.createElement('span')
     ch.className = 'choices'
     ch.textContent = 'choices ▾'
     let pop: HTMLElement | null = null
-    ch.addEventListener('mouseenter', () => {
-      void showChoices(row, element, (p) => (pop = p))
-    })
-    ch.addEventListener('mouseleave', () => {
+    const open = () => void showChoices(ch, element, (p) => (pop = p))
+    const close = () => {
       pop?.remove()
       pop = null
-    })
+    }
+    ch.addEventListener('mouseenter', open)
+    ch.addEventListener('mouseleave', close)
+    ch.addEventListener('click', open) // click also works (mobile/pinned)
     row.append(ch)
   }
 
@@ -278,7 +280,7 @@ async function loadSchemaForTable(table: string) {
   renderSchema('')
 }
 
-async function showChoices(row: HTMLElement, element: string, setPop: (p: HTMLElement) => void) {
+async function showChoices(anchor: HTMLElement, element: string, setPop: (p: HTMLElement) => void) {
   if (!current) return
   const key = `${schemaTable}.${element}`
   let choices = choicesCache.get(key)
@@ -294,10 +296,14 @@ async function showChoices(row: HTMLElement, element: string, setPop: (p: HTMLEl
       : []
     choicesCache.set(key, choices)
   }
+  // Append to <body>, fixed-positioned, so the scroll container can't clip it.
   const pop = document.createElement('div')
-  pop.className = 'choice-pop'
+  pop.className = 'choice-pop floating'
+  const rect = anchor.getBoundingClientRect()
+  pop.style.top = `${rect.bottom + 4}px`
+  pop.style.left = `${Math.max(8, rect.left - 40)}px`
   if (choices.length === 0) {
-    pop.append(elText('div', 'ch', 'No choices found.'))
+    pop.append(elText('div', 'ch', 'No choices found for this field.'))
   } else {
     for (const c of choices) {
       const line = document.createElement('div')
@@ -306,7 +312,7 @@ async function showChoices(row: HTMLElement, element: string, setPop: (p: HTMLEl
       pop.append(line)
     }
   }
-  row.append(pop)
+  document.body.appendChild(pop)
   setPop(pop)
 }
 
@@ -344,12 +350,43 @@ const scriptKind = el<HTMLSelectElement>('script-kind')
 const timingWrap = el('timing-wrap')
 const scriptTiming = el<HTMLSelectElement>('script-timing')
 const scriptBody = el<HTMLTextAreaElement>('script-body')
+const scriptFormat = el<HTMLButtonElement>('script-format')
+const scriptCopy = el<HTMLButtonElement>('script-copy')
 const analyzeBtn = el<HTMLButtonElement>('analyze-btn')
+const reviewSpinner = el('review-spinner')
+const aiStatus = el('ai-status')
 const lintSummary = el('lint-summary')
 const lintResults = el('lint-results')
+const simCard = el('sim-card')
 
+// AI review outputs
+const optimizeSection = el('optimize-section')
+const optimizeCode = el<HTMLTextAreaElement>('optimize-code')
+const optimizeFormat = el<HTMLButtonElement>('optimize-format')
+const optimizeCopy = el<HTMLButtonElement>('optimize-copy')
+const optimizeUse = el<HTMLButtonElement>('optimize-use')
+const testerSection = el('tester-section')
+const testerCode = el<HTMLTextAreaElement>('tester-code')
+const testerFormat = el<HTMLButtonElement>('tester-format')
+const testerCopy = el<HTMLButtonElement>('tester-copy')
+const testerRun = el<HTMLButtonElement>('tester-run')
+
+// AI settings
+const aiEndpoint = el<HTMLInputElement>('ai-endpoint')
+const aiKey = el<HTMLInputElement>('ai-key')
+const aiModel = el<HTMLInputElement>('ai-model')
+const aiFormat = el<HTMLSelectElement>('ai-format')
+const aiSave = el<HTMLButtonElement>('ai-save')
+const aiSaved = el('ai-saved')
+const aiSettings = el<HTMLDetailsElement>('ai-settings')
+
+const SERVER_KINDS = new Set(['business_rule', 'script_include', 'unknown'])
+
+/** Toggle timing (BR only) and sandbox visibility (server scripts only). */
 function syncTimingVisibility() {
   timingWrap.style.display = scriptKind.value === 'business_rule' ? '' : 'none'
+  // Layer 2 Sandbox Simulation only applies to server-side scripts.
+  simCard.style.display = SERVER_KINDS.has(scriptKind.value) ? '' : 'none'
 }
 
 /** Fetch a script record (any script table) and populate the Layer 1 editor. */
@@ -452,7 +489,8 @@ async function findScripts() {
   }
 }
 
-function analyze() {
+/** Local static lints (instant, no AI). Returns true if a script was present. */
+function runLints(): boolean {
   const script = scriptBody.value
   const kind = scriptKind.value as ScriptKind
   const timing = scriptTiming.value as BrTiming
@@ -463,8 +501,8 @@ function analyze() {
 
   if (!script.trim()) {
     lintSummary.hidden = true
-    lintResults.append(elText('div', 'empty', 'Paste or load a script, then Analyze.'))
-    return
+    lintResults.append(elText('div', 'empty', 'Paste or load a script, then run Java review.'))
+    return false
   }
 
   const counts = { error: 0, warning: 0, info: 0 }
@@ -473,9 +511,74 @@ function analyze() {
 
   if (findings.length === 0) {
     lintResults.append(elText('div', 'ok-banner', '✓ No anti-patterns found by Layer 1 lints.'))
+  } else {
+    for (const f of findings) renderFinding(f)
+  }
+  return true
+}
+
+/** "Java review": run local lints, then ask the AI for an optimized + tester script. */
+async function javaReview() {
+  const hasScript = runLints()
+  if (!hasScript) return
+
+  optimizeSection.hidden = true
+  testerSection.hidden = true
+  reviewSpinner.hidden = false
+  analyzeBtn.disabled = true
+  aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester…'
+
+  const outcome = await runJavaReview({
+    script: scriptBody.value,
+    kind: scriptKind.value as ScriptKind,
+    timing: scriptTiming.value as BrTiming,
+    table: simTable.value.trim() || current?.table || 'incident',
+    intent: (el<HTMLTextAreaElement>('script-intent').value || '').trim() || undefined,
+  })
+
+  reviewSpinner.hidden = true
+  analyzeBtn.disabled = false
+
+  if (!outcome.configured) {
+    aiStatus.textContent = 'AI not configured — open “AI settings” below and add an endpoint + key.'
+    aiSettings.open = true
     return
   }
-  for (const f of findings) renderFinding(f)
+  if (!outcome.ok) {
+    aiStatus.textContent = `AI error: ${outcome.error}`
+    return
+  }
+
+  const { optimizedScript, testScript, notes } = outcome.result
+  aiStatus.textContent = notes.length ? `AI review: ${notes.length} note(s).` : 'AI review complete.'
+  for (const n of notes) lintResults.append(elText('div', 'review-note', n))
+
+  if (optimizedScript) {
+    optimizeCode.value = optimizedScript
+    optimizeSection.hidden = false
+  }
+  if (testScript) {
+    testerCode.value = testScript
+    testerSection.hidden = false // Tester script shown automatically (point 4)
+    testerSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+}
+
+async function formatEditor(ta: HTMLTextAreaElement, btn: HTMLButtonElement) {
+  if (!ta.value.trim()) return
+  const prev = btn.textContent
+  btn.disabled = true
+  btn.textContent = '…'
+  try {
+    const { formatJs } = await import('@core/format')
+    ta.value = await formatJs(ta.value)
+    showToast('Formatted')
+  } catch (err) {
+    showToast(`Format failed: ${(err as Error).message.slice(0, 60)}`)
+  } finally {
+    btn.disabled = false
+    btn.textContent = prev
+  }
 }
 
 function renderFinding(f: LintFinding) {
@@ -548,8 +651,11 @@ async function fillFromRecord() {
   simCurrent.value = fieldsToText(res.data[0])
 }
 
-async function runSimulation() {
-  const script = scriptBody.value
+function runSimulation() {
+  return runSimulationWith(scriptBody.value)
+}
+
+async function runSimulationWith(script: string) {
   if (!script.trim()) {
     simResults.replaceChildren(elText('div', 'empty', 'Load or paste a script in Layer 1 first.'))
     return
@@ -941,6 +1047,30 @@ async function exportDocx() {
   }
 }
 
+/* ---------- AI settings ---------- */
+
+async function loadAiSettings() {
+  const cfg = await loadLlmConfig()
+  if (!cfg) return
+  aiEndpoint.value = cfg.endpoint
+  aiKey.value = cfg.apiKey
+  aiModel.value = cfg.model
+  aiFormat.value = cfg.format
+}
+
+async function saveAiSettings() {
+  const cfg: LlmConfig = {
+    endpoint: aiEndpoint.value.trim(),
+    apiKey: aiKey.value.trim(),
+    model: aiModel.value.trim() || 'claude-sonnet-4-5',
+    format: (aiFormat.value as LlmFormat) === 'openai' ? 'openai' : 'anthropic',
+  }
+  await saveLlmConfig(cfg)
+  aiSaved.hidden = false
+  setTimeout(() => (aiSaved.hidden = true), 1500)
+  aiStatus.textContent = 'AI settings saved. Run “Java review” to use them.'
+}
+
 /* ---------- detect + wiring ---------- */
 
 async function detect() {
@@ -1008,7 +1138,23 @@ condOpen.addEventListener('click', openConditionList)
 schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 scriptKind.addEventListener('change', syncTimingVisibility)
-analyzeBtn.addEventListener('click', analyze)
+analyzeBtn.addEventListener('click', javaReview)
+scriptFormat.addEventListener('click', () => formatEditor(scriptBody, scriptFormat))
+scriptCopy.addEventListener('click', () => copyText(scriptBody.value))
+optimizeFormat.addEventListener('click', () => formatEditor(optimizeCode, optimizeFormat))
+optimizeCopy.addEventListener('click', () => copyText(optimizeCode.value))
+optimizeUse.addEventListener('click', () => {
+  scriptBody.value = optimizeCode.value
+  showToast('Optimized script moved into the editor')
+})
+testerFormat.addEventListener('click', () => formatEditor(testerCode, testerFormat))
+testerCopy.addEventListener('click', () => copyText(testerCode.value))
+testerRun.addEventListener('click', () => {
+  simCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  void runSimulationWith(testerCode.value)
+})
+aiSave.addEventListener('click', saveAiSettings)
+void loadAiSettings()
 pickerType.addEventListener('change', syncPickerTableVisibility)
 pickerFind.addEventListener('click', findScripts)
 pickerSearch.addEventListener('keydown', (e) => {

@@ -396,12 +396,6 @@ button.picker-row:hover {
 }
 
 .choice-pop {
-  position: absolute;
-  z-index: 20;
-  top: 100%;
-  left: 8px;
-  right: 8px;
-  margin-top: 2px;
   background: var(--surface);
   border: 1px solid var(--mfec-violet);
   border-radius: 6px;
@@ -409,6 +403,13 @@ button.picker-row:hover {
   box-shadow: 0 4px 14px rgba(0, 9, 96, 0.14);
   max-height: 180px;
   overflow-y: auto;
+}
+
+.choice-pop.floating {
+  position: fixed;
+  z-index: 100;
+  width: 240px;
+  max-width: calc(100vw - 24px);
 }
 
 .choice-pop .ch {
@@ -444,6 +445,75 @@ button.picker-row:hover {
   opacity: 1;
 }
 
+/* Schema search box spacing/appearance */
+#schema-search {
+  margin-top: 10px;
+  font-family: inherit;
+  background: var(--surface);
+}
+
+/* Spinner for AI review */
+.spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(0, 49, 180, 0.2);
+  border-top-color: var(--mfec-blue);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.subhead {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mfec-blue-dark);
+}
+
+.code-block {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mfec-cyan);
+  border-radius: 6px;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+#ai-settings {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+#ai-settings summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mfec-blue-dark);
+}
+
+.review-note {
+  border-left: 3px solid var(--mfec-violet);
+  background: rgba(144, 99, 205, 0.06);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
 .empty {
   color: var(--ink-soft);
   font-size: 12px;
@@ -474,6 +544,32 @@ button.picker-row:hover {
 .query-input.code {
   min-height: 140px;
   line-height: 1.45;
+}
+
+/* Code editor look for script/optimize/tester textareas */
+.code-editor {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--mfec-cyan);
+  border-radius: 6px;
+  background: #0f1424;
+  color: #e6edf7;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.code-editor:focus {
+  outline: none;
+  border-color: var(--mfec-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 162, 233, 0.18);
 }
 
 .ai-note {

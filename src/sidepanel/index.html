@@ -126,10 +126,15 @@
           <label class="field-label" for="script-body">Script</label>
           <textarea
             id="script-body"
-            class="query-input code"
+            class="code-editor"
             rows="10"
+            spellcheck="false"
             placeholder="// paste your Business Rule / Client Script here"
           ></textarea>
+          <div class="btn-row" style="margin-top: 6px">
+            <button class="btn btn-ghost" id="script-format" type="button">Format</button>
+            <button class="btn btn-ghost" id="script-copy" type="button">Copy</button>
+          </div>
 
           <label class="field-label" for="script-intent">
             Intent — what should this do? (optional)
@@ -142,11 +147,57 @@
           ></textarea>
 
           <div class="btn-row">
-            <button class="btn" id="analyze-btn" type="button">Analyze</button>
+            <button class="btn" id="analyze-btn" type="button">Java review</button>
+            <span class="spinner" id="review-spinner" hidden></span>
             <span class="count-badge" id="lint-summary" hidden></span>
           </div>
-          <p class="ai-note">AI logic-vs-intent review is disabled (LLM off) — static lints run now.</p>
+          <p class="ai-note" id="ai-status">Runs local static lints, then asks the AI for an optimized script + a sandbox tester script.</p>
           <div class="results" id="lint-results"></div>
+
+          <div id="optimize-section" hidden>
+            <h3 class="subhead">Optimized script</h3>
+            <textarea id="optimize-code" class="code-editor" rows="12" spellcheck="false"></textarea>
+            <div class="btn-row" style="margin-top: 6px">
+              <button class="btn btn-ghost" id="optimize-format" type="button">Format</button>
+              <button class="btn btn-ghost" id="optimize-copy" type="button">Copy</button>
+              <button class="btn btn-ghost" id="optimize-use" type="button">Use as script</button>
+            </div>
+          </div>
+
+          <div id="tester-section" hidden>
+            <h3 class="subhead">Tester script (for sandbox)</h3>
+            <textarea id="tester-code" class="code-editor" rows="12" spellcheck="false"></textarea>
+            <div class="btn-row" style="margin-top: 6px">
+              <button class="btn btn-ghost" id="tester-format" type="button">Format</button>
+              <button class="btn btn-ghost" id="tester-copy" type="button">Copy</button>
+              <button class="btn" id="tester-run" type="button">Run in sandbox ↓</button>
+            </div>
+          </div>
+
+          <details id="ai-settings">
+            <summary>AI settings</summary>
+            <label class="field-label" for="ai-endpoint">Endpoint URL</label>
+            <input id="ai-endpoint" class="query-input" placeholder="https://…/v1/messages" />
+            <label class="field-label" for="ai-key">API key</label>
+            <input id="ai-key" class="query-input" type="password" placeholder="sk-…" />
+            <div class="field-inline">
+              <div>
+                <label class="field-label" for="ai-model">Model</label>
+                <input id="ai-model" class="query-input" placeholder="claude-sonnet-4-5" />
+              </div>
+              <div>
+                <label class="field-label" for="ai-format">Format</label>
+                <select id="ai-format" class="select">
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openai">OpenAI</option>
+                </select>
+              </div>
+            </div>
+            <div class="btn-row">
+              <button class="btn" id="ai-save" type="button">Save settings</button>
+              <span class="count-badge" id="ai-saved" hidden>Saved ✓</span>
+            </div>
+          </details>
         </section>
 
         <section class="card" id="sim-card">
