@@ -461,21 +461,7 @@ function securitySection(artifacts: ArtifactRef[]): SpecSection {
   if (acls.length) {
     blocks.push({ kind: 'subheading', level: 2, text: `Access Controls (${acls.length})` })
 
-    // A compact index first, but only when there is more than one ACL.
-    if (acls.length > 1) {
-      blocks.push({
-        kind: 'table',
-        columns: ['ACL', 'Operation', 'Active', 'Admin overrides'],
-        rows: acls.map((a) => [
-          a.fields['name'] ?? '',
-          a.fields['operation'] ?? '',
-          a.fields['active'] ?? '',
-          a.fields['admin_overrides'] ?? '',
-        ]),
-      })
-    }
-
-    // Each ACL as one unit: its details, condition, and script together.
+    // Each ACL as one self-contained unit: its details, condition, and script.
     for (const a of acls) {
       const name = a.fields['name'] || a.label || '(acl)'
       const op = a.fields['operation']
