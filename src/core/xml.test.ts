@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseUnloadXml, parseUnloadXmlAll, importableFields } from './xml'
+import { parseUnloadXml, parseUnloadXmlAll, dedupeRecords, importableFields } from './xml'
 
 const XML = `<?xml version="1.0" encoding="UTF-8"?>
 <incident action="INSERT_OR_UPDATE">
@@ -50,6 +50,27 @@ describe('parseUnloadXmlAll', () => {
 
   it('returns an empty array when the table is absent', () => {
     expect(parseUnloadXmlAll(LIST, 'problem')).toEqual([])
+  })
+})
+
+describe('dedupeRecords', () => {
+  it('collapses records sharing a sys_id (deep unload duplicates)', () => {
+    const recs = [
+      { table: 'incident', fields: { sys_id: 'a', number: 'INC1' } },
+      { table: 'incident', fields: { sys_id: 'a', number: 'INC1' } },
+      { table: 'incident', fields: { sys_id: 'b', number: 'INC2' } },
+    ]
+    const out = dedupeRecords(recs)
+    expect(out).toHaveLength(2)
+    expect(out.map((r) => r.fields.sys_id)).toEqual(['a', 'b'])
+  })
+
+  it('keeps records that have no sys_id', () => {
+    const recs = [
+      { table: 'incident', fields: { number: 'INC1' } },
+      { table: 'incident', fields: { number: 'INC2' } },
+    ]
+    expect(dedupeRecords(recs)).toHaveLength(2)
   })
 })
 

@@ -16,7 +16,7 @@ import {
   queryRecords,
   runBackground,
 } from '@core/api-client'
-import { importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
+import { dedupeRecords, importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
 import { diffStats, lineDiff } from '@core/diff'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
@@ -281,6 +281,8 @@ interface XmlClip {
   table: string
   sysId?: string
   xml: string
+  /** Finalized field maps to import (deduped; root-only for a form save). */
+  records?: Record<string, string>[]
   count: number
   savedAt: string
 }
@@ -403,7 +405,14 @@ async function saveXml() {
   xmlSave.disabled = false
   if (!xml) return
 
-  const records = parseUnloadXmlAll(xml, current.table)
+  let records = dedupeRecords(parseUnloadXmlAll(xml, current.table))
+  // A form save is ONE record — a `&XML` unload is deep and also pulls related
+  // same-table rows, so keep only the record the user is actually on.
+  const rootSysId = current.sysId
+  if (!list && rootSysId) {
+    const root = records.find((r) => r.fields['sys_id'] === rootSysId)
+    records = root ? [root] : records.slice(0, 1)
+  }
   if (records.length === 0) {
     xmlOut.replaceChildren(elText('div', 'error', 'The export contained no records.'))
     return
@@ -413,6 +422,7 @@ async function saveXml() {
     table: current.table,
     sysId: current.sysId ?? undefined,
     xml,
+    records: records.map((r) => r.fields),
     count: records.length,
     savedAt: new Date().toISOString(),
   }
@@ -437,12 +447,14 @@ async function pasteXml() {
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   if (!clip || !current) return
-  const records = parseUnloadXmlAll(clip.xml, clip.table)
-  if (records.length === 0) {
+  // Prefer the finalized records captured at save time; fall back to re-parsing
+  // (older clips) with the same dedupe applied.
+  const rawRecords = clip.records ?? dedupeRecords(parseUnloadXmlAll(clip.xml, clip.table)).map((r) => r.fields)
+  if (rawRecords.length === 0) {
     xmlOut.replaceChildren(elText('div', 'error', 'Could not parse the saved XML.'))
     return
   }
-  const fieldsList = records.map((r) => importableFields(r.fields))
+  const fieldsList = rawRecords.map((f) => importableFields(f))
   const noun = fieldsList.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
@@ -1796,9 +1808,9 @@ function renderL3Diff(seed: Record<string, string>, result: Record<string, L3Cel
   }
 
   const search = document.createElement('input')
-  search.type = 'search'
-  search.className = 'schema-search'
-  search.placeholder = 'Filter changed fields…'
+  search.className = 'query-input'
+  search.placeholder = 'filter changed fields by name or value…'
+  search.style.margin = '4px 0 8px'
   box.append(search)
 
   const rows: { el: HTMLElement; hay: string }[] = []
@@ -2128,7 +2140,7 @@ function initGenerate() {
 }
 
 /** Render the Generate plan from a job entry (running / done / error). */
-function applyGenerateJob(entry: LlmJobEntry | undefined) {
+async function applyGenerateJob(entry: LlmJobEntry | undefined) {
   if (!entry) return
   if (entry.status === 'running') {
     genSpinner.hidden = false
@@ -2151,6 +2163,14 @@ function applyGenerateJob(entry: LlmJobEntry | undefined) {
   if (!outcome.ok) {
     genStatus.textContent = `AI error: ${outcome.error}`
     return
+  }
+  // On a restored job the in-memory known-fields set is empty; refetch so the
+  // "already exists" filter still works after the panel was reopened.
+  if (!genKnownFields.size && current?.table) {
+    const dict = await getDictionary(current.host, current.table)
+    if (dict.ok) {
+      genKnownFields = new Set(dict.data.map((d) => cellValue(d.element as unknown).toLowerCase()).filter(Boolean))
+    }
   }
   renderPlan(outcome.result.summary, outcome.result.artifacts)
 }
@@ -2187,10 +2207,17 @@ function stripScopeFields(fields: Record<string, string>): Record<string, string
  */
 function fieldAlreadyExists(a: PlanArtifact): boolean {
   if (a.action !== 'create' || a.targetTable !== 'sys_dictionary' || !a.fields) return false
-  const el = (a.fields['element'] ?? '').toLowerCase().trim()
-  if (!el) return false
-  for (const k of genKnownFields) {
-    if (el === k || el.endsWith('_' + k) || k.endsWith('_' + el)) return true
+  // The AI may key the column name as element / column_name, or only spell it in
+  // the title (e.g. "AI Resolution Plan (ai_resolution_plan)"). Check all.
+  const cands = [a.fields['element'], a.fields['column_name']]
+  const paren = a.title.match(/\(([a-z0-9_.]+)\)/i)
+  if (paren) cands.push(paren[1])
+  for (const raw of cands) {
+    const el = (raw ?? '').toLowerCase().trim()
+    if (!el) continue
+    for (const k of genKnownFields) {
+      if (el === k || el.endsWith('_' + k) || k.endsWith('_' + el)) return true
+    }
   }
   return false
 }

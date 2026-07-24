@@ -72,6 +72,25 @@ export function parseUnloadXmlAll(xml: string, table: string): ParsedRecord[] {
   return out
 }
 
+/**
+ * Collapse records that share a sys_id. A ServiceNow `&XML` unload is a DEEP
+ * unload — it can emit the same record more than once (self-references, related
+ * lists), which would otherwise be imported as duplicates.
+ */
+export function dedupeRecords(records: ParsedRecord[]): ParsedRecord[] {
+  const seen = new Set<string>()
+  const out: ParsedRecord[] = []
+  for (const r of records) {
+    const id = r.fields['sys_id']
+    if (id) {
+      if (seen.has(id)) continue
+      seen.add(id)
+    }
+    out.push(r)
+  }
+  return out
+}
+
 /** Drop system-managed fields so an import creates a fresh record safely. */
 export function importableFields(fields: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
