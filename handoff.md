@@ -165,7 +165,7 @@ The section-7 open questions were resolved as follows:
 
 1. **Sandbox scope — Global + scoped from day one.** Glide mocks support both global-scope (`current`, `previous`, `gs`, `GlideRecord`, `g_form`, `g_user`) and scoped-app semantics (`GlideRecordSecure`, scoped `gs`, ACL-aware reads) from the start.
 2. **LLM endpoint — build LLM-free first; LLM is a pluggable enhancement layer.** The `llm/` module is a provider interface whose **default provider is `none` (deterministic)**. F1 spec composition uses a **template** that structures fetched artifacts into the skeleton with no prose generation; Layer 1 ships **rule-based anti-pattern lints only**. The LLM-powered parts (Layer 1 "logic vs. intent" review, F1 prose polish) are optional and added later. Consequence: no customer script/record content leaves the instance during early dev, so the redaction + proxy-vs-direct-API decision is **deferred, not blocking**. Reversible: picking proxy vs. direct later = one provider implementation behind the existing interface.
-3. **Dev instance — an MFEC sub-prod with representative ITSM data** (hostname TBD; feeds prod-guard sub-prod pattern config in decision #5, section 2).
+3. **Dev instance — an MFEC sub-prod with representative ITSM data.** Dev/test hostname: **`mfecplcdemo10.service-now.com`**. For real use the extension must work on **any** instance by reading the **active tab's URL dynamically** (no hardcoded instance). Impl: `host_permissions: ["https://*.service-now.com/*"]` covers standard instances; vanity-domain instances handled later via `optional_host_permissions` requested on demand. Feeds prod-guard sub-prod pattern config in decision #5, section 2.
 4. **F1 resolver priority (after Catalog Item + Business Rule) — Script Include, ACL, Transform Map.** Flow/Workflow deprioritized (build after these three).
 5. **reveal.js PDF export — yes.** Include reveal.js print/PDF CSS in the theme so the self-contained HTML exports cleanly to PDF (print-to-PDF).
 
@@ -177,5 +177,6 @@ The section-7 open questions were resolved as follows:
 ## 8. Reference notes
 
 - Brand tokens sourced from `MFEC_Company_Profile_2026_version_1.pptx` — theme1.xml accents + frequency analysis of slide XML + visual render. Keep the PPTX for future re-extraction if branding updates.
-- **NEEDED: MFEC logo asset** (SVG preferred, or high-res transparent PNG) for the F1 document theme cover/header. Can be extracted from the PPTX (`ppt/media/`) if not provided separately. Until supplied, F1 uses a text placeholder.
+- **MFEC logo assets — extracted** from the PPTX (`ppt/media/`) into `public/brand/`: `mfec-logo-dark.png` (dark wordmark for white pages), `mfec-logo-light.png` (white wordmark for gradient cover band). Extension icons in `public/icons/` from the square arrow mark. The `.pptx` itself is **git-ignored** (43 MB) but kept locally for re-extraction.
+- **Stack chosen: TypeScript + Vite + `@crxjs/vite-plugin`** (MV3, HMR, side panel support). Vitest for the context-parser unit tests.
 - Related prior work by Gust that connects here: `itsm-deploy` ATF regression gates (Layer 3), Chesterton's Fence refactoring framing (Impact Analysis future feature), reasoning-trace skill (could drive the graph-walk audit trail).

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="preconnect"
+      href="https://fonts.googleapis.com"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Prompt:wght@200;300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <title>snCat</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <img
+        class="app-logo"
+        src="/public/brand/mfec-logo-dark.png"
+        alt="MFEC"
+      />
+      <span class="app-title">ServiceNow AI Assistant</span>
+    </header>
+
+    <main class="app-main">
+      <section class="card" id="context-card">
+        <h2 class="card-title">Page context</h2>
+        <dl class="ctx-grid" id="ctx-grid">
+          <dt>Status</dt>
+          <dd id="ctx-status">Detecting…</dd>
+        </dl>
+        <button class="btn" id="refresh-btn" type="button">Refresh</button>
+      </section>
+
+      <section class="card muted">
+        <h2 class="card-title">Next</h2>
+        <p class="hint">
+          M0 skeleton. Once context is detected, M1 wires the ServiceNow REST
+          client and the Condition Tester.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
