@@ -33,8 +33,11 @@ body {
 }
 
 body {
-  font-family: 'Prompt', system-ui, -apple-system, sans-serif;
-  font-weight: 300;
+  /* Common, highly legible for both Thai and English, no web fonts needed:
+     the OS UI font first, then Tahoma / Noto Sans Thai for solid Thai shaping. */
+  font-family: system-ui, -apple-system, 'Segoe UI', Tahoma, 'Noto Sans Thai',
+    'Sarabun', 'Helvetica Neue', Arial, sans-serif;
+  font-weight: 400;
   color: var(--ink);
   background: var(--surface);
   font-size: 14px;

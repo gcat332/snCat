@@ -67,7 +67,7 @@ const STYLE = `
   --gradient:linear-gradient(135deg,#000960 0%,#0031B4 45%,#6968AB 80%,#9063CD 100%);
 }
 *{box-sizing:border-box}
-body{font-family:'Prompt',system-ui,sans-serif;font-weight:300;color:var(--ink);margin:0;background:#fff;line-height:1.55}
+body{font-family:'Sarabun',system-ui,-apple-system,'Segoe UI',Tahoma,'Noto Sans Thai',Arial,sans-serif;font-weight:400;color:var(--ink);margin:0;background:#fff;line-height:1.6}
 .cover{background:var(--gradient);color:#fff;padding:48px 56px}
 .cover img{height:34px;margin-bottom:28px;filter:brightness(0) invert(1)}
 .cover .logo-text{font-weight:500;font-size:20px;letter-spacing:1px;margin-bottom:28px}
@@ -176,7 +176,7 @@ export function renderSpecHtml(doc: SpecDocument, opts: RenderHtmlOptions = {}):
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(doc.title)} — Design Spec</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@200;300;400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>${STYLE}</style></head>
 <body>
 <div class="cover">${logo}<h1>${esc(doc.title)}</h1><div class="subtitle">${esc(doc.subtitle)}</div>

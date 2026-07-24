@@ -131,7 +131,7 @@ export function buildDocxDocument(doc: SpecDocument, logo?: Uint8Array): Documen
     title: doc.title,
     styles: {
       default: {
-        document: { run: { font: 'Prompt', size: 22, color: INK } },
+        document: { run: { font: 'Tahoma', size: 22, color: INK } },
       },
     },
     sections: [{ children }],

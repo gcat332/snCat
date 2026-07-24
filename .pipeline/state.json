@@ -56,9 +56,9 @@
       "id": "T-105",
       "type": "review",
       "target": "src/sidepanel: main.ts, editor.ts, index.html, styles.css",
-      "status": "dispatched",
+      "status": "returned",
       "attempts": 1,
-      "evidence": "",
+      "evidence": ".pipeline/evidence/T-105-review.json",
       "notes": "2556-line UI monolith"
     },
     {
