@@ -14,6 +14,7 @@ export type ArtifactType =
   | 'client_script'
   | 'script_include'
   | 'ui_policy'
+  | 'ui_policy_action'
   | 'variable'
   | 'variable_set'
   | 'catalog_client_script'
@@ -21,6 +22,8 @@ export type ArtifactType =
   | 'transform_map'
   | 'transform_entry'
   | 'workflow'
+  | 'notification'
+  | 'data_policy'
 
 export interface ArtifactRef {
   /** Stable dedupe key: `${table}:${sysId}`. */

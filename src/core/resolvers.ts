@@ -180,8 +180,39 @@ const resolveTable: Resolver = (a) => {
       fields: ['sys_id', 'name', 'operation', 'active', 'admin_overrides', 'condition', 'script', 'description'],
       limit: 1000,
     },
+    {
+      table: 'sysevent_email_action',
+      query: `collection=${name}`,
+      type: 'notification',
+      relation: 'Notification',
+      labelField: 'name',
+      fields: ['sys_id', 'name', 'active', 'event_name', 'action_insert', 'action_update'],
+      limit: 200,
+    },
+    {
+      table: 'sys_data_policy2',
+      query: `model_table=${name}`,
+      type: 'data_policy',
+      relation: 'Data Policy',
+      labelField: 'short_description',
+      fields: ['sys_id', 'short_description', 'active', 'enforce_ui', 'apply_import_set', 'reverse_if_false'],
+      limit: 200,
+    },
   ]
 }
+
+/** UI Policy → its field actions (mandatory/visible/read-only). */
+const resolveUiPolicy: Resolver = (a) => [
+  {
+    table: 'sys_ui_policy_action',
+    query: `ui_policy=${a.sysId}`,
+    type: 'ui_policy_action',
+    relation: 'UI Policy action',
+    labelField: 'field',
+    fields: ['sys_id', 'field', 'mandatory', 'visible', 'disabled', 'ui_policy'],
+    limit: 200,
+  },
+]
 
 /** Transform Map → field map entries. */
 const resolveTransformMap: Resolver = (a) => [
@@ -202,6 +233,7 @@ export const RESOLVERS: ResolverRegistry = {
   catalog_client_script: resolveScriptInclude, // catalog client scripts may call SIs via GlideAjax targets — best-effort
   root: (a: ArtifactRef) => rootResolver(a),
   table: resolveTable,
+  ui_policy: resolveUiPolicy,
   transform_map: resolveTransformMap,
 }
 

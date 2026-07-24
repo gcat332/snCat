@@ -36,6 +36,7 @@ export interface DictionaryField {
   reference: string
   mandatory: boolean
   max_length: string
+  default_value: string
   /** Choice mode: '0' none, '1' dropdown w/ none, '2' suggestion, '3' dropdown. */
   choice: string
 }
@@ -131,7 +132,7 @@ export function buildDictionaryUrl(host: string, table: string): string {
   const query = `name=${table}^elementISNOTEMPTY^ORDERBYelement`
   return buildTableQueryUrl(host, 'sys_dictionary', {
     query,
-    fields: ['element', 'column_label', 'internal_type', 'reference', 'mandatory', 'max_length', 'choice'],
+    fields: ['element', 'column_label', 'internal_type', 'reference', 'mandatory', 'max_length', 'default_value', 'choice'],
     limit: 1000,
     displayValue: 'all',
   })

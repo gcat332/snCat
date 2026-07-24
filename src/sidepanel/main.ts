@@ -1580,11 +1580,14 @@ const ARTIFACT_GROUP: Record<string, string> = {
   variable: 'Variables',
   variable_set: 'Variable sets',
   ui_policy: 'UI policies',
+  ui_policy_action: 'UI policy actions',
   script_include: 'Script Includes',
   catalog_client_script: 'Catalog client scripts',
   workflow: 'Integration',
   transform_map: 'Transform maps',
   transform_entry: 'Transform entries',
+  notification: 'Notifications',
+  data_policy: 'Data policies',
   acl: 'ACLs',
 }
 

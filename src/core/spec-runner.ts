@@ -93,6 +93,9 @@ export async function walkSpecGraph(
       type: cellDisplay(d.internal_type as unknown) || cellValue(d.internal_type as unknown),
       label: cellDisplay(d.column_label as unknown),
       reference: cellValue(d.reference as unknown),
+      mandatory: cellValue(d.mandatory as unknown),
+      maxLength: cellValue(d.max_length as unknown),
+      defaultValue: cellValue(d.default_value as unknown),
     }))
   }
 

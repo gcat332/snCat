@@ -44,6 +44,9 @@ export interface SpecSchemaField {
   type: string
   label: string
   reference: string
+  mandatory: string
+  maxLength: string
+  defaultValue: string
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -133,8 +136,16 @@ function dataModelSection(
     blocks.push({ kind: 'paragraph', text: `Primary table: ${primaryTable} (${schema.length} fields).` })
     blocks.push({
       kind: 'table',
-      columns: ['Field', 'Type', 'Label', 'References'],
-      rows: schema.map((f) => [f.element, f.type, f.label, f.reference]),
+      columns: ['Field', 'Type', 'Label', 'References', 'Mandatory', 'Max', 'Default'],
+      rows: schema.map((f) => [
+        f.element,
+        f.type,
+        f.label,
+        f.reference,
+        f.mandatory === 'true' ? 'yes' : '',
+        f.maxLength,
+        f.defaultValue,
+      ]),
     })
   }
 
@@ -243,6 +254,20 @@ function logicSection(
     })
   }
 
+  const actions = byType(artifacts, 'ui_policy_action')
+  if (actions.length) {
+    blocks.push({
+      kind: 'table',
+      columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
+      rows: actions.map((x) => [
+        x.fields['field'] ?? '',
+        x.fields['mandatory'] ?? '',
+        x.fields['visible'] ?? '',
+        x.fields['disabled'] ?? '',
+      ]),
+    })
+  }
+
   if (!blocks.length) blocks.push(emptyNote('No script logic discovered.'))
   return { heading: 'Logic', blocks }
 }
@@ -270,17 +295,28 @@ function integrationSection(artifacts: ArtifactRef[]): SpecSection {
     })
   }
 
-  if (!blocks.length) blocks.push(emptyNote('No integration points (workflows, transform maps) discovered.'))
+  const notifications = byType(artifacts, 'notification')
+  if (notifications.length) {
+    blocks.push({
+      kind: 'table',
+      columns: ['Notification', 'Event', 'Active'],
+      rows: notifications.map((n) => [n.label, n.fields['event_name'] ?? '', n.fields['active'] ?? '']),
+    })
+  }
+
+  if (!blocks.length) blocks.push(emptyNote('No integration points (workflows, transform maps, notifications) discovered.'))
   return { heading: 'Integration Points', blocks }
 }
 
 function securitySection(artifacts: ArtifactRef[]): SpecSection {
   const acls = byType(artifacts, 'acl')
-  if (!acls.length) {
-    return { heading: 'Security / ACL', blocks: [emptyNote('No ACLs discovered for this artifact.')] }
+  const dataPolicies = byType(artifacts, 'data_policy')
+  if (!acls.length && !dataPolicies.length) {
+    return { heading: 'Security / ACL', blocks: [emptyNote('No ACLs or data policies discovered for this artifact.')] }
   }
-  const blocks: SpecBlock[] = [
-    {
+  const blocks: SpecBlock[] = []
+  if (acls.length) {
+    blocks.push({
       kind: 'table',
       columns: ['ACL', 'Operation', 'Active', 'Admin overrides', 'Condition', 'Script?'],
       rows: acls.map((a) => [
@@ -291,13 +327,24 @@ function securitySection(artifacts: ArtifactRef[]): SpecSection {
         a.fields['condition'] ?? '',
         a.fields['script']?.trim() ? 'yes' : '',
       ]),
-    },
-  ]
-  // Include any ACL scripts verbatim.
-  for (const a of acls) {
-    if (a.fields['script']?.trim()) {
-      blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'], lang: 'javascript' })
+    })
+    for (const a of acls) {
+      if (a.fields['script']?.trim()) {
+        blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'], lang: 'javascript' })
+      }
     }
+  }
+  if (dataPolicies.length) {
+    blocks.push({
+      kind: 'table',
+      columns: ['Data Policy', 'Enforce UI', 'Import set', 'Active'],
+      rows: dataPolicies.map((d) => [
+        d.label || d.fields['short_description'] || '',
+        d.fields['enforce_ui'] ?? '',
+        d.fields['apply_import_set'] ?? '',
+        d.fields['active'] ?? '',
+      ]),
+    })
   }
   return { heading: 'Security / ACL', blocks }
 }

@@ -68,8 +68,8 @@ describe('composeSpec', () => {
       artifacts: [],
       primaryTable: 'incident',
       schema: [
-        { element: 'state', type: 'Choice', label: 'State', reference: '' },
-        { element: 'caller_id', type: 'Reference', label: 'Caller', reference: 'sys_user' },
+        { element: 'state', type: 'Choice', label: 'State', reference: '', mandatory: 'false', maxLength: '40', defaultValue: '1' },
+        { element: 'caller_id', type: 'Reference', label: 'Caller', reference: 'sys_user', mandatory: 'true', maxLength: '32', defaultValue: '' },
       ],
     })
     const dm = doc.sections.find((s) => s.heading === 'Data Model')!
