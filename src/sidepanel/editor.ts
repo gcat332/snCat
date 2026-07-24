@@ -28,12 +28,18 @@ export function createCodeEditor(
       oneDark,
       EditorView.lineWrapping,
       EditorView.theme({
-        '&': { fontSize: '12px', borderRadius: '6px', border: '1px solid var(--border)' },
+        '&': {
+          fontSize: '12px',
+          borderBottomLeftRadius: '6px',
+          borderBottomRightRadius: '6px',
+        },
         '.cm-scroller': {
           fontFamily: "'SFMono-Regular', ui-monospace, Menlo, monospace",
+          lineHeight: '1.5',
           minHeight: opts.minHeight ?? '160px',
           maxHeight: '340px',
         },
+        '.cm-gutters': { borderTopRightRadius: '0', borderBottomLeftRadius: '6px' },
         '&.cm-focused': { outline: 'none' },
       }),
       ...(opts.readOnly ? [EditorState.readOnly.of(true)] : []),

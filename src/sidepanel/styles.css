@@ -138,11 +138,14 @@ body {
   background: var(--surface);
 }
 
-.scopebar-new {
+.scopebar .scopebar-new {
   flex: 0 0 auto;
   margin-top: 0;
-  padding: 4px 8px;
-  font-size: 11px;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  align-self: stretch;
 }
 
 /* Modal text input (promptDialog) */
@@ -745,10 +748,8 @@ button.picker-row:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 8px;
-  background: #11162a;
-  border: 1px solid var(--border);
-  border-bottom: none;
+  padding: 6px 10px;
+  background: #21252b; /* matches the one-dark editor background */
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
   margin-top: 8px;
@@ -793,8 +794,10 @@ button.picker-row:hover {
 }
 
 .cm-host .cm-editor {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
 }
 
 .ai-note {

@@ -1224,24 +1224,72 @@ async function openBackgroundScripts(host: string, script: string) {
   const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo) => {
     if (id !== tabId || info.status !== 'complete') return
     chrome.tabs.onUpdated.removeListener(onUpdated)
-    chrome.scripting
-      .executeScript({
-        target: { tabId, allFrames: true },
-        func: (code: string) => {
-          const ta = document.querySelector(
-            'textarea#script, textarea[name="script"], textarea[name="script.script"]',
-          ) as HTMLTextAreaElement | null
-          if (ta) {
-            ta.value = code
-            ta.dispatchEvent(new Event('input', { bubbles: true }))
-            ta.dispatchEvent(new Event('change', { bubbles: true }))
-          }
-        },
-        args: [script],
-      })
-      .catch(() => {})
+    // Retry a few times — the modern page's editor mounts after load.
+    let tries = 0
+    const attempt = () => {
+      tries++
+      chrome.scripting
+        .executeScript({
+          target: { tabId, allFrames: true },
+          world: 'MAIN',
+          func: fillBackgroundScriptEditor,
+          args: [script],
+        })
+        .then((results) => {
+          const ok = results.some((r) => r.result === true)
+          if (!ok && tries < 6) setTimeout(attempt, 700)
+        })
+        .catch(() => {
+          if (tries < 6) setTimeout(attempt, 700)
+        })
+    }
+    attempt()
   }
   chrome.tabs.onUpdated.addListener(onUpdated)
+}
+
+/**
+ * Runs in the page (MAIN world) to fill the Background Scripts editor. Tries the
+ * classic textarea, Monaco, CodeMirror 5/6, and ACE. Returns true if it filled.
+ */
+function fillBackgroundScriptEditor(code: string): boolean {
+  const w = window as unknown as {
+    monaco?: { editor?: { getModels?: () => { setValue: (v: string) => void }[] } }
+    ace?: { edit: (el: Element) => { setValue: (v: string, cursor?: number) => void } }
+  }
+  // 1. Classic plain textarea
+  const ta = document.querySelector(
+    'textarea#script, textarea[name="script"], textarea[name="script.script"]',
+  ) as HTMLTextAreaElement | null
+  if (ta) {
+    ta.value = code
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    ta.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }
+  // 2. Monaco
+  const models = w.monaco?.editor?.getModels?.()
+  if (models && models.length) {
+    models[0].setValue(code)
+    return true
+  }
+  // 3. CodeMirror 6 (contenteditable with a view) or 5 (.CodeMirror.CodeMirror)
+  const cm5 = document.querySelector('.CodeMirror') as (Element & { CodeMirror?: { setValue: (v: string) => void } }) | null
+  if (cm5?.CodeMirror) {
+    cm5.CodeMirror.setValue(code)
+    return true
+  }
+  // 4. ACE
+  const aceEl = document.querySelector('.ace_editor')
+  if (aceEl && w.ace) {
+    try {
+      w.ace.edit(aceEl).setValue(code, -1)
+      return true
+    } catch {
+      /* ignore */
+    }
+  }
+  return false
 }
 
 /** Best-effort extraction of the script output from sys.scripts.do HTML. */
