@@ -147,7 +147,10 @@ const resolveTable: Resolver = (a) => {
       type: 'business_rule',
       relation: 'Business Rule',
       labelField: 'name',
-      fields: ['sys_id', 'name', 'when', 'order', 'active', 'condition', 'filter_condition', 'script', 'collection'],
+      fields: [
+        'sys_id', 'name', 'when', 'order', 'active', 'condition', 'filter_condition', 'script', 'collection',
+        'action_insert', 'action_update', 'action_delete', 'action_query', 'description',
+      ],
       limit: 500,
     },
     {
@@ -156,16 +159,16 @@ const resolveTable: Resolver = (a) => {
       type: 'client_script',
       relation: 'Client Script',
       labelField: 'name',
-      fields: ['sys_id', 'name', 'type', 'field', 'active', 'script'],
+      fields: ['sys_id', 'name', 'type', 'field', 'active', 'global', 'isolate_script', 'description', 'script'],
       limit: 500,
     },
     {
       table: 'sys_ui_policy',
-      query: `table=${name}`,
+      query: `table=${name}^ORDERBYorder`,
       type: 'ui_policy',
       relation: 'UI Policy',
       labelField: 'short_description',
-      fields: ['sys_id', 'short_description', 'active'],
+      fields: ['sys_id', 'short_description', 'active', 'conditions', 'on_load', 'reverse_if_false', 'global', 'order'],
       limit: 500,
     },
     {
@@ -174,7 +177,7 @@ const resolveTable: Resolver = (a) => {
       type: 'acl',
       relation: 'ACL',
       labelField: 'name',
-      fields: ['sys_id', 'name', 'operation', 'active', 'admin_overrides'],
+      fields: ['sys_id', 'name', 'operation', 'active', 'admin_overrides', 'condition', 'script', 'description'],
       limit: 1000,
     },
   ]

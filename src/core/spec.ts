@@ -188,18 +188,33 @@ function logicSection(
   if (rootFields['script']) blocks.push({ kind: 'code', caption: 'Script (root)', code: rootFields['script'] })
 
   for (const br of byType(artifacts, 'business_rule')) {
-    const when = br.fields['when'] ? ` [${br.fields['when']}]` : ''
-    if (br.fields['condition']) {
-      blocks.push({ kind: 'code', caption: `Business Rule condition: ${br.label}${when}`, code: br.fields['condition'] })
-    }
-    if (br.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${when}`, code: br.fields['script'] })
-    }
+    const acts = (['insert', 'update', 'delete', 'query'] as const).filter((a) => br.fields[`action_${a}`] === 'true')
+    const meta = [
+      br.fields['when'],
+      br.fields['order'] ? `order ${br.fields['order']}` : '',
+      acts.length ? `on: ${acts.join(', ')}` : '',
+      br.fields['active'] === 'false' ? 'inactive' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    const suffix = meta ? ` — ${meta}` : ''
+    if (br.fields['description']) blocks.push({ kind: 'paragraph', text: `${br.label}: ${br.fields['description']}` })
+    const cond = br.fields['condition'] || br.fields['filter_condition']
+    if (cond) blocks.push({ kind: 'code', caption: `Business Rule condition: ${br.label}${suffix}`, code: cond })
+    if (br.fields['script']) blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${suffix}`, code: br.fields['script'] })
   }
   for (const cs of byType(artifacts, 'client_script')) {
-    const type = cs.fields['type'] ? ` [${cs.fields['type']}]` : ''
+    const meta = [
+      cs.fields['type'] || 'client script',
+      cs.fields['field'] ? `field: ${cs.fields['field']}` : '',
+      cs.fields['global'] === 'true' ? 'global' : '',
+      cs.fields['active'] === 'false' ? 'inactive' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    if (cs.fields['description']) blocks.push({ kind: 'paragraph', text: `${cs.label}: ${cs.fields['description']}` })
     if (cs.fields['script']) {
-      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label}${type}`, code: cs.fields['script'] })
+      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label} — ${meta}`, code: cs.fields['script'] })
     }
   }
   for (const si of byType(artifacts, 'script_include')) {
@@ -217,8 +232,14 @@ function logicSection(
   if (policies.length) {
     blocks.push({
       kind: 'table',
-      columns: ['UI Policy', 'Active'],
-      rows: policies.map((p) => [p.label || p.fields['short_description'] || '', p.fields['active'] ?? '']),
+      columns: ['UI Policy', 'Conditions', 'On load', 'Reverse', 'Active'],
+      rows: policies.map((p) => [
+        p.label || p.fields['short_description'] || '',
+        p.fields['conditions'] ?? '',
+        p.fields['on_load'] ?? '',
+        p.fields['reverse_if_false'] ?? '',
+        p.fields['active'] ?? '',
+      ]),
     })
   }
 
@@ -258,19 +279,25 @@ function securitySection(artifacts: ArtifactRef[]): SpecSection {
   if (!acls.length) {
     return { heading: 'Security / ACL', blocks: [emptyNote('No ACLs discovered for this artifact.')] }
   }
-  return {
-    heading: 'Security / ACL',
-    blocks: [
-      {
-        kind: 'table',
-        columns: ['ACL', 'Operation', 'Active', 'Admin overrides'],
-        rows: acls.map((a) => [
-          a.fields['name'] ?? '',
-          a.fields['operation'] ?? '',
-          a.fields['active'] ?? '',
-          a.fields['admin_overrides'] ?? '',
-        ]),
-      },
-    ],
+  const blocks: SpecBlock[] = [
+    {
+      kind: 'table',
+      columns: ['ACL', 'Operation', 'Active', 'Admin overrides', 'Condition', 'Script?'],
+      rows: acls.map((a) => [
+        a.fields['name'] ?? '',
+        a.fields['operation'] ?? '',
+        a.fields['active'] ?? '',
+        a.fields['admin_overrides'] ?? '',
+        a.fields['condition'] ?? '',
+        a.fields['script']?.trim() ? 'yes' : '',
+      ]),
+    },
+  ]
+  // Include any ACL scripts verbatim.
+  for (const a of acls) {
+    if (a.fields['script']?.trim()) {
+      blocks.push({ kind: 'code', caption: `ACL script: ${a.fields['name']} (${a.fields['operation']})`, code: a.fields['script'] })
+    }
   }
+  return { heading: 'Security / ACL', blocks }
 }
