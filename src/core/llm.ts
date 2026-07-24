@@ -234,7 +234,12 @@ export function buildPlanPrompt(requirement: string, ctx: PlanContext): { system
     '',
     ctx.table ? `Current table: ${ctx.table}` : 'No specific table.',
     ctx.fields?.length
-      ? `EXISTING fields on ${ctx.table} — do NOT propose creating any of these; reuse them and only add genuinely new fields:\n${ctx.fields.slice(0, 400).join(', ')}`
+      ? [
+          `EXISTING fields on ${ctx.table} (already on the table — treat as READ-ONLY inventory):`,
+          ctx.fields.slice(0, 400).join(', '),
+          '',
+          'HARD RULE: Never propose a "Field" artifact whose column already exists above, in ANY form — not the exact name, not a scope-prefixed variant (u_x / x_app_x), not a re-labeled duplicate. If the requirement is already satisfiable with an existing field, REUSE it and add NO field artifact for it. Only propose a Field for a column that is genuinely absent from the list above.',
+        ].join('\n')
       : '',
     '',
     'Return a JSON object with:',

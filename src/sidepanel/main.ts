@@ -36,7 +36,7 @@ import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
 import { formatSpecDoc } from '@core/format'
 import { renderSpecDocxBlob } from '@core/render-docx'
-import { loadRootArtifact, walkSpecGraph } from '@core/spec-runner'
+import { loadRootArtifact, tableRootArtifact, walkSpecGraph } from '@core/spec-runner'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
@@ -306,6 +306,59 @@ function currentListQuery(): string {
   return q
 }
 
+/**
+ * Read the list's ACTUALLY-APPLIED filter from the live page across all frames.
+ * The top-tab URL rarely carries the query on Next Experience, and even in the
+ * classic UI a filter applied after load lives in GlideList2, not the URL. We
+ * ask each frame for GlideList2(table).getQuery() first, then the list frame's
+ * sysparm_query. Returns null if nothing could be read (caller falls back).
+ */
+async function getListQueryFromPage(table: string): Promise<string | null> {
+  if (currentTabId == null) return null
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTabId, allFrames: true },
+      world: 'MAIN',
+      func: (tbl: string) => {
+        // 1) GlideList2 reflects the live applied filter (best source).
+        try {
+          const g = (window as unknown as { GlideList2?: { get?: (id: string) => unknown } }).GlideList2
+          if (g && typeof g.get === 'function') {
+            for (const id of [tbl, tbl + '.do', tbl + '_list']) {
+              const list = g.get(id) as { getQuery?: (o?: unknown) => string } | null
+              if (list && typeof list.getQuery === 'function') {
+                return { table: tbl, query: list.getQuery({ orderby: false }) || '', found: true }
+              }
+            }
+          }
+        } catch {
+          /* not a classic list frame */
+        }
+        // 2) The classic list frame's own URL.
+        try {
+          const seg = location.pathname.split('/').pop() || ''
+          const m = seg.match(/^([a-z0-9_]+)_list\.do$/i)
+          if (m) {
+            const p = new URLSearchParams(location.search)
+            return { table: m[1], query: p.get('sysparm_query') || '', found: true }
+          }
+        } catch {
+          /* ignore */
+        }
+        return null
+      },
+      args: [table],
+    })
+    for (const r of results) {
+      const v = r.result as { query?: string; found?: boolean } | null
+      if (v && v.found) return v.query ?? ''
+    }
+  } catch {
+    /* scripting blocked (e.g. non-SN frame) → fall back to URL */
+  }
+  return null
+}
+
 async function refreshXmlControls() {
   const formHas = !!(current?.table && current.sysId && current.view === 'form')
   const listHas = isListView()
@@ -339,8 +392,9 @@ async function saveXml() {
   xmlOut.replaceChildren(elText('div', 'empty', list ? 'Exporting list XML…' : 'Exporting record XML…'))
 
   let xml: string | null
+  let query = ''
   if (list) {
-    const query = currentListQuery()
+    query = (await getListQueryFromPage(current.table)) ?? currentListQuery()
     const res = await getText(current.host, buildListXmlUrl(current.host, current.table, query))
     xml = res.ok ? res.data : (xmlOut.replaceChildren(elText('div', 'error', res.error)), null)
   } else {
@@ -372,6 +426,11 @@ async function saveXml() {
       `✓ Saved ${records.length} ${clip.table} ${noun} (${(xml.length / 1024).toFixed(1)} KB). Use “Paste XML” on any list or form to import.`,
     ),
   )
+  if (list) {
+    xmlOut.append(
+      elText('div', 'info-sub', query ? `Filter applied: ${query}` : 'No filter — exported the whole table.'),
+    )
+  }
 }
 
 async function pasteXml() {
@@ -407,12 +466,19 @@ async function pasteXml() {
   }
   const out = extractBgOutput(res.data)
   const m = out.match(/snJava: imported (\d+)\/(\d+)/i)
+  const errm = out.match(/snJava: errors (.+)/i)
   if (m) {
+    const [, done, total] = m
     xmlOut.replaceChildren(
-      elText('div', 'ok-banner', `✓ Imported ${m[1]}/${m[2]} ${clip.table} ${noun} (scope ${scopeLabel()})`),
+      elText(
+        'div',
+        done === total ? 'ok-banner' : 'error',
+        `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${scopeLabel()})`,
+      ),
     )
+    if (errm) xmlOut.append(elText('div', 'info-sub', errm[1].slice(0, 400)))
   } else {
-    xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 300)}`))
+    xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
   }
 }
 
@@ -434,15 +500,19 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
 function buildMultiInsertScript(table: string, records: Record<string, string>[]): string {
   return [
     `var rows = ${JSON.stringify(records)};`,
-    `var ok = 0;`,
+    `var ok = 0, errs = [];`,
     `for (var i = 0; i < rows.length; i++) {`,
-    `  var gr = new GlideRecord(${JSON.stringify(table)});`,
-    `  gr.initialize();`,
-    `  var row = rows[i];`,
-    `  for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
-    `  if (gr.insert()) ok++;`,
+    `  try {`,
+    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `    gr.initialize();`,
+    `    var row = rows[i];`,
+    `    for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
+    `    var id = gr.insert();`,
+    `    if (id) { ok++; } else { errs.push('row ' + i + ': insert returned null'); }`,
+    `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
     `gs.info('snJava: imported ' + ok + '/' + rows.length);`,
+    `if (errs.length) { gs.info('snJava: errors ' + errs.slice(0, 5).join(' || ')); }`,
   ].join('\n')
 }
 
@@ -522,7 +592,8 @@ function updateEnabledState() {
   condOpen.disabled = !hasTable
   schemaLoad.disabled = !hasTable
   condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
-  specWalk.disabled = !(current?.table && current.sysId)
+  // Enabled on a form record (record spec) or a list view (whole-table spec).
+  specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
 }
 
 async function runCondition() {
@@ -1809,15 +1880,16 @@ async function getLogoDataUri(): Promise<string | undefined> {
 }
 
 async function discoverArtifacts() {
-  if (!current?.table || !current.sysId) return
+  if (!current?.table) return
   const { host, table, sysId } = current
 
   specWalk.disabled = true
   specOutput.hidden = true
   specStatus.hidden = true
-  specChecklist.replaceChildren(elText('div', 'empty', 'Loading root record…'))
+  specChecklist.replaceChildren(elText('div', 'empty', sysId ? 'Loading root record…' : 'Loading table…'))
 
-  const root = await loadRootArtifact(host, table, sysId)
+  // Form → record spec (rooted at the record). List → whole-table ("module") spec.
+  const root = sysId ? await loadRootArtifact(host, table, sysId) : tableRootArtifact(table)
   if (!root) {
     specChecklist.replaceChildren(elText('div', 'error', 'Could not load the root record.'))
     specWalk.disabled = false
@@ -1897,9 +1969,11 @@ function buildSpecDoc(): SpecDocument | null {
 }
 
 function safeName(): string {
-  // {module}_specification_doc — module = the table the spec documents.
-  const module = (specPrimaryTable || specRoot?.table || 'design').replace(/[^\w.-]+/g, '_').slice(0, 50)
-  return `${module}_specification_doc`
+  // {instance}_{module}_specification_document — instance short name + table.
+  const clean = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 40)
+  const instance = clean((current?.host ?? '').split('.')[0] || 'instance')
+  const module = clean(specPrimaryTable || specRoot?.table || 'design')
+  return `${instance}_${module}_specification_document`
 }
 
 function download(blob: Blob, filename: string) {
@@ -2057,15 +2131,31 @@ function fieldAlreadyExists(a: PlanArtifact): boolean {
 }
 
 function renderPlan(summary: string, artifacts: PlanArtifact[]) {
-  genStatus.textContent = summary || `${artifacts.length} artifact(s) proposed.`
   genList.replaceChildren()
   if (artifacts.length === 0) {
+    genStatus.textContent = summary || 'No artifacts proposed.'
     genList.append(elText('div', 'empty', 'No artifacts proposed.'))
     return
   }
 
-  // "Create all" acts on creatable artifacts that don't already exist.
-  const creatable = artifacts.filter((a) => a.action === 'create' && a.targetTable && a.fields && !fieldAlreadyExists(a))
+  // Drop fields that already exist on the table — we don't offer them at all.
+  const skipped = artifacts.filter(fieldAlreadyExists)
+  const shown = artifacts.filter((a) => !fieldAlreadyExists(a))
+  genStatus.textContent = summary || `${shown.length} artifact(s) proposed.`
+
+  if (skipped.length) {
+    const names = skipped.map((a) => a.fields?.['element'] || a.title).join(', ')
+    const note = elText('div', 'info-sub', `Skipped ${skipped.length} field(s) that already exist on ${current?.table ?? 'the table'}: ${names}`)
+    note.style.marginBottom = '6px'
+    genList.append(note)
+  }
+  if (shown.length === 0) {
+    genList.append(elText('div', 'empty', 'Nothing new to create.'))
+    return
+  }
+
+  // "Create all" acts on the creatable artifacts.
+  const creatable = shown.filter((a) => a.action === 'create' && a.targetTable && a.fields)
   if (creatable.length > 1) {
     const bar = document.createElement('div')
     bar.className = 'btn-row'
@@ -2078,8 +2168,7 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
     genList.append(bar)
   }
 
-  for (const a of artifacts) {
-    const exists = fieldAlreadyExists(a)
+  for (const a of shown) {
     const row = document.createElement('div')
     row.className = 'info-row'
     const name = document.createElement('button')
@@ -2092,13 +2181,7 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
     const meta = document.createElement('span')
     meta.className = 'info-meta'
     meta.append(elText('span', 'ref', a.kind))
-    if (exists) {
-      const tag = elText('span', 'info-sub', 'already exists')
-      tag.style.color = 'var(--warn, #b26a00)'
-      meta.append(tag)
-    } else {
-      meta.append(elText('span', 'info-sub', a.action === 'create' ? (a.targetTable ?? 'create') : 'script'))
-    }
+    meta.append(elText('span', 'info-sub', a.action === 'create' ? (a.targetTable ?? 'create') : 'script'))
     row.append(name, meta)
     genList.append(row)
   }

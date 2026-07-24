@@ -53,6 +53,25 @@ export async function loadRootArtifact(
   }
 }
 
+/**
+ * A synthetic root for a whole-table ("module") spec, used when the user is on
+ * a list view (no specific record). The root resolver dispatches by table, so a
+ * plain data table falls through to resolveTable and surfaces its BRs, client
+ * scripts, UI policies, ACLs, etc.
+ */
+export function tableRootArtifact(table: string): ArtifactRef {
+  return {
+    id: makeId(table, 'table'),
+    table,
+    sysId: '',
+    type: 'root',
+    label: table,
+    relation: 'root',
+    depth: 0,
+    fields: { name: table },
+  }
+}
+
 export interface WalkOutcome {
   root: ArtifactRef
   artifacts: ArtifactRef[] // discovered, excluding root
