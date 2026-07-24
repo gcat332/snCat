@@ -854,6 +854,7 @@ const scriptTiming = el<HTMLSelectElement>('script-timing')
 const scriptEd = createCodeEditor(el('script-editor'))
 const scriptFormat = el<HTMLButtonElement>('script-format')
 const scriptCopy = el<HTMLButtonElement>('script-copy')
+const scriptOpen = el<HTMLButtonElement>('script-open')
 const analyzeBtn = el<HTMLButtonElement>('analyze-btn')
 const reviewSpinner = el('review-spinner')
 const aiStatus = el('ai-status')
@@ -952,6 +953,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   }
   const rec = res.data
   loadedScriptRecord = { host, table: scriptTable, sysId, scriptField: info.scriptField }
+  scriptOpen.hidden = false
   showTrigger(info.kind, rec)
   scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
@@ -1539,37 +1541,41 @@ function parseSnjavaResult(output: string): Record<string, string> | null {
   }
 }
 
-/** Show before (sent) → after (engine result) for changed + engine-populated fields. */
+/** Show before (sent) → after (engine result): all tested fields + engine-populated ones. */
 function renderL3Diff(seed: Record<string, string>, rec: Record<string, unknown>) {
-  const changed: { field: string; before: string; after: string }[] = []
-  for (const [k, v] of Object.entries(rec)) {
-    const after = cellValue(v)
-    if (k in seed && seed[k] !== after) changed.push({ field: k, before: seed[k], after })
+  const rows: { field: string; before: string; after: string; changed: boolean }[] = []
+  // Every field we sent (tested), whether or not the engine changed it.
+  for (const [k, v] of Object.entries(seed)) {
+    const after = cellValue(rec[k])
+    rows.push({ field: k, before: v, after, changed: v !== after })
   }
-  // Engine-populated fields we didn't send (surfaced for visibility).
+  // Engine-populated fields we didn't send.
   const engineFields = ['number', 'state', 'sys_created_on', 'sys_created_by', 'sys_updated_on', 'work_notes', 'approval']
-  const populated = engineFields
-    .filter((f) => !(f in seed) && f in rec && cellValue(rec[f]))
-    .map((f) => ({ field: f, before: '(unset)', after: cellValue(rec[f]) }))
+  for (const f of engineFields) {
+    if (!(f in seed) && f in rec && cellValue(rec[f])) {
+      rows.push({ field: f, before: '(unset)', after: cellValue(rec[f]), changed: true })
+    }
+  }
 
+  const changedCount = rows.filter((r) => r.changed).length
   const box = document.createElement('div')
   box.className = 'sim-after'
-  box.append(
-    elText('div', 'sim-after-title', `Engine changed ${changed.length} field(s)`),
-  )
-  const all = [...changed, ...populated]
-  if (all.length === 0) {
-    box.append(elText('div', 'empty', 'No observable field changes.'))
-  }
-  for (const c of all) {
+  box.append(elText('div', 'sim-after-title', `${changedCount} of ${rows.length} field(s) changed by the engine`))
+  if (rows.length === 0) box.append(elText('div', 'empty', 'No fields to compare.'))
+
+  for (const r of rows) {
     const row = document.createElement('div')
-    row.className = 'diff-kv'
-    row.append(
-      elText('span', 'dk-field', c.field),
-      elText('span', 'dk-before', c.before || '(empty)'),
-      elText('span', 'dk-arrow', '→'),
-      elText('span', 'dk-after', c.after || '(empty)'),
-    )
+    row.className = `diff-kv ${r.changed ? '' : 'same'}`
+    row.append(elText('span', 'dk-field', r.field))
+    if (r.changed) {
+      row.append(
+        elText('span', 'dk-before', r.before || '(empty)'),
+        elText('span', 'dk-arrow', '→'),
+        elText('span', 'dk-after', r.after || '(empty)'),
+      )
+    } else {
+      row.append(elText('span', 'dk-same', `= ${r.after || '(empty)'}`))
+    }
     box.append(row)
   }
   l3Results.append(box)
@@ -2079,6 +2085,11 @@ scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', javaReview)
 scriptFormat.addEventListener('click', () => formatEditor(scriptEd, scriptFormat))
 scriptCopy.addEventListener('click', () => copyText(scriptEd.getValue()))
+scriptOpen.addEventListener('click', () => {
+  if (!loadedScriptRecord) return
+  const { host, table, sysId } = loadedScriptRecord
+  void chrome.tabs.create({ url: `https://${host}/${table}.do?sys_id=${sysId}` })
+})
 optimizeFormat.addEventListener('click', () => formatEditor(optimizeEd, optimizeFormat))
 optimizeCopy.addEventListener('click', () => copyText(optimizeEd.getValue()))
 optimizeUse.addEventListener('click', () => {

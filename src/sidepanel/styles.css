@@ -1002,6 +1002,19 @@ button.picker-row:hover {
   white-space: nowrap;
 }
 
+.diff-kv.same {
+  grid-template-columns: 1fr auto;
+  opacity: 0.75;
+}
+
+.diff-kv .dk-same {
+  color: var(--ink-soft);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Segmented control (Test Runner mode) */
 .seg {
   display: flex;
