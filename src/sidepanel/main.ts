@@ -1505,6 +1505,8 @@ let logoDataUriCache: string | undefined
 
 const ARTIFACT_GROUP: Record<string, string> = {
   table: 'Data model',
+  business_rule: 'Business Rules',
+  client_script: 'Client Scripts',
   variable: 'Variables',
   variable_set: 'Variable sets',
   ui_policy: 'UI policies',

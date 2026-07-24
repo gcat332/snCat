@@ -187,6 +187,21 @@ function logicSection(
   if (condition) blocks.push({ kind: 'code', caption: 'Condition', code: condition })
   if (rootFields['script']) blocks.push({ kind: 'code', caption: 'Script (root)', code: rootFields['script'] })
 
+  for (const br of byType(artifacts, 'business_rule')) {
+    const when = br.fields['when'] ? ` [${br.fields['when']}]` : ''
+    if (br.fields['condition']) {
+      blocks.push({ kind: 'code', caption: `Business Rule condition: ${br.label}${when}`, code: br.fields['condition'] })
+    }
+    if (br.fields['script']) {
+      blocks.push({ kind: 'code', caption: `Business Rule: ${br.label}${when}`, code: br.fields['script'] })
+    }
+  }
+  for (const cs of byType(artifacts, 'client_script')) {
+    const type = cs.fields['type'] ? ` [${cs.fields['type']}]` : ''
+    if (cs.fields['script']) {
+      blocks.push({ kind: 'code', caption: `Client Script: ${cs.label}${type}`, code: cs.fields['script'] })
+    }
+  }
   for (const si of byType(artifacts, 'script_include')) {
     if (si.fields['script']) {
       blocks.push({ kind: 'code', caption: `Script Include: ${si.label}`, code: si.fields['script'] })

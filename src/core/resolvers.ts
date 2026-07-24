@@ -136,11 +136,38 @@ const resolveCatalogItem: Resolver = (a) => {
   return specs
 }
 
-/** Table → ACLs defined on it (Security/ACL section). */
+/** Table → the customizations defined on it: BRs, Client Scripts, UI Policies, ACLs. */
 const resolveTable: Resolver = (a) => {
   const name = a.fields['name'] || a.label
   if (!name) return []
   return [
+    {
+      table: 'sys_script',
+      query: `collection=${name}^ORDERBYwhen^ORDERBYorder`,
+      type: 'business_rule',
+      relation: 'Business Rule',
+      labelField: 'name',
+      fields: ['sys_id', 'name', 'when', 'order', 'active', 'condition', 'filter_condition', 'script', 'collection'],
+      limit: 500,
+    },
+    {
+      table: 'sys_script_client',
+      query: `table=${name}^ORDERBYtype`,
+      type: 'client_script',
+      relation: 'Client Script',
+      labelField: 'name',
+      fields: ['sys_id', 'name', 'type', 'field', 'active', 'script'],
+      limit: 500,
+    },
+    {
+      table: 'sys_ui_policy',
+      query: `table=${name}`,
+      type: 'ui_policy',
+      relation: 'UI Policy',
+      labelField: 'short_description',
+      fields: ['sys_id', 'short_description', 'active'],
+      limit: 500,
+    },
     {
       table: 'sys_security_acl',
       query: `nameSTARTSWITH${name}`,
