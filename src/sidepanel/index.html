@@ -26,14 +26,19 @@
     </nav>
 
     <div class="scopebar" id="scopebar" hidden>
-      <label class="scopebar-label">Scope</label>
-      <select id="sel-scope" class="scopebar-select" title="Application scope for writes / background runs">
-        <option value="global">Global</option>
-      </select>
-      <label class="scopebar-label">Update Set</label>
-      <select id="sel-updateset" class="scopebar-select" title="Update set for writes / background runs">
-        <option value="">Default (current)</option>
-      </select>
+      <div class="scopebar-row">
+        <label class="scopebar-label" for="sel-scope">Scope</label>
+        <input id="sel-scope" class="scopebar-select" list="scope-list" placeholder="Global"
+          title="Application scope — type to search" />
+      </div>
+      <div class="scopebar-row">
+        <label class="scopebar-label" for="sel-updateset">Update Set</label>
+        <input id="sel-updateset" class="scopebar-select" list="updateset-list" placeholder="Default (current)"
+          title="Update set — type to search" />
+        <button class="btn btn-ghost scopebar-new" id="us-new" type="button" title="Create a new update set">+ New</button>
+      </div>
+      <datalist id="scope-list"></datalist>
+      <datalist id="updateset-list"></datalist>
     </div>
 
     <main class="app-main">
@@ -171,6 +176,7 @@
             <div class="editor-toolbar">
               <span class="editor-title">Optimized script</span>
               <span class="editor-tools">
+                <button class="tool-btn" id="optimize-diff" type="button">⇄ Compare</button>
                 <button class="tool-btn" id="optimize-format" type="button">⧉ Format</button>
                 <button class="tool-btn" id="optimize-copy" type="button">⧉ Copy</button>
                 <button class="tool-btn" id="optimize-use" type="button">↥ Use</button>
@@ -198,8 +204,8 @@
           </div>
           <div class="cm-host" id="tester-editor"></div>
           <div class="btn-row">
-            <button class="btn" id="sim-run" type="button">Run on instance ▶</button>
-            <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts ↗</button>
+            <button class="btn" id="sim-run" type="button">Run on instance</button>
+            <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts</button>
             <span class="spinner" id="sim-spinner" hidden></span>
           </div>
           <div class="results" id="sim-results"></div>
@@ -260,7 +266,7 @@
               <span class="editor-tools">
                 <button class="tool-btn" id="gen-format" type="button">⧉ Format</button>
                 <button class="tool-btn" id="gen-copy" type="button">⧉ Copy</button>
-                <button class="tool-btn accent" id="gen-open" type="button">↗ Background Scripts</button>
+                <button class="tool-btn accent" id="gen-open" type="button">Background Scripts</button>
               </span>
             </div>
             <div class="cm-host" id="gen-editor"></div>

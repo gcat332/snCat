@@ -19,6 +19,7 @@ import {
   runBackground,
 } from '@core/api-client'
 import { importableFields, parseUnloadXml } from '@core/xml'
+import { diffStats, lineDiff } from '@core/diff'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
@@ -114,54 +115,121 @@ function initTabs() {
 /* ---------- scope + update set bar ---------- */
 
 const scopebar = el('scopebar')
-const selScope = el<HTMLSelectElement>('sel-scope')
-const selUpdateSet = el<HTMLSelectElement>('sel-updateset')
+const selScope = el<HTMLInputElement>('sel-scope')
+const selUpdateSet = el<HTMLInputElement>('sel-updateset')
+const scopeListEl = el('scope-list')
+const usListEl = el('updateset-list')
 let lastScopeHost = ''
+const scopeByName = new Map<string, string>() // name → sys_id
+const usByName = new Map<string, string>()
+
+function datalistOption(value: string): HTMLOptionElement {
+  const o = document.createElement('option')
+  o.value = value
+  return o
+}
+
+/** Resolve the typed scope name to a sys_id ('global' by default). */
+function resolveScope(): string {
+  const v = selScope.value.trim()
+  if (!v || v.toLowerCase() === 'global') return 'global'
+  return scopeByName.get(v) ?? 'global'
+}
+
+/** Resolve the typed update-set name to a sys_id (undefined = leave current). */
+function resolveUpdateSet(): string | undefined {
+  const v = selUpdateSet.value.trim()
+  return v ? usByName.get(v) : undefined
+}
 
 /** Writes/background runs target this scope + update set. */
 function writeTargetOpts(): { scope?: string; updateSet?: string } {
-  return {
-    scope: selScope.value || undefined,
-    updateSet: selUpdateSet.value || undefined,
-  }
+  return { scope: resolveScope(), updateSet: resolveUpdateSet() }
 }
 
 function scopeLabel(): string {
-  return selScope.options[selScope.selectedIndex]?.text || 'Global'
+  return selScope.value.trim() || 'Global'
 }
 
 async function populateScopeBar() {
   if (!current) return
   scopebar.hidden = false
-  if (lastScopeHost === current.host) return // populated for this instance already
+  if (lastScopeHost === current.host) return // already populated for this instance
   lastScopeHost = current.host
 
   const scopes = await queryRecords(current.host, 'sys_scope', {
-    query: 'ORDERBYname',
-    fields: ['sys_id', 'name', 'scope'],
+    query: 'nameISNOTEMPTY^ORDERBYname',
+    fields: ['sys_id', 'name'],
+    limit: 1000,
+    displayValue: false,
+  })
+  scopeByName.clear()
+  scopeListEl.replaceChildren()
+  if (scopes.ok) {
+    for (const s of scopes.data) {
+      const name = cellValue(s['name'])
+      if (!name) continue
+      scopeByName.set(name, cellValue(s['sys_id']))
+      scopeListEl.append(datalistOption(name))
+    }
+  }
+  await refreshUpdateSets()
+}
+
+async function refreshUpdateSets(selectName?: string) {
+  if (!current) return
+  const sets = await queryRecords(current.host, 'sys_update_set', {
+    query: 'state=in progress^nameISNOTEMPTY^ORDERBYname',
+    fields: ['sys_id', 'name'],
     limit: 500,
     displayValue: false,
   })
-  if (scopes.ok) {
-    const keep = selScope.value
-    selScope.replaceChildren(new Option('Global', 'global'))
-    for (const s of scopes.data) {
-      selScope.append(new Option(cellValue(s['name']) || cellValue(s['scope']), cellValue(s['sys_id'])))
-    }
-    selScope.value = keep || 'global'
-  }
-
-  const sets = await queryRecords(current.host, 'sys_update_set', {
-    query: 'state=in progress^ORDERBYname',
-    fields: ['sys_id', 'name'],
-    limit: 200,
-    displayValue: false,
-  })
+  usByName.clear()
+  usListEl.replaceChildren()
   if (sets.ok) {
-    const keep = selUpdateSet.value
-    selUpdateSet.replaceChildren(new Option('Default (current)', ''))
-    for (const u of sets.data) selUpdateSet.append(new Option(cellValue(u['name']), cellValue(u['sys_id'])))
-    selUpdateSet.value = keep || ''
+    for (const u of sets.data) {
+      const name = cellValue(u['name'])
+      if (!name) continue
+      usByName.set(name, cellValue(u['sys_id']))
+      usListEl.append(datalistOption(name))
+    }
+  }
+  if (selectName) selUpdateSet.value = selectName
+}
+
+/** Create a new in-progress update set (in the selected scope) via a bg script. */
+async function createUpdateSet() {
+  if (!current) return
+  const name = await promptDialog('New update set name:', 'e.g. snJava changes')
+  if (!name) return
+  const scopeId = resolveScope()
+  const bg = [
+    `var us = new GlideRecord('sys_update_set');`,
+    `us.initialize();`,
+    `us.setValue('name', ${JSON.stringify(name)});`,
+    scopeId && scopeId !== 'global' ? `us.setValue('application', ${JSON.stringify(scopeId)});` : '',
+    `us.setValue('state', 'in progress');`,
+    `var id = us.insert();`,
+    `gs.info('snJava: updateset ' + id);`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  el<HTMLButtonElement>('us-new').disabled = true
+  const res = await runBackground(current.host, bg, { scope: scopeId })
+  el<HTMLButtonElement>('us-new').disabled = false
+  if (!res.ok) {
+    showToast(`Create failed: ${res.error.slice(0, 50)}`)
+    return
+  }
+  const m = extractBgOutput(res.data).match(/snJava: updateset ([0-9a-f]{32})/i)
+  if (m) {
+    usByName.set(name, m[1])
+    usListEl.append(datalistOption(name))
+    selUpdateSet.value = name
+    showToast(`Update set "${name}" created ✓`)
+  } else {
+    showToast('Created? Check Background Scripts output')
   }
 }
 
@@ -268,21 +336,47 @@ async function pasteXml() {
   const fields = importableFields(parsed.fields)
   if (
     !(await confirmDialog(
-      `Import a "${clip.table}" record into ${current.host}?\n\n${Object.keys(fields).length} fields will be created as a NEW record (system fields dropped).`,
+      `Import a "${clip.table}" record into ${current.host}?\n\n${Object.keys(fields).length} fields will be created as a NEW record (system fields dropped), in scope "${scopeLabel()}"${
+        selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
+      }.`,
     ))
   ) {
     return
   }
   xmlPaste.disabled = true
-  xmlOut.replaceChildren(elText('div', 'empty', 'Importing…'))
-  const res = await createRecord(current.host, clip.table, fields)
+  xmlOut.replaceChildren(elText('div', 'empty', 'Importing via background script…'))
+  // Import via a background insert so it lands in the selected scope + update set
+  // (Table API writes bypass update-set capture).
+  const bg = buildRecordInsertScript(clip.table, fields)
+  const res = await runBackground(current.host, bg, writeTargetOpts())
   xmlPaste.disabled = false
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
     return
   }
-  const newId = cellValue(res.data['sys_id'])
-  xmlOut.replaceChildren(elText('div', 'ok-banner', `✓ Imported as ${clip.table} ${newId.slice(0, 8)}…`))
+  const out = extractBgOutput(res.data)
+  const m = out.match(/snJava: imported ([0-9a-f]{32})/i)
+  if (m) {
+    xmlOut.replaceChildren(
+      elText('div', 'ok-banner', `✓ Imported as ${clip.table} ${m[1].slice(0, 8)}… (scope ${scopeLabel()})`),
+    )
+  } else {
+    xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 300)}`))
+  }
+}
+
+/** Background script that inserts a record with the given fields (scope-aware). */
+function buildRecordInsertScript(table: string, fields: Record<string, string>): string {
+  const sets = Object.entries(fields)
+    .map(([k, v]) => `gr.setValue(${JSON.stringify(k)}, ${JSON.stringify(v)});`)
+    .join('\n  ')
+  return [
+    `var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `gr.initialize();`,
+    `  ${sets}`,
+    `var id = gr.insert();`,
+    `if (id) { gs.info('snJava: imported ' + id); } else { gs.error('snJava: insert failed'); }`,
+  ].join('\n')
 }
 
 let xmlEntries: [string, string][] = []
@@ -619,6 +713,91 @@ async function copyText(text: string, feedbackEl?: HTMLElement) {
   }
 }
 
+/** Show a before/after line diff in a modal. */
+function showDiff(before: string, after: string) {
+  const lines = lineDiff(before, after)
+  const { added, removed } = diffStats(lines)
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const box = document.createElement('div')
+  box.className = 'modal-box wide'
+
+  const head = document.createElement('div')
+  head.className = 'diff-head'
+  head.append(elText('span', 'title', 'Script changes — before → after'))
+  const stats = document.createElement('span')
+  stats.className = 'diff-stats'
+  stats.append(elText('span', 'add', `+${added}`), elText('span', 'del', `−${removed}`))
+  head.append(stats)
+
+  const body = document.createElement('div')
+  body.className = 'diff-body'
+  if (added === 0 && removed === 0) {
+    body.append(elText('div', 'diff-line context', '  (no differences)'))
+  }
+  for (const l of lines) {
+    const row = document.createElement('div')
+    row.className = `diff-line ${l.op}`
+    const sign = l.op === 'add' ? '+' : l.op === 'del' ? '−' : ' '
+    row.append(elText('span', 'sign', sign), document.createTextNode(l.text))
+    body.append(row)
+  }
+
+  const row = document.createElement('div')
+  row.className = 'btn-row'
+  const close = document.createElement('button')
+  close.className = 'btn'
+  close.textContent = 'Close'
+  close.addEventListener('click', () => overlay.remove())
+  row.append(close)
+
+  box.append(head, body, row)
+  overlay.append(box)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove()
+  })
+  document.body.append(overlay)
+}
+
+/** In-panel text prompt — window.prompt() is suppressed in side panels. */
+function promptDialog(message: string, placeholder = ''): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'modal-overlay'
+    const box = document.createElement('div')
+    box.className = 'modal-box'
+    box.append(elText('div', 'modal-msg', message))
+    const input = document.createElement('input')
+    input.className = 'modal-input'
+    input.placeholder = placeholder
+    box.append(input)
+    const row = document.createElement('div')
+    row.className = 'btn-row'
+    const cancel = document.createElement('button')
+    cancel.className = 'btn btn-ghost'
+    cancel.textContent = 'Cancel'
+    const ok = document.createElement('button')
+    ok.className = 'btn'
+    ok.textContent = 'Create'
+    const done = (v: string | null) => {
+      overlay.remove()
+      resolve(v)
+    }
+    cancel.addEventListener('click', () => done(null))
+    ok.addEventListener('click', () => done(input.value.trim() || null))
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') done(input.value.trim() || null)
+      if (e.key === 'Escape') done(null)
+    })
+    row.append(cancel, ok)
+    box.append(row)
+    overlay.append(box)
+    document.body.append(overlay)
+    input.focus()
+  })
+}
+
 /** In-panel confirm dialog — window.confirm() is suppressed in side panels. */
 function confirmDialog(message: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -720,7 +899,7 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   if (!info) return
   testerSource.textContent = 'Loading script…'
 
-  const fields = [info.scriptField, info.nameField]
+  const fields = [info.scriptField, info.nameField, 'sys_scope']
   if (info.timingField) fields.push(info.timingField)
   if (info.tableField) fields.push(info.tableField)
 
@@ -739,9 +918,13 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
     const target = cellValue(rec[info.tableField])
     if (target) l3Table.value = target
   }
+  // Show the script's application scope, and target writes at it by default.
+  const scopeName = cellDisplay(rec['sys_scope'])
+  if (scopeName) selScope.value = scopeName
   syncTimingVisibility()
   const name = cellDisplay(rec[info.nameField]) || scriptTable
-  testerSource.textContent = `Loaded "${name}" (${info.kind.replace('_', ' ')}).`
+  testerSource.textContent =
+    `Loaded "${name}" (${info.kind.replace('_', ' ')})` + (scopeName ? ` · scope: ${scopeName}` : '') + '.'
   scriptEd.view.scrollDOM.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
@@ -930,7 +1113,7 @@ async function saveOptimizedToRecord() {
   if (
     !(await confirmDialog(
       `Save the optimized script to ${table} on ${host}?\n\nRuns as a background script in scope "${scopeLabel()}"${
-        selUpdateSet.value ? ` and update set "${selUpdateSet.options[selUpdateSet.selectedIndex].text}"` : ''
+        selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
       }.`,
     ))
   ) {
@@ -1579,6 +1762,9 @@ optimizeUse.addEventListener('click', () => {
   showToast('Optimized script moved into the editor')
 })
 optimizeSave.addEventListener('click', saveOptimizedToRecord)
+el<HTMLButtonElement>('optimize-diff').addEventListener('click', () =>
+  showDiff(scriptEd.getValue(), optimizeEd.getValue()),
+)
 xmlSave.addEventListener('click', saveXml)
 xmlPaste.addEventListener('click', pasteXml)
 xmlView.addEventListener('click', viewXmlValues)
@@ -1600,6 +1786,7 @@ pickerSearch.addEventListener('keydown', (e) => {
 })
 syncPickerTableVisibility()
 simRun.addEventListener('click', runOnInstance)
+el<HTMLButtonElement>('us-new').addEventListener('click', createUpdateSet)
 el<HTMLButtonElement>('sim-bg').addEventListener('click', () => {
   if (!current?.host) {
     showToast('Open a ServiceNow tab first')

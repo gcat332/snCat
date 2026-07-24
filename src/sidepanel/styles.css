@@ -104,15 +104,21 @@ body {
 
 .scopebar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
+}
+
+.scopebar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .scopebar-label {
+  flex: 0 0 78px;
   font-size: 10.5px;
   font-weight: 500;
   color: var(--ink-soft);
@@ -121,8 +127,8 @@ body {
 }
 
 .scopebar-select {
-  flex: 1 1 40%;
-  min-width: 100px;
+  flex: 1 1 35%;
+  min-width: 90px;
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -130,6 +136,24 @@ body {
   font-size: 12px;
   color: var(--ink);
   background: var(--surface);
+}
+
+.scopebar-new {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+/* Modal text input (promptDialog) */
+.modal-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  margin-bottom: 12px;
 }
 
 .app-main {
@@ -537,6 +561,81 @@ button.picker-row:hover {
 .modal-box .btn-row {
   justify-content: flex-end;
   margin-top: 0;
+}
+
+.modal-box.wide {
+  max-width: min(680px, 92vw);
+  width: 92vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 82vh;
+}
+
+/* Before/after diff view */
+.diff-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.diff-head .title {
+  font-weight: 500;
+  color: var(--mfec-blue-dark);
+  font-size: 13px;
+}
+
+.diff-stats {
+  font-size: 12px;
+}
+
+.diff-stats .add {
+  color: #1a7f37;
+  font-weight: 500;
+}
+
+.diff-stats .del {
+  color: #b4232a;
+  font-weight: 500;
+  margin-left: 8px;
+}
+
+.diff-body {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0f1424;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-line {
+  display: flex;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0 8px;
+}
+
+.diff-line .sign {
+  width: 14px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.diff-line.context {
+  color: #c9d3ea;
+}
+
+.diff-line.add {
+  background: rgba(46, 160, 67, 0.18);
+  color: #7ee787;
+}
+
+.diff-line.del {
+  background: rgba(248, 81, 73, 0.16);
+  color: #ffa198;
 }
 
 /* Schema search box spacing/appearance */
