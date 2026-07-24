@@ -96,7 +96,7 @@ export function buildDocxDocument(doc: SpecDocument): Document {
   }
 
   return new Document({
-    creator: 'snCat',
+    creator: 'snJava',
     title: doc.title,
     styles: {
       default: {

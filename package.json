@@ -1,8 +1,8 @@
 {
-  "name": "sncat",
+  "name": "snjava",
   "private": true,
   "version": "0.0.0",
-  "description": "ServiceNow AI Assistant — Chrome Extension (MV3): Design Spec Generator + Script Tester",
+  "description": "Java Assistant — Chrome Extension (MV3): Design Spec Generator + Script Tester",
   "type": "module",
   "scripts": {
     "dev": "vite",

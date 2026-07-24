@@ -2,7 +2,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 import pkg from '../package.json'
 
 /**
- * MV3 manifest for the ServiceNow AI Assistant.
+ * MV3 manifest for the Java Assistant (snJava).
  *
  * Host strategy (handoff §7 decision 3): match all standard ServiceNow
  * instances so the extension reads whatever instance the user is on from the
@@ -11,14 +11,14 @@ import pkg from '../package.json'
  */
 export default defineManifest({
   manifest_version: 3,
-  name: 'snCat — ServiceNow AI Assistant',
+  name: 'snJava — Java Assistant',
   version: pkg.version || '0.0.0',
   description: pkg.description,
 
   minimum_chrome_version: '116', // Side Panel API
 
   action: {
-    default_title: 'Open snCat',
+    default_title: 'Open snJava',
     default_icon: {
       '16': 'public/icons/icon-16.png',
       '32': 'public/icons/icon-32.png',

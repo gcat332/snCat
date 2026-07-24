@@ -8,7 +8,7 @@
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((err) => console.error('[snCat] setPanelBehavior failed', err))
+    .catch((err) => console.error('[snJava] setPanelBehavior failed', err))
 })
 
 // Also handle the click explicitly for browsers/timing where the behavior flag

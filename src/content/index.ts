@@ -9,10 +9,14 @@
  */
 import { parseServiceNowContext } from '@core/context'
 import type { GFormSnapshot, PageContext, RuntimeMessage } from '@core/types'
-import { executeApiRequest } from '@core/sn-rest'
+import type { ApiResult } from '@core/api'
 import { DEFAULT_PROD_GUARD_CONFIG, type ProdGuardConfig } from '@core/prod-guard'
 
 let lastGForm: GFormSnapshot | null = null
+
+// Pending REST calls forwarded to the MAIN world, keyed by id.
+const pending = new Map<string, (result: ApiResult<unknown>) => void>()
+let apiSeq = 0
 
 async function loadGuardConfig(): Promise<ProdGuardConfig> {
   try {
@@ -25,16 +29,24 @@ async function loadGuardConfig(): Promise<ProdGuardConfig> {
   return DEFAULT_PROD_GUARD_CONFIG
 }
 
-// Cache g_ck for the background/REST layer to pick up later (handoff §5).
+// Listen to the MAIN world: g_form snapshots and REST fetch results.
 window.addEventListener('message', (event) => {
   if (event.source !== window) return
-  const data = event.data as GFormSnapshot | undefined
+  const data = event.data as
+    | GFormSnapshot
+    | { kind: 'sncat:fetch-result'; id: string; result: ApiResult<unknown> }
+    | undefined
+
   if (data?.kind === 'sncat:g_form') {
     lastGForm = data
     if (data.gCk) {
-      chrome.storage.session
-        .set({ [`gck:${location.host}`]: data.gCk })
-        .catch(() => {})
+      chrome.storage.session.set({ [`gck:${location.host}`]: data.gCk }).catch(() => {})
+    }
+  } else if (data?.kind === 'sncat:fetch-result') {
+    const resolve = pending.get(data.id)
+    if (resolve) {
+      pending.delete(data.id)
+      resolve(data.result)
     }
   }
 })
@@ -77,13 +89,21 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.kind === 'sncat:api') {
-      // Execute the REST call HERE (page origin) so the session cookie is sent.
+      // Forward to the MAIN world, which fetches as the page (cookie is sent).
       loadGuardConfig().then((guardConfig) => {
-        executeApiRequest(message.request, { token: lastGForm?.gCk ?? null, guardConfig })
-          .then(sendResponse)
-          .catch((err: unknown) =>
-            sendResponse({ ok: false, status: 0, error: (err as Error).message }),
-          )
+        const id = `api_${++apiSeq}`
+        pending.set(id, sendResponse)
+        window.postMessage(
+          { kind: 'sncat:fetch', id, request: message.request, guardConfig },
+          location.origin,
+        )
+        // Safety timeout so a lost reply doesn't hang the caller forever.
+        setTimeout(() => {
+          if (pending.has(id)) {
+            pending.delete(id)
+            sendResponse({ ok: false, status: 0, error: 'ServiceNow page did not respond (timeout).' })
+          }
+        }, 20000)
       })
       return true
     }

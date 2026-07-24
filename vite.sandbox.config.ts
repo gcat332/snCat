@@ -29,7 +29,7 @@ export default defineConfig({
     lib: {
       entry: fileURLToPath(new URL('./src/sandbox/main.ts', import.meta.url)),
       formats: ['iife'],
-      name: 'snCatSandbox',
+      name: 'snJavaSandbox',
       fileName: () => 'sandbox.js',
     },
     rollupOptions: {

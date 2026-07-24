@@ -1,4 +1,4 @@
-# snCat — ServiceNow AI Assistant (Chrome Extension, MV3)
+# snJava — Java Assistant (Chrome Extension, MV3)
 
 A Chrome Extension with a shared core engine and two features:
 
@@ -23,7 +23,7 @@ Then load the extension in Chrome:
 1. `npm run build` (or use the `dev` server output)
 2. Open `chrome://extensions` → enable **Developer mode**
 3. **Load unpacked** → select the `dist/` folder
-4. Open a ServiceNow page (dev instance: `mfecplcdemo10.service-now.com`) → click the snCat toolbar icon → the side panel opens and reports the current **table + sys_id**.
+4. Open a ServiceNow page (dev instance: `mfecplcdemo10.service-now.com`) → click the snJava toolbar icon → the side panel opens and reports the current **table + sys_id**.
 
 ## Scripts
 
