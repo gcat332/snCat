@@ -12,8 +12,9 @@ A single Chrome Extension (Manifest V3) with a shared core engine and two user-f
 
 | # | Feature | One-liner |
 |---|---------|-----------|
-| F1 | **Design Spec Generator** | On any ServiceNow record page, generate a Design Spec presentation as a self-contained reveal.js HTML file, styled with the MFEC brand theme |
+| F1 | **Design Spec Generator** | On any ServiceNow record page, generate a Design Spec as PDF / Word / HTML, styled with the MFEC brand theme |
 | F2 | **Script Tester** | Test Business Rules / Client Scripts through a 3-layer approach: static AI review → sandbox simulation with real data → guarded real execution |
+| F3 | **XML Mover** | On a record or list page, **Copy XML** (ServiceNow unload XML); on another instance, **Paste XML → Import** to recreate the record(s). Cross-instance record transfer without update sets. *(Design pending — see §9.)* |
 
 **Strategic decision (agreed):** both features are actions on top of one core engine:
 `read page context → walk dependency graph via REST API → feed to AI → render in side panel`.
@@ -180,3 +181,30 @@ The section-7 open questions were resolved as follows:
 - **MFEC logo assets — extracted** from the PPTX (`ppt/media/`) into `public/brand/`: `mfec-logo-dark.png` (dark wordmark for white pages), `mfec-logo-light.png` (white wordmark for gradient cover band). Extension icons in `public/icons/` from the square arrow mark. The `.pptx` itself is **git-ignored** (43 MB) but kept locally for re-extraction.
 - **Stack chosen: TypeScript + Vite + `@crxjs/vite-plugin`** (MV3, HMR, side panel support). Vitest for the context-parser unit tests.
 - Related prior work by Gust that connects here: `itsm-deploy` ATF regression gates (Layer 3), Chesterton's Fence refactoring framing (Impact Analysis future feature), reasoning-trace skill (could drive the graph-walk audit trail).
+
+---
+
+## 9. Feature F3 — XML Mover (design pending, added 2026-07-24)
+
+**Goal:** move a record (or a filtered list of records) from one instance to another without building an update set, using ServiceNow's native record **unload XML**.
+
+### Intended flow
+1. On a **record** page → **Copy XML**: fetch the record's unload XML and put it on the clipboard (and/or an in-extension clipboard store keyed per record).
+2. On a **list** page → **Copy XML** for the current filtered set (bounded — cap count, warn if truncated).
+3. On a **different instance** → **Paste XML → Import**: recreate the record(s) there.
+
+### Technical notes / how ServiceNow exposes this
+- **Export XML (source):** classic endpoints serve unload XML directly, e.g. `https://<host>/<table>.do?sys_id=<id>&XML` (single record) and `https://<host>/<table>_list.do?sysparm_query=<q>&XML` (list). Fetchable read-only with the session cookie — same auth path as M1.
+- **Import XML (target) — two candidate strategies, pick during design:**
+  1. **Parse → Table API create/update.** Parse the `<unload>` XML into a field map, then POST via Table API to the target. Most controlled; lets us diff, remap references, and choose insert-vs-update. Downside: reference fields + sys_id collisions must be handled explicitly.
+  2. **Native XML import.** Drive ServiceNow's own single-record XML import (the "Insert XML" path). Higher fidelity to unload semantics but relies on instance UI/endpoints and is harder to script cleanly from an extension.
+
+### Open questions (resolve before building F3)
+1. **sys_id policy on import:** preserve original sys_id (true clone, risks collision/overwrite) vs. let target generate a new one (safe copy, breaks inbound references)?
+2. **References & related lists:** copy referenced records too (depth-limited, reuse the F1 graph walker) or leave dangling references?
+3. **Scope of "list copy":** hard cap (e.g. 50 records) + explicit user confirm; how to surface truncation.
+4. **Prod guard:** importing writes to the target — reuse F2's hard prod-guard so imports into prod are blocked/confirmed.
+5. **Conflict handling:** target already has a record with that sys_id/unique key → skip / update / duplicate?
+6. **Clipboard vs. in-extension store:** raw XML on the system clipboard (portable, user can inspect) vs. structured store in `chrome.storage` (safer, richer metadata). Likely both: store + optional clipboard copy.
+
+**Reuse:** F3 shares the M1 REST client (fetch), the context detector (record vs list), and the F2 prod-guard. This is exactly the "cheap to add" payoff of the core-engine architecture (§1).

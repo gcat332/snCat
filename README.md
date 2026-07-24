@@ -47,7 +47,12 @@ Then load the extension in Chrome:
 - **Condition Tester** end-to-end: encoded query → match count + sample rows.
 - **Table schema** loader (sys_dictionary → field list).
 
-Next: **M2** — Script Tester Layer 1 (AI-free static anti-pattern lints + intent input).
+**M2 — Script Tester Layer 1** ✅ (LLM-free)
+- Deterministic anti-pattern lint engine (`src/core/lint.ts`), unit-tested (`src/core/lint.test.ts`): `update-in-before-br`, `gliderecord-in-client-script`, `gs-in-client-script`, `previous-in-async-br`, `unconditioned-query`, `eval-usage`, `empty-catch`, `hardcoded-sys-id`. Comment/string-aware scanner keeps line numbers accurate and avoids false hits inside comments.
+- Side panel **Script Tester** tab: auto-loads the script from a Business Rule / Client Script / Script Include record, kind + timing selectors, intent capture, findings list by severity.
+- AI logic-vs-intent review is stubbed off (LLM disabled) per handoff §7 decision 2.
+
+Next: **M3** — Layer 2 sandbox simulation (Glide mocks in a sandboxed iframe). Highest risk.
 
 ## Layout
 

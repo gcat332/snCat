@@ -3,10 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link
-      rel="preconnect"
-      href="https://fonts.googleapis.com"
-    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Prompt:wght@200;300;400;500&display=swap"
       rel="stylesheet"
@@ -16,51 +13,113 @@
   </head>
   <body>
     <header class="app-header">
-      <img
-        class="app-logo"
-        src="/public/brand/mfec-logo-dark.png"
-        alt="MFEC"
-      />
+      <img class="app-logo" src="/public/brand/mfec-logo-dark.png" alt="MFEC" />
       <span class="app-title">ServiceNow AI Assistant</span>
     </header>
 
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" id="tab-inspect" data-panel="panel-inspect" role="tab">
+        Inspect
+      </button>
+      <button class="tab" id="tab-tester" data-panel="panel-tester" role="tab">
+        Script Tester
+      </button>
+    </nav>
+
     <main class="app-main">
-      <section class="card" id="context-card">
-        <h2 class="card-title">Page context</h2>
-        <dl class="ctx-grid" id="ctx-grid">
-          <dt>Status</dt>
-          <dd id="ctx-status">Detecting…</dd>
-        </dl>
-        <button class="btn" id="refresh-btn" type="button">Refresh</button>
-      </section>
+      <!-- ============ INSPECT ============ -->
+      <div class="panel is-active" id="panel-inspect">
+        <section class="card" id="context-card">
+          <h2 class="card-title">Page context</h2>
+          <dl class="ctx-grid" id="ctx-grid">
+            <dt>Status</dt>
+            <dd id="ctx-status">Detecting…</dd>
+          </dl>
+          <button class="btn" id="refresh-btn" type="button">Refresh</button>
+        </section>
 
-      <section class="card" id="condition-card">
-        <h2 class="card-title">Condition Tester</h2>
-        <p class="hint" id="cond-table-hint">Detect a table first.</p>
-        <label class="field-label" for="cond-query">Encoded query</label>
-        <textarea
-          id="cond-query"
-          class="query-input"
-          rows="2"
-          placeholder="active=true^priority=1  (leave blank to match all)"
-        ></textarea>
-        <div class="btn-row">
-          <button class="btn" id="cond-run" type="button" disabled>Run condition</button>
-          <span class="count-badge" id="cond-count" hidden></span>
-        </div>
-        <div class="results" id="cond-results"></div>
-      </section>
+        <section class="card" id="condition-card">
+          <h2 class="card-title">Condition Tester</h2>
+          <p class="hint" id="cond-table-hint">Detect a table first.</p>
+          <label class="field-label" for="cond-query">Encoded query</label>
+          <textarea
+            id="cond-query"
+            class="query-input"
+            rows="2"
+            placeholder="active=true^priority=1  (leave blank to match all)"
+          ></textarea>
+          <div class="btn-row">
+            <button class="btn" id="cond-run" type="button" disabled>Run condition</button>
+            <span class="count-badge" id="cond-count" hidden></span>
+          </div>
+          <div class="results" id="cond-results"></div>
+        </section>
 
-      <section class="card muted" id="schema-card">
-        <h2 class="card-title">Table schema</h2>
-        <div class="btn-row">
-          <button class="btn btn-ghost" id="schema-load" type="button" disabled>
-            Load fields
-          </button>
-          <span class="count-badge" id="schema-count" hidden></span>
-        </div>
-        <div class="results" id="schema-results"></div>
-      </section>
+        <section class="card muted" id="schema-card">
+          <h2 class="card-title">Table schema</h2>
+          <div class="btn-row">
+            <button class="btn btn-ghost" id="schema-load" type="button" disabled>
+              Load fields
+            </button>
+            <span class="count-badge" id="schema-count" hidden></span>
+          </div>
+          <div class="results" id="schema-results"></div>
+        </section>
+      </div>
+
+      <!-- ============ SCRIPT TESTER ============ -->
+      <div class="panel" id="panel-tester">
+        <section class="card" id="tester-card">
+          <h2 class="card-title">Layer 1 — Static Analysis</h2>
+          <p class="hint" id="tester-source">Paste a script, or open a Business Rule / Client Script / Script Include record to auto-load it.</p>
+
+          <div class="field-inline">
+            <div>
+              <label class="field-label" for="script-kind">Script kind</label>
+              <select id="script-kind" class="select">
+                <option value="business_rule">Business Rule</option>
+                <option value="client_script">Client Script</option>
+                <option value="script_include">Script Include</option>
+                <option value="unknown">Other</option>
+              </select>
+            </div>
+            <div id="timing-wrap">
+              <label class="field-label" for="script-timing">When</label>
+              <select id="script-timing" class="select">
+                <option value="before">before</option>
+                <option value="after">after</option>
+                <option value="async">async</option>
+                <option value="display">display</option>
+              </select>
+            </div>
+          </div>
+
+          <label class="field-label" for="script-body">Script</label>
+          <textarea
+            id="script-body"
+            class="query-input code"
+            rows="10"
+            placeholder="// paste your Business Rule / Client Script here"
+          ></textarea>
+
+          <label class="field-label" for="script-intent">
+            Intent — what should this do? (optional)
+          </label>
+          <textarea
+            id="script-intent"
+            class="query-input"
+            rows="2"
+            placeholder="e.g. Set priority to 1 when the caller is a VIP"
+          ></textarea>
+
+          <div class="btn-row">
+            <button class="btn" id="analyze-btn" type="button">Analyze</button>
+            <span class="count-badge" id="lint-summary" hidden></span>
+          </div>
+          <p class="ai-note">AI logic-vs-intent review is disabled (LLM off) — static lints run now.</p>
+          <div class="results" id="lint-results"></div>
+        </section>
+      </div>
     </main>
 
     <script type="module" src="./main.ts"></script>
