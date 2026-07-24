@@ -1217,7 +1217,10 @@ function updateSandboxGuard() {
 
 /** Open the Background Scripts page and pre-fill it with the given script. */
 async function openBackgroundScripts(host: string, script: string) {
-  const tab = await chrome.tabs.create({ url: `https://${host}/sys.scripts.modern.do` })
+  // Classic page: it has a plain <textarea id="script"> that we can reliably
+  // fill. The modern page (sys.scripts.modern.do) uses a Monaco editor that
+  // resists programmatic fill, so we use classic for the auto-fill to work.
+  const tab = await chrome.tabs.create({ url: `https://${host}/sys.scripts.do` })
   const tabId = tab.id
   if (tabId == null) return
   void copyText(script) // clipboard fallback in case the field can't be filled

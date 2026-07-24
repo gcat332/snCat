@@ -753,6 +753,7 @@ button.picker-row:hover {
   border-top-left-radius: 6px;
   border-top-right-radius: 6px;
   margin-top: 8px;
+  flex-wrap: wrap;
 }
 
 .editor-title {
@@ -760,11 +761,15 @@ button.picker-row:hover {
   font-weight: 500;
   color: #aeb8d4;
   letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .editor-tools {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .tool-btn {
@@ -774,9 +779,10 @@ button.picker-row:hover {
   color: #cdd6f4;
   font-family: inherit;
   font-size: 11px;
-  padding: 3px 8px;
+  padding: 4px 8px;
   border-radius: 5px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .tool-btn:hover {
