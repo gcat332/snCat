@@ -1,0 +1,31 @@
+HEAD: ab94407555b9983915a868f8e7976307e03b72aa
+date: Sat Jul 25 01:13:47 +07 2026
+
+
+> snjava@0.0.0 test
+> vitest run
+
+
+ RUN  v2.1.9 /Users/gcat332/Claude/Projects/snCat
+
+ ✓ src/core/api.test.ts (11 tests) 2ms
+ ✓ src/core/context.test.ts (14 tests) 3ms
+ ✓ src/core/llm.test.ts (6 tests) 2ms
+ ✓ src/core/xml.test.ts (8 tests) 4ms
+ ✓ src/core/graph.test.ts (3 tests) 2ms
+ ✓ src/core/resolvers.test.ts (8 tests) 3ms
+ ✓ src/sandbox/engine.test.ts (11 tests) 4ms
+ ✓ src/core/prod-guard.test.ts (15 tests) 3ms
+ ✓ src/core/lint.test.ts (13 tests) 5ms
+ ✓ src/core/spec.test.ts (5 tests) 2ms
+ ✓ src/core/render-html.test.ts (4 tests) 3ms
+ ✓ src/core/script-meta.test.ts (7 tests) 2ms
+ ✓ src/core/diff.test.ts (4 tests) 2ms
+ ✓ src/core/render-docx.test.ts (1 test) 21ms
+
+ Test Files  14 passed (14)
+      Tests  110 passed (110)
+   Start at  01:13:48
+   Duration  642ms (transform 340ms, setup 0ms, collect 575ms, tests 59ms, environment 1ms, prepare 751ms)
+
+TEST EXIT:0

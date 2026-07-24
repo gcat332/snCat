@@ -458,7 +458,7 @@ async function pasteXml() {
   const noun = fieldsList.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${scopeLabel()}"${
+      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${scopeLabel()}"${
         selUpdateSet.value.trim() ? ` and update set "${selUpdateSet.value.trim()}"` : ''
       }.`,
     ))
@@ -2104,6 +2104,35 @@ const genStatus = el('gen-status')
 const genList = el('gen-list')
 const genRequirement = el<HTMLTextAreaElement>('gen-requirement')
 
+/**
+ * Every column name that exists on a table, INCLUDING fields inherited from
+ * parent tables (e.g. incident inherits task's fields). The `name=<table>`
+ * dictionary query only returns fields declared directly on the table, so a
+ * custom field added on `task` would be missed and re-proposed. A real record
+ * row from the Table API exposes ALL columns, so we union the two.
+ */
+async function getAllFieldNames(host: string, table: string, sysId?: string | null): Promise<string[]> {
+  const names = new Set<string>()
+  const dict = await getDictionary(host, table)
+  if (dict.ok) {
+    for (const d of dict.data) {
+      const e = cellValue(d.element as unknown)
+      if (e) names.add(e)
+    }
+  }
+  let rec: Record<string, unknown> | undefined
+  if (sysId) {
+    const r = await getRecord(host, table, sysId)
+    if (r.ok) rec = r.data
+  }
+  if (!rec) {
+    const q = await queryRecords(host, table, { limit: 1, displayValue: false })
+    if (q.ok && q.data[0]) rec = q.data[0]
+  }
+  if (rec) for (const k of Object.keys(rec)) names.add(k)
+  return [...names]
+}
+
 function initGenerate() {
   genRun.addEventListener('click', async () => {
     const requirement = genRequirement.value.trim()
@@ -2111,17 +2140,11 @@ function initGenerate() {
       genStatus.textContent = 'Describe what you need first.'
       return
     }
-    // Always send the table's existing field names so the AI doesn't propose
-    // fields that already exist. Fetch the dictionary if not already loaded.
+    // Send every existing column (incl. inherited) so the AI never re-proposes one.
     let fields: string[] | undefined
     if (current?.table) {
-      if (schemaTable === current.table && schemaFields.length) {
-        fields = schemaFields.map((d) => cellValue(d.element as unknown))
-      } else {
-        genStatus.textContent = 'Reading the table schema…'
-        const dict = await getDictionary(current.host, current.table)
-        if (dict.ok) fields = dict.data.map((d) => cellValue(d.element as unknown))
-      }
+      genStatus.textContent = 'Reading the table schema…'
+      fields = await getAllFieldNames(current.host, current.table, current.sysId)
     }
     genKnownFields = new Set((fields ?? []).map((f) => f.toLowerCase()).filter(Boolean))
     const started = await startLlmJob('generate', {
@@ -2167,10 +2190,8 @@ async function applyGenerateJob(entry: LlmJobEntry | undefined) {
   // On a restored job the in-memory known-fields set is empty; refetch so the
   // "already exists" filter still works after the panel was reopened.
   if (!genKnownFields.size && current?.table) {
-    const dict = await getDictionary(current.host, current.table)
-    if (dict.ok) {
-      genKnownFields = new Set(dict.data.map((d) => cellValue(d.element as unknown).toLowerCase()).filter(Boolean))
-    }
+    const names = await getAllFieldNames(current.host, current.table, current.sysId)
+    genKnownFields = new Set(names.map((f) => f.toLowerCase()).filter(Boolean))
   }
   renderPlan(outcome.result.summary, outcome.result.artifacts)
 }

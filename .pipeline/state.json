@@ -1,0 +1,18 @@
+{
+  "phase": "review",
+  "baseline": {
+    "head": "ab94407",
+    "tests": { "files": 14, "passed": 110, "failed": 0, "skipped": 0, "exit": 0 },
+    "build": { "exit": 0, "notes": "sidepanel chunk >500kB warning (pre-existing)" },
+    "evidence": ".pipeline/evidence/baseline-test.txt"
+  },
+  "tasks": [
+    { "id": "T-101", "type": "review", "target": "src/core: api.ts, api-client.ts, sn-rest.ts, prod-guard.ts, types.ts", "status": "dispatched", "attempts": 1, "evidence": "", "notes": "security-critical: write gating, auth token, messaging" },
+    { "id": "T-102", "type": "review", "target": "src/core F1: graph.ts, resolvers.ts, spec-runner.ts, spec.ts, render-html.ts, render-docx.ts, format.ts", "status": "dispatched", "attempts": 1, "evidence": "", "notes": "" },
+    { "id": "T-103", "type": "review", "target": "F2: core/lint.ts, trace.ts, diff.ts, script-meta.ts, sandbox-host.ts, src/sandbox/*", "status": "dispatched", "attempts": 1, "evidence": "", "notes": "zero-write invariant" },
+    { "id": "T-104", "type": "review", "target": "platform: core/llm.ts, xml.ts, context.ts, background/, content/, manifest.config.ts", "status": "dispatched", "attempts": 1, "evidence": "", "notes": "" },
+    { "id": "T-105", "type": "review", "target": "src/sidepanel: main.ts, editor.ts, index.html, styles.css", "status": "dispatched", "attempts": 1, "evidence": "", "notes": "2556-line UI monolith" }
+  ],
+  "findings": [],
+  "gate_checklist": {}
+}

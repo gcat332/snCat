@@ -75,12 +75,13 @@ describe('dedupeRecords', () => {
 })
 
 describe('importableFields', () => {
-  it('drops system-managed fields', () => {
+  it('drops system-managed and auto-number fields', () => {
     const parsed = parseUnloadXml(XML, 'incident')!
     const imp = importableFields(parsed.fields)
     expect(imp.sys_id).toBeUndefined()
     expect(imp.sys_mod_count).toBeUndefined()
-    expect(imp.number).toBe('INC0001')
+    // number is dropped so the copy gets a fresh one (no duplicate INC number).
+    expect(imp.number).toBeUndefined()
     expect(imp.caller_id).toBe('def456')
   })
 })

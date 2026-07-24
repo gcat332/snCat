@@ -91,11 +91,19 @@ export function dedupeRecords(records: ParsedRecord[]): ParsedRecord[] {
   return out
 }
 
-/** Drop system-managed fields so an import creates a fresh record safely. */
+/**
+ * Fields dropped when importing a COPY (beyond the system fields): the record's
+ * auto-number. Copying `number` verbatim makes every copy share the source's
+ * number (e.g. INC0010571), which reads as a duplicate in any list — so drop it
+ * and let ServiceNow assign a fresh one on insert.
+ */
+export const COPY_DROP_FIELDS = new Set([...SYSTEM_FIELDS, 'number'])
+
+/** Drop system-managed + auto-number fields so an import creates a fresh record. */
 export function importableFields(fields: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(fields)) {
-    if (!SYSTEM_FIELDS.has(k)) out[k] = v
+    if (!COPY_DROP_FIELDS.has(k)) out[k] = v
   }
   return out
 }
