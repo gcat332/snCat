@@ -257,31 +257,36 @@ function logicSection(
   }
 
   const policies = byType(artifacts, 'ui_policy')
-  if (policies.length) {
-    blocks.push({
-      kind: 'table',
-      columns: ['UI Policy', 'Conditions', 'On load', 'Reverse', 'Active'],
-      rows: policies.map((p) => [
-        p.label || p.fields['short_description'] || '',
-        p.fields['conditions'] ?? '',
-        p.fields['on_load'] ?? '',
-        p.fields['reverse_if_false'] ?? '',
-        p.fields['active'] ?? '',
-      ]),
-    })
-  }
-
   const actions = byType(artifacts, 'ui_policy_action')
-  if (actions.length) {
+  for (const p of policies) {
+    const meta = [
+      p.fields['on_load'] === 'true' ? 'on load' : '',
+      p.fields['reverse_if_false'] === 'true' ? 'reverses' : '',
+      p.fields['active'] === 'false' ? 'inactive' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    blocks.push({ kind: 'paragraph', text: `UI Policy: ${p.label || p.fields['short_description'] || ''}${meta ? ` — ${meta}` : ''}` })
+    if (p.fields['conditions']) blocks.push({ kind: 'code', caption: 'When (condition)', code: p.fields['conditions'], lang: 'text' })
+    const mine = actions.filter((x) => x.fields['ui_policy'] === p.sysId)
+    if (mine.length) {
+      blocks.push({
+        kind: 'table',
+        columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
+        rows: mine.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
+      })
+    } else {
+      blocks.push({ kind: 'paragraph', text: '(no field actions)' })
+    }
+  }
+  // Any actions whose parent policy wasn't discovered.
+  const orphan = actions.filter((x) => !policies.some((p) => p.sysId === x.fields['ui_policy']))
+  if (orphan.length) {
+    blocks.push({ kind: 'paragraph', text: 'Other UI policy actions:' })
     blocks.push({
       kind: 'table',
       columns: ['Field', 'Mandatory', 'Visible', 'Read-only'],
-      rows: actions.map((x) => [
-        x.fields['field'] ?? '',
-        x.fields['mandatory'] ?? '',
-        x.fields['visible'] ?? '',
-        x.fields['disabled'] ?? '',
-      ]),
+      rows: orphan.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
     })
   }
 

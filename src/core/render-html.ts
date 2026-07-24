@@ -73,19 +73,22 @@ body{font-family:'Prompt',system-ui,sans-serif;font-weight:300;color:var(--ink);
 .meta div{opacity:.92}
 .meta b{font-weight:500}
 main{padding:36px 56px 64px;max-width:900px}
-section{margin-bottom:34px}
-h2{color:var(--blue-dark);font-weight:500;font-size:19px;border-bottom:2px solid var(--cyan);padding-bottom:6px;margin:0 0 14px}
+section{margin-bottom:48px;padding-bottom:8px}
+h2{color:#fff;background:var(--gradient);font-weight:600;font-size:18px;padding:10px 14px;border-radius:8px;margin:0 0 18px}
 p{margin:0 0 12px}
 ul{margin:0 0 12px;padding-left:20px}
 li{margin:3px 0}
-table{border-collapse:collapse;width:100%;margin:0 0 14px;font-size:13px}
+table{border-collapse:collapse;width:100%;margin:0 0 18px;font-size:13px}
 table.data th,table.kv th{background:var(--blue-dark);color:#fff;font-weight:500;text-align:left;padding:7px 10px}
 table.kv th{width:200px;background:var(--surface-alt);color:var(--blue-dark)}
 table td{padding:7px 10px;border:1px solid var(--border);vertical-align:top}
 table.data tbody tr:nth-child(even){background:rgba(0,49,180,0.04)}
-.code-caption{font-weight:500;color:var(--violet);margin:10px 0 4px;font-size:12.5px}
+/* Each script renders as a labeled unit: header bar attached to the code block. */
+.code-caption{font-weight:600;color:#dfe6f5;background:#21252b;margin:28px 0 0;padding:9px 14px;font-size:12.5px;
+  border-top-left-radius:6px;border-top-right-radius:6px;border-left:3px solid var(--purple)}
+.code-caption + pre.code{margin-top:0;border-top-left-radius:0;border-top-right-radius:0;border-left-color:var(--purple)}
 pre.code{background:#282c34;color:#abb2bf;border:1px solid #1c1f26;border-left:3px solid var(--cyan);
-  border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;
+  border-radius:6px;margin:14px 0 18px;padding:12px 14px;overflow-x:auto;font-family:'SFMono-Regular',ui-monospace,Menlo,monospace;
   font-size:12px;line-height:1.55;white-space:pre;tab-size:2}
 pre.code code{font-family:inherit}
 /* one-dark syntax highlighting (self-contained) */
