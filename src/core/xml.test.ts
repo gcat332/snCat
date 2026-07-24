@@ -53,6 +53,52 @@ describe('parseUnloadXmlAll', () => {
   })
 })
 
+describe('CDATA-bearing fields (script/HTML)', () => {
+  // A ServiceNow Business Rule unload: the `script` field is wrapped in CDATA so
+  // its content isn't escaped. The CDATA contains substrings that LOOK like
+  // closing tags (`</record>`, `</script>`) which must NOT terminate the field.
+  const SCRIPT = ` gs.info("</record> not really the end"); var x = "</script>"; `
+  const BR = `<?xml version="1.0" encoding="UTF-8"?>
+<sys_script action="INSERT_OR_UPDATE">
+  <active>true</active>
+  <name>before_script</name>
+  <script><![CDATA[${SCRIPT}]]></script>
+  <collection>incident</collection>
+</sys_script>`
+
+  it('captures the full CDATA content intact (no truncation)', () => {
+    const parsed = parseUnloadXml(BR, 'sys_script')
+    expect(parsed).not.toBeNull()
+    expect(parsed!.fields.script).toBe(SCRIPT)
+    // Explicitly prove the tag-looking substrings survived.
+    expect(parsed!.fields.script).toContain('</record>')
+    expect(parsed!.fields.script).toContain('</script>')
+  })
+
+  it('keeps subsequent fields in sync after a CDATA field (no desync)', () => {
+    const parsed = parseUnloadXml(BR, 'sys_script')!
+    expect(parsed.fields.name).toBe('before_script')
+    // The field AFTER the CDATA must still be parsed correctly.
+    expect(parsed.fields.collection).toBe('incident')
+  })
+
+  it('parseUnloadXmlAll: a CDATA script in record 1 does not break record 2', () => {
+    const LIST = `<?xml version="1.0" encoding="UTF-8"?>
+<unload unload_date="2026-07-25">
+<sys_script action="INSERT_OR_UPDATE"><name>rec_one</name><script><![CDATA[${SCRIPT}]]></script><collection>incident</collection></sys_script>
+<sys_script action="INSERT_OR_UPDATE"><name>rec_two</name><script><![CDATA[ var y = "</script>"; ]]></script><collection>problem</collection></sys_script>
+</unload>`
+    const all = parseUnloadXmlAll(LIST, 'sys_script')
+    expect(all).toHaveLength(2)
+    expect(all[0].fields.name).toBe('rec_one')
+    expect(all[0].fields.script).toBe(SCRIPT)
+    expect(all[0].fields.collection).toBe('incident')
+    expect(all[1].fields.name).toBe('rec_two')
+    expect(all[1].fields.script).toBe(' var y = "</script>"; ')
+    expect(all[1].fields.collection).toBe('problem')
+  })
+})
+
 describe('dedupeRecords', () => {
   it('collapses records sharing a sys_id (deep unload duplicates)', () => {
     const recs = [

@@ -35,6 +35,46 @@ function unescapeXml(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
+/**
+ * Extract a record block's fields into a map. Handles `<tag><![CDATA[...]]></tag>`
+ * fields explicitly: ServiceNow wraps script/HTML-bearing fields in CDATA so
+ * their content isn't escaped, and that content can contain `</...>`-looking
+ * substrings (e.g. a script string `"</script>"`). A plain non-greedy regex
+ * would stop at that FIRST spurious closing tag, truncating the field and
+ * desynchronizing every field after it. So for a CDATA field the body is taken
+ * verbatim up to the FIRST `]]>` terminator (no XML-entity unescaping — CDATA
+ * content is literal) and the scan resumes past the field's real `</tag>`,
+ * making a `</tag>`-looking substring inside CDATA unable to end the field
+ * early. Non-CDATA bodies keep the original entity-unescape path.
+ */
+function extractFields(inner: string): Record<string, string> {
+  const fields: Record<string, string> = {}
+  const openRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>/g
+  const CDATA_OPEN = '<![CDATA['
+  const CDATA_CLOSE = ']]>'
+  let m: RegExpExecArray | null
+  while ((m = openRe.exec(inner))) {
+    const tag = m[1]
+    const contentStart = m.index + m[0].length
+    const closeTag = `</${tag}>`
+    if (inner.startsWith(CDATA_OPEN, contentStart)) {
+      const bodyStart = contentStart + CDATA_OPEN.length
+      const bodyEnd = inner.indexOf(CDATA_CLOSE, bodyStart)
+      if (bodyEnd === -1) continue // malformed CDATA; skip this open tag
+      fields[tag] = inner.slice(bodyStart, bodyEnd)
+      const closeIdx = inner.indexOf(closeTag, bodyEnd + CDATA_CLOSE.length)
+      openRe.lastIndex =
+        closeIdx === -1 ? bodyEnd + CDATA_CLOSE.length : closeIdx + closeTag.length
+    } else {
+      const closeIdx = inner.indexOf(closeTag, contentStart)
+      if (closeIdx === -1) continue // no matching close; skip this open tag
+      fields[tag] = unescapeXml(inner.slice(contentStart, closeIdx))
+      openRe.lastIndex = closeIdx + closeTag.length
+    }
+  }
+  return fields
+}
+
 /** Extract the record's fields from its unload XML for the given table. */
 export function parseUnloadXml(xml: string, table: string): ParsedRecord | null {
   const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -42,13 +82,7 @@ export function parseUnloadXml(xml: string, table: string): ParsedRecord | null 
   const inner = block ? block[1] : null
   if (!inner) return null
 
-  const fields: Record<string, string> = {}
-  const fieldRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g
-  let m: RegExpExecArray | null
-  while ((m = fieldRe.exec(inner))) {
-    fields[m[1]] = unescapeXml(m[2])
-  }
-  return { table, fields }
+  return { table, fields: extractFields(inner) }
 }
 
 /**
@@ -62,11 +96,7 @@ export function parseUnloadXmlAll(xml: string, table: string): ParsedRecord[] {
   const out: ParsedRecord[] = []
   let block: RegExpExecArray | null
   while ((block = blockRe.exec(xml))) {
-    const inner = block[1]
-    const fields: Record<string, string> = {}
-    const fieldRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g
-    let m: RegExpExecArray | null
-    while ((m = fieldRe.exec(inner))) fields[m[1]] = unescapeXml(m[2])
+    const fields = extractFields(block[1])
     if (Object.keys(fields).length) out.push({ table, fields })
   }
   return out
