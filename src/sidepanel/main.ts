@@ -6,7 +6,7 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildListXmlUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
@@ -387,42 +387,53 @@ async function fetchRecordXml(): Promise<string | null> {
   return res.data
 }
 
+const LIST_SAVE_LIMIT = 500
+
 async function saveXml() {
   if (!current?.table) return
   xmlSave.disabled = true
   const list = isListView()
-  xmlOut.replaceChildren(elText('div', 'empty', list ? 'Exporting list XML…' : 'Exporting record XML…'))
+  xmlOut.replaceChildren(elText('div', 'empty', list ? 'Reading the list…' : 'Reading the record…'))
 
-  let xml: string | null
+  // Fetch the EXACT records via the Table API (raw values). We deliberately do
+  // NOT use the classic `&XML` unload: that is a *deep* unload and drags in
+  // related same-table records, which produced phantom duplicates on import.
+  let records: Record<string, string>[] = []
   let query = ''
   if (list) {
     query = (await getListQueryFromPage(current.table)) ?? currentListQuery()
-    const res = await getText(current.host, buildListXmlUrl(current.host, current.table, query))
-    xml = res.ok ? res.data : (xmlOut.replaceChildren(elText('div', 'error', res.error)), null)
-  } else {
-    xml = await fetchRecordXml()
+    const res = await queryRecords(current.host, current.table, {
+      query,
+      limit: LIST_SAVE_LIMIT,
+      displayValue: false,
+    })
+    if (!res.ok) {
+      xmlSave.disabled = false
+      xmlOut.replaceChildren(elText('div', 'error', res.error))
+      return
+    }
+    records = res.data.map(rawStringFields)
+  } else if (current.sysId) {
+    const res = await getRecord(current.host, current.table, current.sysId)
+    if (!res.ok) {
+      xmlSave.disabled = false
+      xmlOut.replaceChildren(elText('div', 'error', res.error))
+      return
+    }
+    records = [rawStringFields(res.data)]
   }
   xmlSave.disabled = false
-  if (!xml) return
 
-  let records = dedupeRecords(parseUnloadXmlAll(xml, current.table))
-  // A form save is ONE record — a `&XML` unload is deep and also pulls related
-  // same-table rows, so keep only the record the user is actually on.
-  const rootSysId = current.sysId
-  if (!list && rootSysId) {
-    const root = records.find((r) => r.fields['sys_id'] === rootSysId)
-    records = root ? [root] : records.slice(0, 1)
-  }
   if (records.length === 0) {
-    xmlOut.replaceChildren(elText('div', 'error', 'The export contained no records.'))
+    xmlOut.replaceChildren(elText('div', 'error', 'No records to save.'))
     return
   }
   const clip: XmlClip = {
     host: current.host,
     table: current.table,
     sysId: current.sysId ?? undefined,
-    xml,
-    records: records.map((r) => r.fields),
+    xml: '',
+    records,
     count: records.length,
     savedAt: new Date().toISOString(),
   }
@@ -433,14 +444,21 @@ async function saveXml() {
     elText(
       'div',
       'ok-banner',
-      `✓ Saved ${records.length} ${clip.table} ${noun} (${(xml.length / 1024).toFixed(1)} KB). Use “Paste XML” on any list or form to import.`,
+      `✓ Saved ${records.length} ${clip.table} ${noun}. Use “Paste XML” on any list or form to import.`,
     ),
   )
   if (list) {
     xmlOut.append(
-      elText('div', 'info-sub', query ? `Filter applied: ${query}` : 'No filter — exported the whole table.'),
+      elText('div', 'info-sub', query ? `Filter applied: ${query}` : 'No filter — saved the whole table (max ' + LIST_SAVE_LIMIT + ').'),
     )
   }
+}
+
+/** Flatten a Table API row (raw or {value,display_value} cells) to a string map. */
+function rawStringFields(rec: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rec)) out[k] = cellValue(v)
+  return out
 }
 
 async function pasteXml() {

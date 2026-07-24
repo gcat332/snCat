@@ -1,0 +1,73 @@
+{
+  "task": "T-101",
+  "findings": [
+    {
+      "severity": "high",
+      "type": "security",
+      "location": "src/core/prod-guard.ts:31 (instanceLabel), used at sn-rest.ts:88,137",
+      "description": "Prod guard classifies using ONLY the first DNS label (host.split('.')[0]). For vanity/custom domains the first label is not the instance name. Bypass: production served at 'dev.acmecorp.com' is classified sub-prod -> writes allowed against PRODUCTION. Conversely a real sub-prod at 'snow.acmedev.com' is blocked. The first-label assumption only holds for *.service-now.com.",
+      "suggested_fix": "Restrict first-label heuristic to *.service-now.com hosts; default-DENY vanity hosts (require explicit per-host allow) or classify against the full host with prod-marker winning."
+    },
+    {
+      "severity": "high",
+      "type": "bug",
+      "location": "src/core/sn-rest.ts:113-122 (apiWrite)",
+      "description": "apiWrite has no login-redirect detection (apiGet has it at 52-54). Expired session: write answered 302 -> 200 HTML login page; res.ok true, res.json() throws on HTML, catch returns { ok: true, data: undefined }. A write that never happened is reported as SUCCESS, corrupting create/read-back/delete flows.",
+      "suggested_fix": "Mirror apiGet: check res.redirected && /login|sso/i.test(res.url) -> 401; verify JSON content-type or handle 204 explicitly instead of swallowing parse failure as success."
+    },
+    {
+      "severity": "medium",
+      "type": "security",
+      "location": "src/core/sn-rest.ts:38-40,66-68,201-202 + api.ts:66",
+      "description": "X-UserToken (g_ck CSRF) attached unconditionally to any URL, including the caller-supplied 'text' op URL. Off-instance URL would leak the CSRF token in the request header. Latent (current callers pass builder URLs) but 'text' also bypasses the prod guard and can reach state-changing GET processors.",
+      "suggested_fix": "Validate target URL origin === https://<req.host> before attaching X-UserToken / fetching, in apiGetText and the text-op dispatch."
+    },
+    {
+      "severity": "medium",
+      "type": "reliability",
+      "location": "src/core/sn-rest.ts:44,71,103-108,155-160",
+      "description": "No fetch timeout/AbortController anywhere. A stalled connection hangs executeApiRequest forever; the runtime message reply never arrives; side-panel operation hangs with no failure path. Worst for apiBgRun (sys.scripts.do).",
+      "suggested_fix": "AbortController with sensible timeout (longer for bgrun); map abort to { ok:false, status:0, error:'Timed out' }."
+    },
+    {
+      "severity": "medium",
+      "type": "bug",
+      "location": "src/core/sn-rest.ts:66-78 (apiGetText)",
+      "description": "apiGetText lacks login-redirect detection. Expired session returns login HTML as ok data; downstream XML parsing processes a login page as record XML -> confusing errors / silently empty imports instead of 'session expired'.",
+      "suggested_fix": "Same res.redirected && /login|sso/ check as apiGet; optionally verify body starts with '<?xml'."
+    },
+    {
+      "severity": "low",
+      "type": "security",
+      "location": "src/core/api.ts:144-152 (buildDictionaryUrl)",
+      "description": "Table name interpolated into encoded query; a name containing '^' injects query operators into the sys_dictionary read. Read-only, table normally from page context — limited impact.",
+      "suggested_fix": "Validate table against /^[a-z0-9_]+$/i in buildDictionaryUrl and buildChoicesQuery."
+    },
+    {
+      "severity": "low",
+      "type": "maintainability",
+      "location": "src/core/sn-rest.ts, src/core/api-client.ts",
+      "description": "The two most security-critical modules have no tests. Guard gate in apiWrite/apiBgRun, write-op dispatch, 401/redirect handling, re-injection retry are uncovered; a regression moving the guard after fetch would not be caught.",
+      "suggested_fix": "Unit tests with mocked fetch: writes 403 on prod and never call fetch; 401 when token null; login-redirect path; 204 handling."
+    },
+    {
+      "severity": "low",
+      "type": "security",
+      "location": "src/core/prod-guard.ts:16 (DEFAULT_PROD_GUARD_CONFIG)",
+      "description": "Broad substrings 'demo'/'training' match anywhere in the label, permitting destructive writes on production-grade instances whose names contain them. Deliberate config choice (MFEC uses 'demo') but widens allow surface.",
+      "suggested_fix": "Tighten/anchor riskiest patterns; document fleet scoping; consider explicit allowlist."
+    }
+  ],
+  "purpose_notes": [
+    { "symbol": "classifyInstance / FORCED_PROD / instanceLabel", "file": "src/core/prod-guard.ts", "purpose": "Default-DENY classifier (handoff decision 5). Prod marker checked FIRST so it wins over sub-prod matches; unmatched stays 'unknown' -> blocked. Ordering is the safety property; must not be reordered. Lookbehinds exempt sub/pre/non-prod from forced block." },
+    { "symbol": "apiWrite", "file": "src/core/sn-rest.ts", "purpose": "Single choke point for create/update/delete. classifyInstance BEFORE any fetch (403 if not allowed), then requires X-UserToken (401), then same-origin fetch. All three write ops route through here." },
+    { "symbol": "apiBgRun", "file": "src/core/sn-rest.ts", "purpose": "Second guarded write path: server-side Rhino via sys.scripts.do. Guarded + token-required like apiWrite. Update set injected via JSON.stringify to prevent script-context breakout. sysparm_ck carries g_ck for classic-form CSRF." },
+    { "symbol": "executeApiRequest", "file": "src/core/sn-rest.ts", "purpose": "Exhaustive op dispatcher; authorization boundary — reads open, writes guarded. 'text' is the one authenticated GET with caller-supplied URL." },
+    { "symbol": "safeErrorDetail", "file": "src/core/sn-rest.ts", "purpose": "Best-effort extraction of ServiceNow error.message/detail from failed JSON bodies without throwing on non-JSON." },
+    { "symbol": "ensureContentScripts / call", "file": "src/core/api-client.ts", "purpose": "Routes API requests to active tab's top-frame content script (page-origin fetch carries SameSite cookie). Self-heals 'Receiving end does not exist' after extension reload by re-injecting declared content scripts, 150ms wait, one retry; other errors rethrown." }
+  ],
+  "unclear_code": [
+    { "location": "src/core/sn-rest.ts:22-27 (RestDeps guardConfig/token provenance)", "why_unclear": "Injected by content/index.ts:91 (out of scope for T-101). If guardConfig were page-influenced, a broad pattern would neutralize the guard. Needs cross-check with T-104." },
+    { "location": "src/core/prod-guard.ts:39 (pre/non-prod lookbehinds)", "why_unclear": "preprod/nonprod exempted from forced BLOCK but not in default sub-prod patterns -> still blocked as 'unknown'. No observable effect under default config; intent undocumented." }
+  ]
+}
