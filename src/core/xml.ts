@@ -17,6 +17,11 @@ export const SYSTEM_FIELDS = new Set([
   'sys_updated_by',
   'sys_mod_count',
   'sys_tags',
+  // Copying these across records/instances breaks inserts (class mismatch,
+  // domain that doesn't exist here). Let the platform set them.
+  'sys_class_name',
+  'sys_domain',
+  'sys_domain_path',
 ])
 
 function unescapeXml(s: string): string {

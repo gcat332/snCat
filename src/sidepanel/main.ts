@@ -476,7 +476,11 @@ async function pasteXml() {
         `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${scopeLabel()})`,
       ),
     )
-    if (errm) xmlOut.append(elText('div', 'info-sub', errm[1].slice(0, 400)))
+    if (errm) {
+      const e = elText('div', 'error', errm[1].slice(0, 600))
+      e.style.marginTop = '6px'
+      xmlOut.append(e)
+    }
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
   }
@@ -508,7 +512,11 @@ function buildMultiInsertScript(table: string, records: Record<string, string>[]
     `    var row = rows[i];`,
     `    for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
     `    var id = gr.insert();`,
-    `    if (id) { ok++; } else { errs.push('row ' + i + ': insert returned null'); }`,
+    `    if (id) { ok++; } else {`,
+    `      var why = '';`,
+    `      try { why = gr.getLastErrorMessage(); } catch (e2) {}`,
+    `      errs.push('row ' + i + ': ' + (why || 'insert rejected (ACL / mandatory / data policy / before-insert BR abort)'));`,
+    `    }`,
     `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
     `gs.info('snJava: imported ' + ok + '/' + rows.length);`,
