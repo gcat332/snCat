@@ -220,14 +220,30 @@ const ruleUnconditionedQuery: Rule = (input, code) => {
   if (input.kind === 'client_script') return [] // handled by the client rule
   const findings: LintFinding[] = []
   const declRe = /\b(?:var|let|const)?\s*([A-Za-z_$][\w$]*)\s*=\s*new\s+GlideRecord\s*\(/g
+  // Collect every declaration first so each one's query window can be bounded
+  // by the next (re)declaration of the SAME variable name. Without this, a
+  // reused name lets one declaration's filter/queries bleed into another's.
+  const decls: { index: number; varName: string }[] = []
   let d: RegExpExecArray | null
   while ((d = declRe.exec(code))) {
-    const varName = d[1]
+    decls.push({ index: d.index, varName: d[1] })
+  }
+  for (let di = 0; di < decls.length; di++) {
+    const { index: declIndex, varName } = decls[di]
+    // Window end: the nearest later declaration of the same var name, else EOF.
+    let windowEnd = code.length
+    for (let dj = di + 1; dj < decls.length; dj++) {
+      if (decls[dj].varName === varName && decls[dj].index > declIndex) {
+        windowEnd = decls[dj].index
+        break
+      }
+    }
     const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const queryRe = new RegExp(`\\b${esc}\\.query\\s*\\(`, 'g')
     let q: RegExpExecArray | null
     while ((q = queryRe.exec(code))) {
-      const between = code.slice(d.index, q.index)
+      if (q.index < declIndex || q.index >= windowEnd) continue
+      const between = code.slice(declIndex, q.index)
       const hasFilter = new RegExp(
         `\\b${esc}\\.(addQuery|addEncodedQuery|addActiveQuery|addNullQuery|addNotNullQuery|get|addJoinQuery)\\s*\\(`,
       ).test(between)
