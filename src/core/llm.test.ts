@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
+  agentHubErrorMessage,
   buildPlanPrompt,
   buildReviewPrompt,
   buildSpecNarrativePrompt,
@@ -201,5 +202,18 @@ describe('buildSpecNarrativePrompt', () => {
     expect(p.user).not.toContain('hunter2')
     expect(p.user).toContain('REDACTED')
     expect(p.system.toLowerCase()).toContain('prose')
+  })
+})
+
+describe('agentHubErrorMessage', () => {
+  it('gives an actionable message when the body is an HTML block page', () => {
+    const m = agentHubErrorMessage(403, '<html style="height:100%"><head><META NAME="ROBOTS" CONTENT="NOINDEX"></head></html>')
+    expect(m.toLowerCase()).toContain('html page')
+    expect(m.toLowerCase()).toContain('token')
+    expect(m).toContain('Test connection')
+    expect(m).not.toContain('<html')
+  })
+  it('passes through a plain/JSON error body (truncated)', () => {
+    expect(agentHubErrorMessage(500, '{"error":"boom"}')).toBe('AgentHub HTTP 500: {"error":"boom"}')
   })
 })

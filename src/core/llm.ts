@@ -445,6 +445,22 @@ export async function runSpecNarrative(
  * MFEC AgentHub (browser-ingest): single `prompt`, Bearer auth, returns
  * `{ response }`. System + user are concatenated into one prompt.
  */
+/**
+ * Turn an AgentHub non-2xx response into an actionable message. A gateway/WAF/
+ * SSO block returns an HTML page (not JSON); dumping raw HTML is useless, so
+ * detect it and point the user at the real fix (token/endpoint/proxy).
+ */
+export function agentHubErrorMessage(status: number, body: string): string {
+  if (/<\s*(?:!doctype|html|head|meta|title)\b/i.test(body.slice(0, 300))) {
+    return (
+      `AgentHub returned an HTML page (HTTP ${status}) instead of JSON — usually the token is ` +
+      `invalid/expired, the endpoint URL is wrong, or a proxy/SSO gateway blocked the request. ` +
+      `Check the endpoint + token in Settings, then use "Test connection".`
+    )
+  }
+  return `AgentHub HTTP ${status}: ${body.slice(0, 200)}`
+}
+
 async function callAgentHub(cfg: LlmConfig, system: string, user: string): Promise<string> {
   const res = await fetch(cfg.endpoint, {
     method: 'POST',
@@ -459,7 +475,7 @@ async function callAgentHub(cfg: LlmConfig, system: string, user: string): Promi
       timeoutMs: 120000,
     }),
   })
-  if (!res.ok) throw new Error(`AgentHub HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  if (!res.ok) throw new Error(agentHubErrorMessage(res.status, await res.text()))
   const body = (await res.json()) as { response?: string; status?: string }
   return body.response ?? ''
 }

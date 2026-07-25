@@ -5,6 +5,8 @@ import {
   buildStatsCountUrl,
   buildDictionaryUrl,
   buildChoicesQuery,
+  buildRecordFormUrl,
+  buildListFormUrl,
   cellValue,
   cellDisplay,
   pickLabel,
@@ -125,5 +127,18 @@ describe('pickLabel', () => {
   it('falls back to sys_id when no label field present', () => {
     const rec = { sys_id: { value: 'abc', display_value: 'abc' } }
     expect(pickLabel(rec)).toBe('abc')
+  })
+})
+
+describe('form URLs (open in instance)', () => {
+  it('buildRecordFormUrl → <table>.do?sys_id=<id>', () => {
+    expect(buildRecordFormUrl('dev.service-now.com', 'incident', 'abc123')).toBe(
+      'https://dev.service-now.com/incident.do?sys_id=abc123',
+    )
+  })
+  it('buildListFormUrl → <table>_list.do?sysparm_query=...', () => {
+    const u = buildListFormUrl('dev.service-now.com', 'incident', 'sys_idINa,b,c')
+    expect(u.startsWith('https://dev.service-now.com/incident_list.do?')).toBe(true)
+    expect(u).toContain('sysparm_query=sys_idINa%2Cb%2Cc')
   })
 })

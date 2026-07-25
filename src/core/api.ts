@@ -132,6 +132,20 @@ export function buildListXmlUrl(host: string, table: string, query = '', limit?:
   return `${origin(host)}/${encodeURIComponent(table)}_list.do?${params.toString()}`
 }
 
+/** Build the classic record FORM URL (the record page a user sees), e.g.
+ *  incident.do?sys_id=<id>. Used to open a record in the instance UI. */
+export function buildRecordFormUrl(host: string, table: string, sysId: string): string {
+  return `${origin(host)}/${encodeURIComponent(table)}.do?sys_id=${encodeURIComponent(sysId)}`
+}
+
+/** Build the classic list FORM URL (a list view), e.g.
+ *  incident_list.do?sysparm_query=sys_idINa,b,c. Used to open a filtered list. */
+export function buildListFormUrl(host: string, table: string, query: string): string {
+  const params = new URLSearchParams()
+  params.set('sysparm_query', query)
+  return `${origin(host)}/${encodeURIComponent(table)}_list.do?${params.toString()}`
+}
+
 /** Build an Aggregate (stats) API URL that returns a row count for a query. */
 export function buildStatsCountUrl(host: string, table: string, query?: string): string {
   const params = new URLSearchParams()
