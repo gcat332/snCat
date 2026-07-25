@@ -1008,15 +1008,37 @@ async function copyText(text: string, feedbackEl?: HTMLElement) {
   }
 }
 
+/**
+ * Build the shared modal overlay + box. `wide` selects the "modal-box wide"
+ * variant; `onOutsideClick`, when provided, dismisses on a backdrop click with
+ * the caller's exact semantics (promptDialog omits it, so it stays put on an
+ * outside click, unlike confirmDialog). The caller appends content to `box`,
+ * appends `overlay` to the body, and manages any focus.
+ */
+function makeModal(opts: { wide?: boolean; onOutsideClick?: (overlay: HTMLElement) => void } = {}): {
+  overlay: HTMLElement
+  box: HTMLElement
+} {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const box = document.createElement('div')
+  box.className = opts.wide ? 'modal-box wide' : 'modal-box'
+  overlay.append(box)
+  if (opts.onOutsideClick) {
+    const cb = opts.onOutsideClick
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cb(overlay)
+    })
+  }
+  return { overlay, box }
+}
+
 /** Show a before/after line diff in a modal. */
 function showDiff(before: string, after: string) {
   const lines = lineDiff(before, after)
   const { added, removed } = diffStats(lines)
 
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-  const box = document.createElement('div')
-  box.className = 'modal-box wide'
+  const { overlay, box } = makeModal({ wide: true, onOutsideClick: (o) => o.remove() })
 
   const head = document.createElement('div')
   head.className = 'diff-head'
@@ -1048,20 +1070,13 @@ function showDiff(before: string, after: string) {
   row.append(close)
 
   box.append(head, body, row)
-  overlay.append(box)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove()
-  })
   document.body.append(overlay)
 }
 
 /** In-panel text prompt — window.prompt() is suppressed in side panels. */
 function promptDialog(message: string, placeholder = ''): Promise<string | null> {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div')
-    overlay.className = 'modal-overlay'
-    const box = document.createElement('div')
-    box.className = 'modal-box'
+    const { overlay, box } = makeModal()
     box.append(elText('div', 'modal-msg', message))
     const input = document.createElement('input')
     input.className = 'modal-input'
@@ -1087,7 +1102,6 @@ function promptDialog(message: string, placeholder = ''): Promise<string | null>
     })
     row.append(cancel, ok)
     box.append(row)
-    overlay.append(box)
     document.body.append(overlay)
     input.focus()
   })
@@ -1096,10 +1110,7 @@ function promptDialog(message: string, placeholder = ''): Promise<string | null>
 /** In-panel confirm dialog — window.confirm() is suppressed in side panels. */
 function confirmDialog(message: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const overlay = document.createElement('div')
-    overlay.className = 'modal-overlay'
-    const box = document.createElement('div')
-    box.className = 'modal-box'
+    const { overlay, box } = makeModal({ onOutsideClick: () => done(false) })
     box.append(elText('div', 'modal-msg', message))
     const row = document.createElement('div')
     row.className = 'btn-row'
@@ -1115,12 +1126,8 @@ function confirmDialog(message: string): Promise<boolean> {
     }
     cancel.addEventListener('click', () => done(false))
     ok.addEventListener('click', () => done(true))
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) done(false)
-    })
     row.append(cancel, ok)
     box.append(row)
-    overlay.append(box)
     document.body.append(overlay)
     ok.focus()
   })
@@ -2515,10 +2522,7 @@ async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) 
 
 /** Detail modal for one planned artifact, with a create / open action. */
 function showArtifact(a: PlanArtifact) {
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-  const box = document.createElement('div')
-  box.className = 'modal-box wide'
+  const { overlay, box } = makeModal({ wide: true, onOutsideClick: (o) => o.remove() })
   box.append(elText('div', 'diff-head', ''))
   ;(box.firstChild as HTMLElement).append(
     elText('span', 'title', `${a.kind}: ${a.title}`),
@@ -2571,10 +2575,6 @@ function showArtifact(a: PlanArtifact) {
   row.append(close, act)
 
   box.append(body, row)
-  overlay.append(box)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove()
-  })
   document.body.append(overlay)
 }
 
