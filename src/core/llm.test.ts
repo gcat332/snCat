@@ -217,3 +217,18 @@ describe('agentHubErrorMessage', () => {
     expect(agentHubErrorMessage(500, '{"error":"boom"}')).toBe('AgentHub HTTP 500: {"error":"boom"}')
   })
 })
+
+describe('buildSpecNarrativePrompt — payload trimming (WAF/size safety)', () => {
+  it('truncates a long script and caps the total so the body stays small', () => {
+    const bigScript = 'gs.info("x");\n'.repeat(500) // ~7000 chars each
+    const p = buildSpecNarrativePrompt({
+      table: 'incident',
+      rootLabel: 'Incident',
+      artifacts: Array.from({ length: 30 }, (_, i) => ({ name: `BR${i}`, type: 'Business Rule', script: bigScript })),
+    })
+    expect(p.user).toContain('truncated') // kept scripts are capped at 600 chars
+    expect(p.user).toContain('omitted — narrative size limit') // total budget kicks in across 30 big scripts
+    for (let i = 0; i < 30; i++) expect(p.user).toContain(`BR${i}`) // every artifact name still listed
+    expect(p.user.length).toBeLessThan(20000) // bounded, not ~210KB of raw scripts
+  })
+})

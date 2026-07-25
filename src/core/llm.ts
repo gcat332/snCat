@@ -405,14 +405,27 @@ export interface NarrativeInput {
 }
 
 /** Prompt for a concise, plain-prose Design Spec overview. Scripts are redacted. */
+/** Per-script excerpt cap (chars). The narrative is a high-level overview — it
+ *  doesn't need full script bodies, and a large multi-script payload can trip a
+ *  gateway/WAF size limit (observed: AgentHub 403 HTML block on big narratives). */
+const NARRATIVE_SCRIPT_CHARS = 600
+/** Total budget for all script excerpts combined; beyond it, scripts are omitted
+ *  (names/types are always kept). */
+const NARRATIVE_TOTAL_SCRIPT_CHARS = 12000
+
 export function buildSpecNarrativePrompt(input: NarrativeInput): { system: string; user: string } {
   const system =
     'You are a ServiceNow solution architect writing the overview of a Design Spec. ' +
     'Reply with 2-3 short paragraphs of plain prose only — no markdown, no headings, no code, no JSON. ' +
     'Summarize what this table/module does and the high-level logic of its customizations for a technical reader.'
+  let budget = NARRATIVE_TOTAL_SCRIPT_CHARS
   const lines = input.artifacts.map((a) => {
-    const s = a.script ? `\n    script (secrets redacted):\n${redactScript(a.script)}` : ''
-    return `  - ${a.type}: ${a.name}${s}`
+    if (!a.script) return `  - ${a.type}: ${a.name}`
+    let red = redactScript(a.script)
+    if (red.length > NARRATIVE_SCRIPT_CHARS) red = red.slice(0, NARRATIVE_SCRIPT_CHARS) + '\n… (truncated)'
+    if (budget - red.length < 0) return `  - ${a.type}: ${a.name}\n    script: (omitted — narrative size limit)`
+    budget -= red.length
+    return `  - ${a.type}: ${a.name}\n    script (secrets redacted, truncated):\n${red}`
   })
   const user =
     `Table/module: ${input.rootLabel} (${input.table})\n` +
