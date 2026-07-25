@@ -454,6 +454,60 @@ export async function runSpecNarrative(
   }
 }
 
+export interface FixScriptInput {
+  script: string
+  problem: string
+  table?: string
+  field?: string
+}
+export interface FixScriptResult {
+  fixedScript: string
+  explanation: string
+}
+
+/** Prompt to fix a ServiceNow script given a problem/requirement. Script redacted. */
+export function buildFixScriptPrompt(input: FixScriptInput): { system: string; user: string } {
+  const system =
+    'You are a ServiceNow developer fixing a script. Reply with ONLY a JSON object ' +
+    '{"fixedScript": string, "explanation": string} — fixedScript is the corrected script, ' +
+    'explanation is 1-3 sentences on what you changed. No markdown, no code fences.'
+  const ctx = [input.table && `Table: ${input.table}`, input.field && `Field: ${input.field}`]
+    .filter(Boolean)
+    .join('\n')
+  const user =
+    `${ctx ? ctx + '\n' : ''}Problem / requirement:\n${input.problem || '(none given — improve correctness and clarity)'}\n\n` +
+    `Script (secrets redacted):\n${redactScript(input.script)}\n\nReturn the JSON.`
+  return { system, user }
+}
+
+function coerceFix(parsed: unknown): FixScriptResult {
+  const o = (parsed ?? {}) as Record<string, unknown>
+  return {
+    fixedScript: typeof o.fixedScript === 'string' ? o.fixedScript : '',
+    explanation: typeof o.explanation === 'string' ? o.explanation : '',
+  }
+}
+
+export type FixScriptOutcome =
+  | { configured: false }
+  | { configured: true; ok: true; result: FixScriptResult }
+  | { configured: true; ok: false; error: string }
+
+export async function runFixScript(
+  input: FixScriptInput,
+  config?: LlmConfig | null,
+): Promise<FixScriptOutcome> {
+  const cfg = config ?? (await loadLlmConfig())
+  if (!cfg) return { configured: false }
+  const { system, user } = buildFixScriptPrompt(input)
+  try {
+    const text = await callProvider(cfg, system, user)
+    return { configured: true, ok: true, result: coerceFix(extractJson(text)) }
+  } catch (err) {
+    return { configured: true, ok: false, error: (err as Error).message }
+  }
+}
+
 /**
  * MFEC AgentHub (browser-ingest): single `prompt`, Bearer auth, returns
  * `{ response }`. System + user are concatenated into one prompt.

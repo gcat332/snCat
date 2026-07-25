@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   agentHubErrorMessage,
+  buildFixScriptPrompt,
   buildPlanPrompt,
   buildReviewPrompt,
   buildSpecNarrativePrompt,
@@ -187,6 +188,17 @@ describe('network gate (T-104 — refuse to send to a disallowed endpoint)', () 
     )
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({ configured: true, ok: true })
+  })
+})
+
+describe('buildFixScriptPrompt', () => {
+  it('redacts the script, includes the problem, and asks for JSON', () => {
+    const p = buildFixScriptPrompt({ script: 'var pw = "hunter2"; gs.info(pw);', problem: 'leaks password', table: 'sys_script', field: 'script' })
+    expect(p.user).toContain('leaks password')
+    expect(p.user).toContain('sys_script')
+    expect(p.user).not.toContain('hunter2')
+    expect(p.user).toContain('REDACTED')
+    expect(p.system).toContain('fixedScript')
   })
 })
 
