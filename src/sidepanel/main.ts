@@ -26,11 +26,12 @@ import {
   type UndoLog,
 } from '@core/f3-import'
 import { diffStats, lineDiff } from '@core/diff'
-import { classifyInstance } from '@core/prod-guard'
+import { classifyInstance, DEFAULT_PROD_GUARD_CONFIG, parseSubProdPatterns } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
 import { buildScriptBrowseQuery, normalizeTiming, scriptTableInfo } from '@core/script-meta'
 import {
   loadLlmConfig,
+  redactScript,
   saveLlmConfig,
   type LlmConfig,
   type LlmFormat,
@@ -2506,12 +2507,57 @@ function applyNarrativeJob(entry: LlmJobEntry | undefined) {
 
 async function loadAiSettings() {
   const cfg = await loadLlmConfig()
+  void updateFirstRunHint()
   if (!cfg) return
   aiEndpoint.value = cfg.endpoint
   aiKey.value = cfg.apiKey
   aiModel.value = cfg.model
   aiFormat.value = cfg.format
 }
+
+/**
+ * Show a first-run nudge on the Settings tab until an LLM endpoint is
+ * configured — the AI features (Java review, Generate, AI spec overview)
+ * stay hidden/disabled elsewhere until then, so this explains why.
+ */
+async function updateFirstRunHint() {
+  const configured = !!(await loadLlmConfig())
+  el('ai-firstrun-hint').hidden = configured
+}
+
+/* ---------- Prod guard — sub-prod patterns editor ---------- */
+
+const guardPatterns = el<HTMLTextAreaElement>('guard-patterns')
+const guardSaved = el('guard-saved')
+
+/** Populate the guard editor from storage (falling back to the built-in defaults). */
+async function loadGuardPatterns() {
+  let patterns = DEFAULT_PROD_GUARD_CONFIG.subProdPatterns
+  try {
+    const store = await chrome.storage.local.get('prodGuardConfig')
+    const override = store['prodGuardConfig'] as { subProdPatterns?: string[] } | undefined
+    if (override?.subProdPatterns?.length) patterns = override.subProdPatterns
+  } catch {
+    /* defaults */
+  }
+  guardPatterns.value = patterns.join(', ')
+}
+
+el<HTMLButtonElement>('guard-save').addEventListener('click', async () => {
+  const subProdPatterns = parseSubProdPatterns(guardPatterns.value)
+  await chrome.storage.local.set({ prodGuardConfig: { subProdPatterns } })
+  guardPatterns.value = subProdPatterns.join(', ')
+  guardSaved.hidden = false
+  setTimeout(() => (guardSaved.hidden = true), 1500)
+})
+
+/* ---------- Redaction preview (display-only; nothing is sent) ---------- */
+
+const redactInput = el<HTMLTextAreaElement>('redact-input')
+const redactOutput = el('redact-output')
+redactInput.addEventListener('input', () => {
+  redactOutput.textContent = redactInput.value ? redactScript(redactInput.value) : ''
+})
 
 /** Build an LlmConfig from the current Settings form (unsaved values). */
 function currentFormConfig(): LlmConfig {
@@ -2532,6 +2578,7 @@ async function saveAiSettings() {
   // Reflect the newly-configured (or newly-cleared) endpoint on the Spec tab
   // immediately, without requiring a re-discovery.
   void updateSpecAiButton()
+  void updateFirstRunHint()
 }
 
 /* ---------- Generate (plan of artifacts) ---------- */
@@ -3037,6 +3084,7 @@ aiTestBtn.addEventListener('click', async () => {
   }
 })
 void loadAiSettings()
+void loadGuardPatterns()
 initGenerate()
 pickerType.addEventListener('change', syncPickerTableVisibility)
 pickerFind.addEventListener('click', findScripts)

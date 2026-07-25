@@ -341,6 +341,20 @@
             <button class="btn btn-ghost" id="ai-test" type="button">Test connection</button>
             <span class="ai-note" id="ai-test-result"></span>
           </div>
+          <p class="ai-note" id="ai-firstrun-hint" hidden>Add an endpoint + key above to enable the AI features (Java review, Generate, AI spec overview). They stay hidden until configured.</p>
+
+          <h2 class="card-title" style="margin-top:18px">Prod guard — sub-prod patterns</h2>
+          <p class="hint">Instances whose first label matches one of these (regex, case-insensitive) allow guarded writes. Production markers always hard-block regardless. One per line or comma-separated.</p>
+          <textarea id="guard-patterns" class="query-input" rows="3" placeholder="dev, test, uat, sandbox, staging, qa, demo, sub-?prod, training"></textarea>
+          <div class="btn-row">
+            <button class="btn" id="guard-save" type="button">Save patterns</button>
+            <span class="count-badge" id="guard-saved" hidden>Saved ✓</span>
+          </div>
+
+          <h2 class="card-title" style="margin-top:18px">Redaction preview</h2>
+          <p class="hint">See exactly what leaves the instance when AI features send a script. Display-only — nothing is sent.</p>
+          <textarea id="redact-input" class="query-input" rows="4" placeholder="var pw = 'hunter2'; gs.info(new GlideRecord('incident'));"></textarea>
+          <pre class="code-block" id="redact-output" style="white-space:pre-wrap"></pre>
         </section>
       </div>
     </main>
