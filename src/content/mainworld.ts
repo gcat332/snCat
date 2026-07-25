@@ -51,18 +51,43 @@ function post() {
   }
 }
 
-const SCRIPT_FIELDS = ['script', 'script_plain', 'client_script']
+// Script-bearing fields we offer to fix: server script, client script, HTML
+// template, CSS, UI-action/link scripts. The AI is told the field name (see
+// buildFixScriptPrompt), so `template` reads as HTML, `script` as server JS, etc.
+const SCRIPT_FIELDS = ['script', 'script_plain', 'client_script', 'template', 'css', 'link']
 
-// Best-effort injection of a 🔧 "fix with AI" icon next to script fields on
-// classic ServiceNow forms. This must NEVER throw on the page — a DOM quirk
-// here must not break the g_form snapshot / fetch bridge above. Idempotency
-// is scoped to the CURRENT mount's DOM (via a `data-snjava-fix` attribute on
-// the icon itself), not a module-level record of field names — that way a
-// fresh render after in-page AJAX navigation (classic UI record switch) gets
-// its own icon instead of silently staying icon-less forever.
+function tableNameOf(gf: NonNullable<Window['g_form']>): string {
+  try {
+    return gf.getTableName?.() ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** Where to place the chip: prefer beside the field LABEL (like ServiceNow's own
+ *  "script {}" chips); fall back to the field control's container. */
+function fieldAnchor(field: string, table: string): { el: Element; after: boolean } | null {
+  const label =
+    (table && document.getElementById(`label.${table}.${field}`)) ||
+    document.querySelector(`label[for="${field}"]`)
+  if (label) return { el: label, after: true }
+  const control =
+    document.getElementById(field) ??
+    (table ? document.getElementById(`${table}.${field}`) : null) ??
+    document.querySelector(`[id$=".${field}"]`)
+  const container = control?.closest('.form-group, td, .sn-widget-list_v2') ?? control?.parentElement
+  return container ? { el: container, after: false } : null
+}
+
+// Best-effort injection of a "javaHelp" chip next to script fields. NEVER throws
+// on the page (see safeInjectFixIcons) — a DOM quirk must not break the g_form
+// snapshot / fetch bridge. Idempotency is scoped to the field's live anchor via
+// a `data-snjava-fix` attribute, so a fresh render after in-page AJAX navigation
+// gets its own chip instead of silently staying chip-less.
 function injectFixIcons() {
   const gf = window.g_form
   if (!gf?.getValue) return
+  const table = tableNameOf(gf)
   for (const field of SCRIPT_FIELDS) {
     let value: string
     try {
@@ -71,29 +96,20 @@ function injectFixIcons() {
       continue // field not on this form
     }
     if (typeof value !== 'string') continue
-    // The field control's element id is the field name, but classic forms often
-    // qualify it with the table (e.g. "sys_script.script"). Try both, plus a
-    // suffix match, so the icon lands regardless of the id convention.
-    const table = (() => {
-      try {
-        return gf.getTableName?.() ?? ''
-      } catch {
-        return ''
-      }
-    })()
-    const control =
-      document.getElementById(field) ??
-      (table ? document.getElementById(`${table}.${field}`) : null) ??
-      document.querySelector(`[id$=".${field}"]`)
-    const mount = control?.closest('.form-group, td, .sn-widget-list_v2') ?? control?.parentElement
-    if (!mount) continue
-    if (mount.querySelector(`[data-snjava-fix="${field}"]`)) continue
-    const icon = document.createElement('span')
-    icon.dataset.snjavaFix = field
-    icon.textContent = '🔧'
-    icon.title = 'snJava — fix this script with AI'
-    icon.style.cssText = 'cursor:pointer;margin-left:6px;font-size:14px;user-select:none'
-    icon.addEventListener('click', () => {
+    const spot = fieldAnchor(field, table)
+    if (!spot) continue
+    const scope = spot.after ? (spot.el.parentElement ?? spot.el) : spot.el
+    if (scope.querySelector(`[data-snjava-fix="${field}"]`)) continue
+    const chip = document.createElement('span')
+    chip.dataset.snjavaFix = field
+    chip.textContent = 'javaHelp'
+    chip.title = 'snJava — send this script to the AI helper'
+    chip.style.cssText =
+      'display:inline-flex;align-items:center;margin-left:6px;padding:1px 8px;' +
+      'border:1px solid rgba(0,98,236,.4);border-radius:12px;font-size:11px;' +
+      "font-family:'SF Mono',Menlo,Consolas,monospace;color:#0062EC;" +
+      'background:rgba(0,98,236,.06);cursor:pointer;user-select:none;vertical-align:middle;line-height:16px'
+    chip.addEventListener('click', () => {
       let script = ''
       try {
         script = gf.getValue!(field)
@@ -113,7 +129,8 @@ function injectFixIcons() {
         window.location.origin,
       )
     })
-    mount.appendChild(icon)
+    if (spot.after) spot.el.after(chip)
+    else spot.el.appendChild(chip)
   }
 }
 
@@ -125,13 +142,16 @@ function safeInjectFixIcons() {
   }
 }
 
-// Post once now, and again shortly after in case g_form initializes late.
+// Post + inject now, then retry: script editors (CodeMirror/Monaco) frequently
+// mount well after document_idle, so a single early pass misses them.
 post()
 safeInjectFixIcons()
-setTimeout(() => {
-  post()
-  safeInjectFixIcons()
-}, 800)
+for (const ms of [800, 2000, 3500]) {
+  setTimeout(() => {
+    post()
+    safeInjectFixIcons()
+  }, ms)
+}
 
 interface FetchMessage {
   kind: 'sncat:fetch'
