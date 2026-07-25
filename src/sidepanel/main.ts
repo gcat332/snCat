@@ -49,7 +49,7 @@ import { formatSpecDoc } from '@core/format'
 import { renderSpecDocxBlob } from '@core/render-docx'
 import { loadRootArtifact, tableRootArtifact, walkSpecGraph } from '@core/spec-runner'
 import { isAuthError, authExpiredMessage } from '@core/auth-msg'
-import { SCRIPT_TARGET_TABLES, prefixScriptName } from '@core/naming'
+import { namePrefixField, prefixArtifactName } from '@core/naming'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
@@ -2823,15 +2823,18 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
   const scopeAttempts = artifacts.filter(createsScope)
   const shown = artifacts.filter((a) => !fieldAlreadyExists(a) && !createsScope(a))
 
-  // Apply the [MF-AI][<module>] naming convention to script records (Business
-  // Rule / Client Script / Script Include / Fix Script). The module code is
-  // derived from the table the script targets, falling back to the current
+  // Apply the [MF-AI][<module>] naming convention to dev/admin-facing config
+  // records (scripts, UI policies, notifications, …) — never Field / Table /
+  // ACL / Choice or business data (see namePrefixField). The module code is
+  // derived from the table the artifact targets, falling back to the current
   // page table. Done here (idempotent) so the detail modal previews the exact
   // name that createArtifact will write.
   for (const a of shown) {
-    if (a.action === 'create' && a.targetTable && SCRIPT_TARGET_TABLES.has(a.targetTable) && a.fields?.['name']) {
+    if (a.action !== 'create' || !a.targetTable || !a.fields) continue
+    const field = namePrefixField(a.targetTable)
+    if (field && a.fields[field]) {
       const t = a.fields['table'] || a.fields['collection'] || current?.table
-      a.fields['name'] = prefixScriptName(a.fields['name'], t)
+      a.fields[field] = prefixArtifactName(a.fields[field], t)
     }
   }
 

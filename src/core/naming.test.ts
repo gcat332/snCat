@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { moduleCode, prefixScriptName, SCRIPT_TARGET_TABLES } from './naming'
+import { moduleCode, prefixArtifactName, namePrefixField } from './naming'
 
 describe('moduleCode', () => {
   it('maps well-known ITSM tables to their platform code', () => {
@@ -30,36 +30,58 @@ describe('moduleCode', () => {
   })
 })
 
-describe('prefixScriptName', () => {
+describe('prefixArtifactName', () => {
   it('prepends [MF-AI][CODE] then the name', () => {
-    expect(prefixScriptName('Notify group', 'incident')).toBe('[MF-AI][INC] Notify group')
+    expect(prefixArtifactName('Notify group', 'incident')).toBe('[MF-AI][INC] Notify group')
   })
 
   it('is idempotent — re-prefixing does not stack', () => {
-    const once = prefixScriptName('Notify group', 'incident')
-    expect(prefixScriptName(once, 'incident')).toBe('[MF-AI][INC] Notify group')
+    const once = prefixArtifactName('Notify group', 'incident')
+    expect(prefixArtifactName(once, 'incident')).toBe('[MF-AI][INC] Notify group')
   })
 
   it('replaces an existing prefix if the code changed', () => {
-    const asIncident = prefixScriptName('Escalate', 'incident')
-    expect(prefixScriptName(asIncident, 'change_request')).toBe('[MF-AI][CHG] Escalate')
+    const asIncident = prefixArtifactName('Escalate', 'incident')
+    expect(prefixArtifactName(asIncident, 'change_request')).toBe('[MF-AI][CHG] Escalate')
   })
 
   it('trims surrounding whitespace on the base name', () => {
-    expect(prefixScriptName('  Set priority  ', 'incident')).toBe('[MF-AI][INC] Set priority')
+    expect(prefixArtifactName('  Set priority  ', 'incident')).toBe('[MF-AI][INC] Set priority')
   })
 
   it('uses GEN when the table is unknown/absent', () => {
-    expect(prefixScriptName('Helper', null)).toBe('[MF-AI][GEN] Helper')
+    expect(prefixArtifactName('Helper', null)).toBe('[MF-AI][GEN] Helper')
   })
 })
 
-describe('SCRIPT_TARGET_TABLES', () => {
-  it('covers the four script metadata tables', () => {
-    expect(SCRIPT_TARGET_TABLES.has('sys_script')).toBe(true)
-    expect(SCRIPT_TARGET_TABLES.has('sys_script_client')).toBe(true)
-    expect(SCRIPT_TARGET_TABLES.has('sys_script_include')).toBe(true)
-    expect(SCRIPT_TARGET_TABLES.has('sys_script_fix')).toBe(true)
-    expect(SCRIPT_TARGET_TABLES.has('sys_dictionary')).toBe(false)
+describe('namePrefixField', () => {
+  it('prefixes script + config records via their name column', () => {
+    expect(namePrefixField('sys_script')).toBe('name') // Business Rule
+    expect(namePrefixField('sys_script_client')).toBe('name') // Client Script
+    expect(namePrefixField('sys_script_include')).toBe('name') // Script Include
+    expect(namePrefixField('sys_script_fix')).toBe('name') // Fix Script
+    expect(namePrefixField('sys_ui_action')).toBe('name') // UI Action
+    expect(namePrefixField('sysevent_email_action')).toBe('name') // Notification
+  })
+
+  it('uses short_description for UI/Data Policies', () => {
+    expect(namePrefixField('sys_ui_policy')).toBe('short_description')
+    expect(namePrefixField('sys_data_policy2')).toBe('short_description')
+  })
+
+  it('never prefixes Field / Table / ACL', () => {
+    expect(namePrefixField('sys_dictionary')).toBeNull()
+    expect(namePrefixField('sys_db_object')).toBeNull()
+    expect(namePrefixField('sys_security_acl')).toBeNull()
+  })
+
+  it('never prefixes user-facing Choice labels', () => {
+    expect(namePrefixField('sys_choice')).toBeNull()
+  })
+
+  it('never prefixes business data records (non-sys tables)', () => {
+    expect(namePrefixField('incident')).toBeNull()
+    expect(namePrefixField('change_request')).toBeNull()
+    expect(namePrefixField(null)).toBeNull()
   })
 })
