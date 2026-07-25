@@ -1518,7 +1518,7 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
     optimizeSection.hidden = true
     reviewSpinner.hidden = false
     analyzeBtn.disabled = true
-    aiStatus.textContent = 'Asking the AI for an optimized script and a sandbox tester… (keeps running if you close this panel)'
+    aiStatus.textContent = 'Asking the AI for an optimized script and a tester script… (keeps running if you close this panel)'
     return
   }
   reviewSpinner.hidden = true

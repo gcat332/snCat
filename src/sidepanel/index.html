@@ -171,7 +171,7 @@
             <span class="spinner" id="review-spinner" hidden></span>
             <span class="count-badge" id="lint-summary" hidden></span>
           </div>
-          <p class="ai-note" id="ai-status">Runs local static lints, then asks the AI for an optimized script + a sandbox tester script.</p>
+          <p class="ai-note" id="ai-status">Runs local static lints, then asks the AI for an optimized script + a tester script.</p>
           <div class="results" id="lint-results"></div>
 
           <div id="optimize-section" hidden>
@@ -195,7 +195,7 @@
           <div class="guard-badge" id="sim-guard">Checking instance…</div>
 
           <div class="seg" id="runner-mode">
-            <button class="seg-btn is-active" id="mode-btn-simulate" type="button" data-mode="simulate">Simulate (no write)</button>
+            <button class="seg-btn is-active" id="mode-btn-simulate" type="button" data-mode="simulate">Tester run (guarded)</button>
             <button class="seg-btn" id="mode-btn-real" type="button" data-mode="real">Guarded real</button>
           </div>
 
@@ -212,8 +212,9 @@
           <!-- SIMULATE -->
           <div id="mode-simulate">
             <p class="hint">
-              Runs the tester script as a <strong>background script</strong> (no persistence) and shows the output.
-              The seed above tells Java review how to build <code>current</code>.
+              Runs the AI tester script as a <strong>real background script</strong> on this guarded
+              (sub-prod only) instance — there is no mock sandbox. The AI is instructed not to persist,
+              but review the script before running. The seed above tells Java review how to build <code>current</code>.
             </p>
             <div class="editor-toolbar">
               <span class="editor-title">Tester script</span>
