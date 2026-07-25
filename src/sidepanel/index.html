@@ -224,6 +224,16 @@
               </span>
             </div>
             <div class="cm-host" id="tester-editor"></div>
+
+            <div id="fix-script-box" hidden>
+              <label class="field-label" for="fix-problem">Problem / requirement</label>
+              <textarea id="fix-problem" class="query-input" rows="2" placeholder="What's wrong, or what it should do…"></textarea>
+              <div class="btn-row">
+                <button class="btn" id="fix-run" type="button">Ask AI to fix</button>
+                <span class="spinner" id="fix-spinner" hidden></span>
+              </div>
+            </div>
+
             <div class="btn-row">
               <button class="btn" id="sim-run" type="button">Run on instance</button>
               <button class="btn btn-ghost" id="sim-bg" type="button">Open Background Scripts</button>

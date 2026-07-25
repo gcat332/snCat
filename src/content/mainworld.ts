@@ -71,8 +71,20 @@ function injectFixIcons() {
       continue // field not on this form
     }
     if (typeof value !== 'string') continue
-    // Classic form: the field control lives under an element whose id is the field name.
-    const control = document.getElementById(field)
+    // The field control's element id is the field name, but classic forms often
+    // qualify it with the table (e.g. "sys_script.script"). Try both, plus a
+    // suffix match, so the icon lands regardless of the id convention.
+    const table = (() => {
+      try {
+        return gf.getTableName?.() ?? ''
+      } catch {
+        return ''
+      }
+    })()
+    const control =
+      document.getElementById(field) ??
+      (table ? document.getElementById(`${table}.${field}`) : null) ??
+      document.querySelector(`[id$=".${field}"]`)
     const mount = control?.closest('.form-group, td, .sn-widget-list_v2') ?? control?.parentElement
     if (!mount) continue
     if (mount.querySelector(`[data-snjava-fix="${field}"]`)) continue
