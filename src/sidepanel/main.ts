@@ -2917,16 +2917,26 @@ function showArtifact(a: PlanArtifact) {
     box.append(w)
   }
 
+  // Readable field list on a LIGHT surface. (The old .diff-body was dark, so the
+  // dark field text was invisible, and each value was truncated to 80 chars on a
+  // single non-wrapping line.) Each field: an uppercase label + its FULL value
+  // wrapping below; long or multi-line values (and scripts) get a code block.
   const body = document.createElement('div')
-  body.className = 'diff-body'
-  body.style.padding = '8px'
+  body.className = 'artifact-detail'
   if (a.action === 'create' && a.fields) {
     for (const [k, v] of Object.entries(a.fields)) {
-      const r = document.createElement('div')
-      r.className = 'info-row'
-      r.style.background = 'transparent'
-      r.append(elText('span', 'info-name', k), elText('span', 'info-sub', v.length > 80 ? v.slice(0, 80) + '…' : v))
-      body.append(r)
+      const item = document.createElement('div')
+      item.className = 'af-item'
+      item.append(elText('div', 'af-key', k))
+      if (v.length > 80 || v.includes('\n')) {
+        const pre = document.createElement('pre')
+        pre.className = 'code-block'
+        pre.textContent = v
+        item.append(pre)
+      } else {
+        item.append(elText('div', 'af-val', v || '—'))
+      }
+      body.append(item)
     }
   } else if (a.script) {
     const pre = document.createElement('pre')
