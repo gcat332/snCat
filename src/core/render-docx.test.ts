@@ -19,6 +19,30 @@ const doc: SpecDocument = {
   ],
 }
 
+// Recursively collect every node in the docx object graph whose rootKey === key.
+function collect(node: unknown, key: string, seen = new Set<unknown>()): any[] {
+  const out: any[] = []
+  if (node == null || typeof node !== 'object') return out
+  if (seen.has(node)) return out
+  seen.add(node)
+  const n = node as any
+  if (n.rootKey === key) out.push(n)
+  for (const k of Object.keys(n)) out.push(...collect(n[k], key, seen))
+  return out
+}
+
+// True if any descendant of node carries `.fill === fill` (code paragraph shading).
+function containsFill(node: unknown, fill: string, seen = new Set<unknown>()): boolean {
+  if (node == null || typeof node !== 'object') return false
+  if (seen.has(node)) return false
+  seen.add(node)
+  const n = node as any
+  if (n.fill === fill) return true
+  return Object.keys(n).some((k) => containsFill(n[k], fill, seen))
+}
+
+const CODE_SHADING = 'F4F6FB' // SURFACE_ALT — the fill unique to code blocks
+
 describe('buildDocxDocument / packing', () => {
   it('builds a Document and packs to a non-empty buffer', async () => {
     const document = buildDocxDocument(doc)
@@ -27,5 +51,30 @@ describe('buildDocxDocument / packing', () => {
     expect(buffer.length).toBeGreaterThan(500)
     expect(buffer[0]).toBe(0x50) // 'P'
     expect(buffer[1]).toBe(0x4b) // 'K'
+  })
+
+  it('renders a K-line code block as ONE shaded paragraph with K-1 break runs (not K paragraphs)', async () => {
+    const lines = ['line1', 'line2', 'line3', 'line4', 'line5']
+    const K = lines.length
+    const codeDoc: SpecDocument = {
+      title: 'Code perf',
+      subtitle: 'x',
+      meta: [],
+      sections: [{ heading: 'Logic', blocks: [{ kind: 'code', code: lines.join('\n') }] }],
+    }
+    const document = buildDocxDocument(codeDoc)
+
+    // Paragraphs carrying the code shading fill are exactly the code-block paragraphs.
+    const codeParas = collect(document, 'w:p').filter((p) => containsFill(p, CODE_SHADING))
+    expect(codeParas.length).toBe(1)
+
+    // The single paragraph must contain a run per line: K-1 explicit line breaks (w:br)
+    // after the first line, so the visual line count is preserved.
+    const breaks = collect(codeParas[0], 'w:br')
+    expect(breaks.length).toBe(K - 1)
+
+    // Packing still succeeds.
+    const buffer = await Packer.toBuffer(document)
+    expect(buffer.length).toBeGreaterThan(500)
   })
 })

@@ -54,15 +54,21 @@ function codeParagraphs(caption: string | undefined, code: string): Paragraph[] 
   if (caption) {
     out.push(new Paragraph({ children: [new TextRun({ text: caption, bold: true, color: '6968AB' })] }))
   }
-  for (const line of code.split('\n')) {
-    out.push(
-      new Paragraph({
-        shading: { type: ShadingType.CLEAR, fill: SURFACE_ALT, color: 'auto' },
-        border: { left: { style: BorderStyle.SINGLE, size: 12, color: CYAN, space: 4 } },
-        children: [new TextRun({ text: line || ' ', font: 'Consolas', size: 18 })],
-      }),
-    )
-  }
+  // Emit the whole code block as a SINGLE paragraph: one monospace TextRun per line,
+  // with an explicit line break (break: 1) before every line after the first. This
+  // preserves the visual layout (same lines, same shading + left border) while
+  // collapsing N styled OOXML paragraphs down to 1 — hundreds-of-line scripts across
+  // a spec no longer explode the paragraph count, so the .docx packs/opens faster.
+  const lines = code.split('\n')
+  out.push(
+    new Paragraph({
+      shading: { type: ShadingType.CLEAR, fill: SURFACE_ALT, color: 'auto' },
+      border: { left: { style: BorderStyle.SINGLE, size: 12, color: CYAN, space: 4 } },
+      children: lines.map(
+        (line, i) => new TextRun({ text: line || ' ', font: 'Consolas', size: 18, break: i === 0 ? undefined : 1 }),
+      ),
+    }),
+  )
   return out
 }
 
