@@ -146,6 +146,43 @@ describe('lintScript — general rules', () => {
     expect(lintScript({ kind: 'unknown', script: '   ' })).toEqual([])
   })
 
+  it('ignores anti-patterns that appear only inside string literals', () => {
+    // (a) current.update() only inside a message string in a before BR
+    const brFound = rules({
+      kind: 'business_rule',
+      timing: 'before',
+      script:
+        'gs.addErrorMessage("Do not call current.update() from a before rule");',
+    })
+    expect(brFound).not.toContain('update-in-before-br')
+
+    // (b) GlideRecord / gs only inside a message string in a client script
+    const csFound = rules({
+      kind: 'client_script',
+      script:
+        'g_form.addInfoMessage("Never do new GlideRecord(\'sys_user\') or gs.info() on the client");',
+    })
+    expect(csFound).not.toContain('gliderecord-in-client-script')
+    expect(csFound).not.toContain('gs-in-client-script')
+  })
+
+  it('REGRESSION: still flags a real current.update() call in code', () => {
+    const found = rules({
+      kind: 'business_rule',
+      timing: 'before',
+      script: 'gs.addErrorMessage("just a message");\ncurrent.update();',
+    })
+    expect(found).toContain('update-in-before-br')
+  })
+
+  it('REGRESSION: still flags a hardcoded sys_id that lives in a string literal', () => {
+    const found = rules({
+      kind: 'script_include',
+      script: 'var ref = "46e8219fa9fe198100b3e7d8f2f5c3a1";',
+    })
+    expect(found).toContain('hardcoded-sys-id')
+  })
+
   it('sorts errors before warnings before info', () => {
     const findings = lintScript({
       kind: 'client_script',

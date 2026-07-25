@@ -53,8 +53,14 @@ function lineText(text: string, line: number): string {
  * comments. String literals are tracked so `//` inside a string is not treated
  * as a comment. (Escapes inside strings are handled; template expressions are
  * not — acceptable for Layer 1.)
+ *
+ * When `blankStrings` is true, string-literal *contents* are also replaced with
+ * spaces (quotes and newlines kept, length preserved) so code-pattern rules do
+ * not false-positive on pattern-shaped text that only appears inside a string.
+ * The rule that intentionally matches inside quotes (hardcoded sys_id) uses the
+ * default (comment-only) form so it can still see string content.
  */
-export function stripComments(src: string): string {
+export function stripComments(src: string, blankStrings = false): string {
   const out = src.split('')
   let i = 0
   const n = src.length
@@ -100,6 +106,10 @@ export function stripComments(src: string): string {
     } else {
       // inside a string literal: honor escapes, watch for the closing quote
       if (c === '\\') {
+        if (blankStrings) {
+          if (src[i] !== '\n') out[i] = ' '
+          if (src[i + 1] !== '\n') out[i + 1] = ' '
+        }
         i += 2
         continue
       }
@@ -108,8 +118,13 @@ export function stripComments(src: string): string {
         (mode === 'dquote' && c === '"') ||
         (mode === 'tquote' && c === '`')
       ) {
+        // closing quote: keep it, return to code mode
         mode = 'code'
+        i++
+        continue
       }
+      // interior string char: blank it (keep newlines for line math)
+      if (blankStrings && c !== '\n') out[i] = ' '
       i++
     }
   }
@@ -340,8 +355,15 @@ const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warning: 1, info: 2
 /** Run all Layer 1 lints against a script. Findings sorted by severity, then line. */
 export function lintScript(input: LintInput): LintFinding[] {
   if (!input.script.trim()) return []
-  const code = stripComments(input.script)
-  const findings = RULES.flatMap((rule) => rule(input, code))
+  // Two offset-aligned prepared sources (same length, so lineAt/snippets stay
+  // accurate): comment-only for the sys_id rule (which must see string content),
+  // comment+string-blanked for the code-pattern rules (which must not match
+  // pattern-shaped text inside string literals).
+  const codeOnly = stripComments(input.script)
+  const codeNoStrings = stripComments(input.script, true)
+  const findings = RULES.flatMap((rule) =>
+    rule(input, rule === ruleHardcodedSysId ? codeOnly : codeNoStrings),
+  )
   return findings.sort(
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.line - b.line,
   )
