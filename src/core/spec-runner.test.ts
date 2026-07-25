@@ -128,3 +128,69 @@ describe('walkSpecGraph — reference label fields resolve to display names (T-3
     expect(table!.fields['name']).toBe('incident')
   })
 })
+
+describe('walkSpecGraph — per-walk fetch memoization (T-405 perf)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getRecord.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+    getDictionary.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+  })
+
+  /**
+   * Fetch amplification (T-102): on a table-root spec, every Business Rule
+   * resolves the SAME `sys_db_object?name=<collection>` FetchSpec. walkGraph only
+   * dedupes AFTER the network call, so N BRs fire N identical live fetches.
+   * A per-walk cache keyed on (table + query + fields) must collapse those to one
+   * WITHOUT changing the discovered artifacts.
+   */
+  function mockTableWithSharedCollection() {
+    // 3 distinct Business Rules, all on the same collection ('incident').
+    const brRows = ['br1', 'br2', 'br3'].map((sys_id) => ({
+      sys_id,
+      name: `BR ${sys_id}`,
+      collection: 'incident',
+      script: '', // empty → no Script Include sub-queries, isolating the amplification
+    }))
+    let sysDbObjectCalls = 0
+    queryRecords.mockImplementation(async (_host: string, table: string) => {
+      if (table === 'sys_script') return { ok: true, data: brRows }
+      if (table === 'sys_db_object') {
+        sysDbObjectCalls++
+        return {
+          ok: true,
+          data: [{ sys_id: 'tbl_incident', name: 'incident', label: 'Incident', super_class: '' }],
+        }
+      }
+      // Every other table on the root (client scripts, UI policies, ACLs, …) is empty.
+      return { ok: false, status: 404, error: 'none' }
+    })
+    return () => sysDbObjectCalls
+  }
+
+  it('collapses identical (table,query,fields) fetches to a single call while discovering the same artifacts', async () => {
+    const sysDbObjectCalls = mockTableWithSharedCollection()
+
+    const outcome = await walkSpecGraph('example.service-now.com', tableRootArtifact('incident'))
+
+    // (i) Discovered set unchanged: the 3 BRs + exactly one deduped table artifact.
+    const brs = outcome.artifacts.filter((a) => a.type === 'business_rule')
+    const tables = outcome.artifacts.filter((a) => a.type === 'table')
+    expect(brs.map((b) => b.sysId).sort()).toEqual(['br1', 'br2', 'br3'])
+    expect(tables).toHaveLength(1)
+    expect(tables[0].id).toBe(makeId('sys_db_object', 'tbl_incident'))
+    expect(tables[0].fields['name']).toBe('incident')
+
+    // (ii) The identical BR→table lookup fired exactly ONCE (pre-fix: 3).
+    expect(sysDbObjectCalls()).toBe(1)
+  })
+
+  it('does not leak the cache across separate walkSpecGraph calls', async () => {
+    const sysDbObjectCalls = mockTableWithSharedCollection()
+
+    await walkSpecGraph('example.service-now.com', tableRootArtifact('incident'))
+    await walkSpecGraph('example.service-now.com', tableRootArtifact('incident'))
+
+    // One fetch per walk — the second walk must not be served from the first's cache.
+    expect(sysDbObjectCalls()).toBe(2)
+  })
+})
