@@ -440,6 +440,40 @@ button.picker-row:hover {
   text-overflow: ellipsis;
 }
 
+/* XML import result rows: full-width stack so each row lines up with the
+   banner / "Open as list" button above and below (not the inset diff grid). */
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Small action button on a LIGHT surface (import rows). Distinct from .tool-btn,
+   which is styled for the dark code-editor toolbar and reads as disabled here. */
+.row-action {
+  appearance: none;
+  flex-shrink: 0;
+  border: 1px solid var(--mfec-blue);
+  background: #fff;
+  color: var(--mfec-blue);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.row-action:hover {
+  background: rgba(0, 98, 236, 0.08);
+}
+
+.row-action.copied {
+  border-color: var(--mfec-cyan);
+  color: var(--mfec-cyan);
+}
+
 .ref {
   font-size: 11px;
   color: var(--mfec-blue-dark);
