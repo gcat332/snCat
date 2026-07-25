@@ -51,13 +51,10 @@ window.addEventListener('message', (event) => {
     }
   } else if (data?.kind === 'sncat:fix-script') {
     const p = (event.data as { payload?: unknown }).payload
-    chrome.storage.session.set({ fixScriptRequest: p }).catch(() => {})
-    // Best-effort: bring the side panel forward so the user sees the loaded
-    // script right away. Chrome may reject sidePanel.open() without a user
-    // gesture in the background worker — that's fine, the script is already
-    // stashed in storage above and will be picked up the next time the panel
-    // opens (consumeFixScriptRequest in the side panel).
-    chrome.runtime.sendMessage({ kind: 'snjava:open-panel' }).catch(() => {})
+    // Route to the background: content scripts CANNOT write chrome.storage.session
+    // by default (its access level is TRUSTED_CONTEXTS), so a direct set() here
+    // silently fails. The background (trusted) stashes it + opens the panel.
+    chrome.runtime.sendMessage({ kind: 'snjava:fix-script', payload: p }).catch(() => {})
   }
 })
 

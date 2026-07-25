@@ -102,13 +102,14 @@ async function setJob(key: string, value: unknown): Promise<void> {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if ((message as { kind?: string })?.kind === 'snjava:open-panel') {
-    // The content script relays this right after stashing a "Fix with AI"
-    // script in chrome.storage.session, so the panel is on top when the user
-    // clicks the javaHelp chip. Chrome may reject sidePanel.open() here since
-    // it isn't a direct user-gesture handler (it's an async message callback)
-    // — that's fine, the script is already in storage for whenever the panel
-    // next opens (consumeFixScriptRequest picks it up on init/onChanged).
+  if ((message as { kind?: string })?.kind === 'snjava:fix-script') {
+    // Content scripts can't write chrome.storage.session (TRUSTED_CONTEXTS by
+    // default), so the background does it here — this is what makes the script
+    // reach the panel (consumeFixScriptRequest fires on the session onChanged).
+    const payload = (message as { payload?: unknown }).payload
+    void chrome.storage.session.set({ fixScriptRequest: payload }).catch(() => {})
+    // Best-effort raise the panel. Chrome may reject sidePanel.open() outside a
+    // direct user gesture — fine; the stash above is picked up on next open.
     if (sender.tab?.windowId != null) {
       chrome.sidePanel.open({ windowId: sender.tab.windowId }).catch(() => {})
     }
