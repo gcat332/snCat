@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   buildPlanPrompt,
   buildReviewPrompt,
+  buildSpecNarrativePrompt,
   extractJson,
   redactScript,
   isAllowedEndpoint,
@@ -185,5 +186,20 @@ describe('network gate (T-104 — refuse to send to a disallowed endpoint)', () 
     )
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(out).toMatchObject({ configured: true, ok: true })
+  })
+})
+
+describe('buildSpecNarrativePrompt', () => {
+  it('lists artifacts, redacts scripts, and asks for plain prose', () => {
+    const p = buildSpecNarrativePrompt({
+      table: 'incident',
+      rootLabel: 'Incident',
+      artifacts: [{ name: 'Notify BR', type: 'Business Rule', script: 'var pw = "hunter2"; gs.info(pw);' }],
+    })
+    expect(p.user).toContain('incident')
+    expect(p.user).toContain('Notify BR')
+    expect(p.user).not.toContain('hunter2')
+    expect(p.user).toContain('REDACTED')
+    expect(p.system.toLowerCase()).toContain('prose')
   })
 })

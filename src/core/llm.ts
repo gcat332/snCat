@@ -398,6 +398,49 @@ export async function runGeneratePlan(
   }
 }
 
+export interface NarrativeInput {
+  table: string
+  rootLabel: string
+  artifacts: { name: string; type: string; script?: string }[]
+}
+
+/** Prompt for a concise, plain-prose Design Spec overview. Scripts are redacted. */
+export function buildSpecNarrativePrompt(input: NarrativeInput): { system: string; user: string } {
+  const system =
+    'You are a ServiceNow solution architect writing the overview of a Design Spec. ' +
+    'Reply with 2-3 short paragraphs of plain prose only — no markdown, no headings, no code, no JSON. ' +
+    'Summarize what this table/module does and the high-level logic of its customizations for a technical reader.'
+  const lines = input.artifacts.map((a) => {
+    const s = a.script ? `\n    script (secrets redacted):\n${redactScript(a.script)}` : ''
+    return `  - ${a.type}: ${a.name}${s}`
+  })
+  const user =
+    `Table/module: ${input.rootLabel} (${input.table})\n` +
+    `Discovered customizations:\n${lines.join('\n')}\n\nWrite the overview.`
+  return { system, user }
+}
+
+export type NarrativeOutcome =
+  | { configured: false }
+  | { configured: true; ok: true; text: string }
+  | { configured: true; ok: false; error: string }
+
+/** Generate the spec overview via the configured provider (allowlist enforced in callProvider). */
+export async function runSpecNarrative(
+  input: NarrativeInput,
+  config?: LlmConfig | null,
+): Promise<NarrativeOutcome> {
+  const cfg = config ?? (await loadLlmConfig())
+  if (!cfg) return { configured: false }
+  const { system, user } = buildSpecNarrativePrompt(input)
+  try {
+    const text = await callProvider(cfg, system, user)
+    return { configured: true, ok: true, text: text.trim() }
+  } catch (err) {
+    return { configured: true, ok: false, error: (err as Error).message }
+  }
+}
+
 /**
  * MFEC AgentHub (browser-ingest): single `prompt`, Bearer auth, returns
  * `{ response }`. System + user are concatenated into one prompt.
