@@ -379,31 +379,6 @@ button.picker-row:hover {
   background: rgba(0, 162, 233, 0.06);
 }
 
-.schema-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 10px;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.schema-row .col {
-  font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace;
-  font-size: 11px;
-}
-
-.schema-row .type {
-  color: var(--ink-soft);
-  font-size: 11px;
-}
-
-.schema-row .lbl {
-  grid-column: 1 / -1;
-  color: var(--ink-soft);
-  font-size: 11px;
-}
-
 /* Info row — same single-line card style as the "Load a script" picker rows.
    Shared by Table schema and Page-context "View values". */
 .info-row {
@@ -1022,19 +997,6 @@ button.picker-row:hover {
   color: #1a7f37;
   font-weight: 500;
   max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diff-kv.same {
-  grid-template-columns: 1fr auto;
-  opacity: 0.75;
-}
-
-.diff-kv .dk-same {
-  color: var(--ink-soft);
-  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
