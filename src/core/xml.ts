@@ -87,14 +87,71 @@ function extractFields(inner: string): Record<string, string> {
   return fields
 }
 
+/**
+ * Split an unload XML into each `<table>...</table>` record block's inner text,
+ * CDATA-aware. The record boundary must skip over `<![CDATA[ ... ]]>` spans: a
+ * script/HTML field's CDATA can contain a substring identical to the record's
+ * OWN closing tag (e.g. a `sys_script` whose CDATA holds the literal text
+ * `</sys_script>`), and a naive non-greedy `([\s\S]*?)</tag>` regex would
+ * terminate the block at that FIRST fake closing tag — truncating the record
+ * and mis-parsing everything after it. So instead of a pure regex we walk the
+ * text: locate each opening `<table ...>` tag, then scan forward for the real
+ * `</table>`, jumping over any CDATA span (`<![CDATA[` → matching `]]>`) so a
+ * closing-tag-looking substring inside CDATA can never end the record early.
+ * Tag matching is case-insensitive to mirror the previous regex (`i` flag); the
+ * CDATA delimiters are literal. Returns each block's inner text in document
+ * order — field extraction is left to extractFields (itself CDATA-aware).
+ */
+function findRecordInners(xml: string, table: string): string[] {
+  const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Group 1 captures a trailing slash so a self-closing `<table/>` (no body) is
+  // recognized and skipped rather than treated as an unterminated block.
+  const openRe = new RegExp(`<${esc}\\b[^>]*?(\\/?)>`, 'gi')
+  const closeTag = `</${table}>`
+  // Lowercased haystack for case-insensitive boundary detection; indices map 1:1
+  // to `xml` (lowercasing preserves length), so slices come from the original.
+  const hay = xml.toLowerCase()
+  const closeLc = closeTag.toLowerCase()
+  const CDATA_OPEN = '<![cdata['
+  const CDATA_CLOSE = ']]>'
+  const out: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = openRe.exec(xml))) {
+    if (m[1] === '/') continue // self-closing <table/>: no body to extract
+    const innerStart = m.index + m[0].length
+    let i = innerStart
+    let closeIdx = -1
+    while (i <= hay.length) {
+      const close = hay.indexOf(closeLc, i)
+      if (close === -1) break // no matching close tag
+      const cdata = hay.indexOf(CDATA_OPEN, i)
+      if (cdata !== -1 && cdata < close) {
+        // A CDATA span opens before this candidate close tag: skip past it so a
+        // `</table>`-looking substring inside CDATA cannot terminate the record.
+        const end = hay.indexOf(CDATA_CLOSE, cdata + CDATA_OPEN.length)
+        if (end === -1) {
+          closeIdx = close // malformed (unterminated) CDATA: best-effort boundary
+          break
+        }
+        i = end + CDATA_CLOSE.length
+        continue
+      }
+      closeIdx = close
+      break
+    }
+    if (closeIdx === -1) continue // unterminated block; skip this open tag
+    out.push(xml.slice(innerStart, closeIdx))
+    openRe.lastIndex = closeIdx + closeTag.length
+  }
+  return out
+}
+
 /** Extract the record's fields from its unload XML for the given table. */
 export function parseUnloadXml(xml: string, table: string): ParsedRecord | null {
-  const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const block = xml.match(new RegExp(`<${esc}\\b[^>]*>([\\s\\S]*?)</${esc}>`, 'i'))
-  const inner = block ? block[1] : null
-  if (!inner) return null
+  const inners = findRecordInners(xml, table)
+  if (!inners.length || !inners[0]) return null
 
-  return { table, fields: extractFields(inner) }
+  return { table, fields: extractFields(inners[0]) }
 }
 
 /**
@@ -103,12 +160,9 @@ export function parseUnloadXml(xml: string, table: string): ParsedRecord | null 
  * element; a single-record export has exactly one. Works for both.
  */
 export function parseUnloadXmlAll(xml: string, table: string): ParsedRecord[] {
-  const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const blockRe = new RegExp(`<${esc}\\b[^>]*>([\\s\\S]*?)</${esc}>`, 'gi')
   const out: ParsedRecord[] = []
-  let block: RegExpExecArray | null
-  while ((block = blockRe.exec(xml))) {
-    const fields = extractFields(block[1])
+  for (const inner of findRecordInners(xml, table)) {
+    const fields = extractFields(inner)
     if (Object.keys(fields).length) out.push({ table, fields })
   }
   return out

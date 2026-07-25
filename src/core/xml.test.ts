@@ -99,6 +99,44 @@ describe('CDATA-bearing fields (script/HTML)', () => {
   })
 })
 
+describe('CDATA containing the record\'s OWN closing tag (record-boundary safety)', () => {
+  // The nastiest case: a script whose CDATA literally contains the record's own
+  // closing tag `</sys_script>` BEFORE the real end of the record. The outer
+  // record-boundary matcher must skip over CDATA spans, or it terminates the
+  // block at the fake tag and truncates the record (losing every later field).
+  const EVIL_SCRIPT = ` var s = "</sys_script>"; gs.info("fake </sys_script> here"); `
+  const BR = `<?xml version="1.0" encoding="UTF-8"?>
+<sys_script action="INSERT_OR_UPDATE">
+  <active>true</active>
+  <script><![CDATA[${EVIL_SCRIPT}]]></script>
+  <name>real_name</name>
+</sys_script>`
+
+  it('parses the whole record even when CDATA contains its own closing tag', () => {
+    const parsed = parseUnloadXml(BR, 'sys_script')
+    expect(parsed).not.toBeNull()
+    // Full CDATA survives, including the fake `</sys_script>` text.
+    expect(parsed!.fields.script).toBe(EVIL_SCRIPT)
+    expect(parsed!.fields.script).toContain('</sys_script>')
+    // The field AFTER the CDATA is still captured (record not truncated early).
+    expect(parsed!.fields.name).toBe('real_name')
+  })
+
+  it('parseUnloadXmlAll: a self-closing-tag CDATA in record 1 does not break record 2', () => {
+    const LIST = `<?xml version="1.0" encoding="UTF-8"?>
+<unload unload_date="2026-07-25">
+<sys_script action="INSERT_OR_UPDATE"><script><![CDATA[${EVIL_SCRIPT}]]></script><name>rec_one</name></sys_script>
+<sys_script action="INSERT_OR_UPDATE"><script><![CDATA[ safe ]]></script><name>rec_two</name></sys_script>
+</unload>`
+    const all = parseUnloadXmlAll(LIST, 'sys_script')
+    expect(all).toHaveLength(2)
+    expect(all[0].fields.name).toBe('rec_one')
+    expect(all[0].fields.script).toBe(EVIL_SCRIPT)
+    expect(all[1].fields.name).toBe('rec_two')
+    expect(all[1].fields.script).toBe(' safe ')
+  })
+})
+
 describe('dedupeRecords', () => {
   it('collapses records sharing a sys_id (deep unload duplicates)', () => {
     const recs = [
