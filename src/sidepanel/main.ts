@@ -536,7 +536,7 @@ async function pasteXmlInner() {
   const noun = rows.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${rows.length} "${clip.table}" ${noun} into ${current.host}?\n\nsys_id is preserved and it is INSERT_OR_UPDATE — a matching record is updated, never duplicated. Business rules are skipped (setWorkflow(false)). No update set is used.`,
+      `Import ${rows.length} "${clip.table}" ${noun} into ${current.host}?\n\nReplicates ServiceNow's direct XML import: the original sys_id is preserved (setNewGuidValue) and it is INSERT_OR_UPDATE by sys_id — a matching record is updated, never duplicated. Business rules are skipped, exactly as the native XML import does. No update set is used.`,
     ))
   ) {
     return
@@ -600,26 +600,33 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
  * Reports "moved ins=.. upd=.. total=..".
  */
 function buildImportScript(table: string, records: Record<string, string>[]): string {
+  const T = JSON.stringify(table)
   return [
     `var rows = ${JSON.stringify(records)};`,
-    `var DROP = {sys_created_on:1, sys_created_by:1, sys_updated_on:1, sys_updated_by:1, sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
+    // Only drop what would break on the target or is recomputed. Audit fields are
+    // preserved (like a real XML import) via autoSysFields(false).
+    `var DROP = {sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
     `var ins = 0, upd = 0, errs = [];`,
     `for (var i = 0; i < rows.length; i++) {`,
     `  try {`,
     `    var row = rows[i];`,
     `    var sysId = row['sys_id'];`,
-    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
-    `    var exists = sysId && gr.get(sysId);`,
-    `    if (!exists) { gr.initialize(); if (sysId) gr.setNewGuidValue(sysId); }`,
-    `    for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) gr.setValue(k, row[k]); }`,
-    `    gr.setWorkflow(false);`,
-    `    gr.autoSysFields(false);`,
-    `    var ok = exists ? gr.update() : gr.insert();`,
-    `    if (ok) { if (exists) { upd++; } else { ins++; } }`,
-    `    else {`,
-    `      var why = '';`,
-    `      try { why = gr.getLastErrorMessage(); } catch (e2) {}`,
-    `      errs.push('row ' + i + ': ' + (why || 'rejected (ACL / mandatory / data policy)'));`,
+    // Existence check on its own GlideRecord (INSERT_OR_UPDATE by sys_id).
+    `    var found = null;`,
+    `    if (sysId) { var chk = new GlideRecord(${T}); if (chk.get(sysId)) { found = chk; } }`,
+    `    if (found) {`,
+    `      for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) found.setValue(k, row[k]); }`,
+    `      found.setWorkflow(false); found.autoSysFields(false);`,
+    `      if (found.update()) { upd++; } else { errs.push('row ' + i + ': ' + (found.getLastErrorMessage() || 'update rejected')); }`,
+    `    } else {`,
+    // Fresh record for the insert; setNewGuidValue AFTER setValue, BEFORE insert.
+    `      var gr = new GlideRecord(${T});`,
+    `      gr.initialize();`,
+    `      for (var k2 in row) { if (row.hasOwnProperty(k2) && k2 !== 'sys_id' && !DROP[k2]) gr.setValue(k2, row[k2]); }`,
+    `      if (sysId) gr.setNewGuidValue(sysId);`,
+    `      gr.setWorkflow(false); gr.autoSysFields(false);`,
+    `      var id = gr.insert();`,
+    `      if (id) { ins++; } else { errs.push('row ' + i + ': ' + (gr.getLastErrorMessage() || 'insert rejected (ACL / mandatory / data policy)')); }`,
     `    }`,
     `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
