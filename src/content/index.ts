@@ -52,6 +52,12 @@ window.addEventListener('message', (event) => {
   } else if (data?.kind === 'sncat:fix-script') {
     const p = (event.data as { payload?: unknown }).payload
     chrome.storage.session.set({ fixScriptRequest: p }).catch(() => {})
+    // Best-effort: bring the side panel forward so the user sees the loaded
+    // script right away. Chrome may reject sidePanel.open() without a user
+    // gesture in the background worker — that's fine, the script is already
+    // stashed in storage above and will be picked up the next time the panel
+    // opens (consumeFixScriptRequest in the side panel).
+    chrome.runtime.sendMessage({ kind: 'snjava:open-panel' }).catch(() => {})
   }
 })
 

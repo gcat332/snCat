@@ -33,7 +33,6 @@ import {
   loadLlmConfig,
   redactScript,
   saveLlmConfig,
-  type FixScriptOutcome,
   type LlmConfig,
   type LlmFormat,
   type NarrativeInput,
@@ -56,9 +55,9 @@ let currentTabId: number | null = null
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
-  | { status: 'running'; op: 'review' | 'generate' | 'narrative' | 'fixscript'; startedAt?: number }
-  | { status: 'done'; op: 'review' | 'generate' | 'narrative' | 'fixscript'; outcome: unknown }
-  | { status: 'error'; op: 'review' | 'generate' | 'narrative' | 'fixscript'; error: string }
+  | { status: 'running'; op: 'review' | 'generate' | 'narrative'; startedAt?: number }
+  | { status: 'done'; op: 'review' | 'generate' | 'narrative'; outcome: unknown }
+  | { status: 'error'; op: 'review' | 'generate' | 'narrative'; error: string }
 
 /**
  * A 'running' job is stale once its startedAt is older than this. The background
@@ -78,19 +77,18 @@ function isStaleJob(entry: LlmJobEntry): boolean {
   return Date.now() - entry.startedAt > STALE_JOB_MS
 }
 
-function jobKey(tabId: number, op: 'review' | 'generate' | 'narrative' | 'fixscript'): string {
+function jobKey(tabId: number, op: 'review' | 'generate' | 'narrative'): string {
   return `llmJob:${tabId}:${op}`
 }
 
-function applyJob(op: 'review' | 'generate' | 'narrative' | 'fixscript', entry: LlmJobEntry | undefined) {
+function applyJob(op: 'review' | 'generate' | 'narrative', entry: LlmJobEntry | undefined) {
   if (op === 'review') applyReviewJob(entry)
   else if (op === 'generate') applyGenerateJob(entry)
-  else if (op === 'fixscript') applyFixScriptJob(entry)
   else applyNarrativeJob(entry)
 }
 
 /** Start an LLM job in the background so it survives the panel closing. */
-async function startLlmJob(op: 'review' | 'generate' | 'narrative' | 'fixscript', payload: unknown): Promise<boolean> {
+async function startLlmJob(op: 'review' | 'generate' | 'narrative', payload: unknown): Promise<boolean> {
   if (currentTabId == null) return false
   const tabId = currentTabId
   try {
@@ -1346,15 +1344,6 @@ const testerEd = createCodeEditor(el('tester-editor'))
 const testerFormat = el<HTMLButtonElement>('tester-format')
 const testerCopy = el<HTMLButtonElement>('tester-copy')
 
-// "Ask AI to fix" (Script Tester) — populated when a page (g_form script field)
-// relays a script via chrome.storage.session['fixScriptRequest'].
-const fixScriptBox = el('fix-script-box')
-const fixProblem = el<HTMLTextAreaElement>('fix-problem')
-const fixRun = el<HTMLButtonElement>('fix-run')
-const fixSpinner = el('fix-spinner')
-/** table/sysId/field of the script currently loaded via a page "Fix with AI" relay. */
-let fixScriptTarget: { table: string | null; sysId: string | null; field: string } | null = null
-
 // AI settings (Settings tab)
 const aiEndpoint = el<HTMLInputElement>('ai-endpoint')
 const aiKey = el<HTMLInputElement>('ai-key')
@@ -1386,8 +1375,9 @@ async function consumeFixScriptRequest() {
   if (!req) return
   await chrome.storage.session.remove('fixScriptRequest')
   activateTab('tab-tester')
-  testerEd.setValue(req.script)
-  fixScriptTarget = { table: req.table, sysId: req.sysId, field: req.field }
+  // Load into the visible SCRIPT & AI REVIEW editor (not the hidden Simulate
+  // tester editor) and reuse the existing Intent + "Java review" AI flow.
+  scriptEd.setValue(req.script)
   // So a later "save optimized to record" can target the source field. If the
   // relay lacked table/sysId (g_form couldn't resolve them), CLEAR any prior
   // record so a stale target can't be saved to by mistake.
@@ -1395,78 +1385,9 @@ async function consumeFixScriptRequest() {
     req.table && req.sysId
       ? { host: current?.host ?? '', table: req.table, sysId: req.sysId, scriptField: req.field }
       : null
-  fixScriptBox.hidden = false
-  showToast('Script loaded from ServiceNow — describe the problem, then Ask AI to fix')
-}
-
-/** Render the "Ask AI to fix" outcome from a job entry (running / done / error). */
-function applyFixScriptJob(entry: LlmJobEntry | undefined) {
-  if (!entry) return
-  if (entry.status === 'running') {
-    // A running entry that's too old (or has no startedAt) means the background
-    // worker was killed mid-fetch and will never write done/error — treat it as
-    // a retryable failure instead of spinning forever (mirrors applyReviewJob).
-    if (isStaleJob(entry)) {
-      fixSpinner.hidden = true
-      fixRun.disabled = false
-      aiStatus.textContent = "The previous fix didn't finish (the background worker was interrupted). Run it again."
-      return
-    }
-    fixSpinner.hidden = false
-    fixRun.disabled = true
-    aiStatus.textContent = 'Asking the AI to fix the script… (keeps running if you close this panel)'
-    return
-  }
-  fixSpinner.hidden = true
-  fixRun.disabled = false
-
-  if (entry.status === 'error') {
-    aiStatus.textContent = `AI error: ${entry.error}`
-    return
-  }
-  const outcome = entry.outcome as FixScriptOutcome
-  if (!outcome.configured) {
-    aiStatus.textContent = 'AI not configured — open Settings and add an endpoint + key.'
-    activateTab('tab-settings')
-    return
-  }
-  if (!outcome.ok) {
-    aiStatus.textContent = `AI error: ${outcome.error}`
-    return
-  }
-  const { fixedScript, explanation } = outcome.result
-  // Guard the diff popup against the dual-delivery (direct reply + storage
-  // mirror) and restore-on-reopen paths re-applying the same 'done' entry: only
-  // pop it the first time this fixedScript lands, same idea as applyReviewJob's
-  // notesBox-replace guard against duplicate renders.
-  const isNewResult = optimizeEd.getValue() !== fixedScript
-  optimizeEd.setValue(fixedScript)
-  optimizeSection.hidden = false
-  aiStatus.textContent = explanation ? `AI fix: ${explanation}` : 'AI fix complete.'
-  if (isNewResult) showDiff(fixRun.dataset.before ?? '', fixedScript)
-}
-
-/** "Ask AI to fix": send the tester script + problem description to the fixscript job. */
-async function askAiToFix() {
-  const script = testerEd.getValue()
-  if (!script.trim()) return
-  if (!(await loadLlmConfig())) {
-    showToast('AI not configured — open Settings')
-    return
-  }
-  const before = script
-  const started = await startLlmJob('fixscript', {
-    script,
-    problem: fixProblem.value,
-    table: fixScriptTarget?.table ?? undefined,
-    field: fixScriptTarget?.field,
-  })
-  if (!started) {
-    showToast('Open a ServiceNow tab first.')
-    return
-  }
-  fixRun.dataset.before = before
-  applyFixScriptJob({ status: 'running', op: 'fixscript', startedAt: Date.now() })
+  el('script-editor').scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el<HTMLTextAreaElement>('script-intent').focus()
+  showToast('Script loaded from ServiceNow — add the problem in “Intent & change requests”, then click “Java review”')
 }
 
 /** Toggle the BR timing selector. */
@@ -3071,12 +2992,10 @@ async function restoreLlmJobs() {
     jobKey(currentTabId, 'review'),
     jobKey(currentTabId, 'generate'),
     jobKey(currentTabId, 'narrative'),
-    jobKey(currentTabId, 'fixscript'),
   ])
   applyReviewJob(store[jobKey(currentTabId, 'review')] as LlmJobEntry | undefined)
   applyGenerateJob(store[jobKey(currentTabId, 'generate')] as LlmJobEntry | undefined)
   applyNarrativeJob(store[jobKey(currentTabId, 'narrative')] as LlmJobEntry | undefined)
-  applyFixScriptJob(store[jobKey(currentTabId, 'fixscript')] as LlmJobEntry | undefined)
 }
 
 // Background writes job results to storage — reflect changes for the active tab.
@@ -3088,11 +3007,9 @@ chrome.storage.session.onChanged.addListener((changes) => {
   const rk = jobKey(currentTabId, 'review')
   const gk = jobKey(currentTabId, 'generate')
   const nk = jobKey(currentTabId, 'narrative')
-  const fk = jobKey(currentTabId, 'fixscript')
   if (changes[rk]) applyReviewJob(changes[rk].newValue as LlmJobEntry | undefined)
   if (changes[gk]) applyGenerateJob(changes[gk].newValue as LlmJobEntry | undefined)
   if (changes[nk]) applyNarrativeJob(changes[nk].newValue as LlmJobEntry | undefined)
-  if (changes[fk]) applyFixScriptJob(changes[fk].newValue as LlmJobEntry | undefined)
 })
 
 /* ---------- detect + wiring ---------- */
@@ -3169,7 +3086,6 @@ schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 schemaBack.addEventListener('click', schemaBackOne)
 scriptKind.addEventListener('change', syncTimingVisibility)
 analyzeBtn.addEventListener('click', javaReview)
-fixRun.addEventListener('click', askAiToFix)
 scriptFormat.addEventListener('click', () => formatEditor(scriptEd, scriptFormat))
 scriptCopy.addEventListener('click', () => copyText(scriptEd.getValue()))
 scriptOpen.addEventListener('click', () => {
