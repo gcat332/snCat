@@ -22,6 +22,12 @@ export const SYSTEM_FIELDS = new Set([
   'sys_class_name',
   'sys_domain',
   'sys_domain_path',
+  // Scope/package point at an app record whose sys_id won't exist on the target
+  // instance: a verbatim copy either fails to insert or silently lands in an
+  // unrelated app. Let the platform assign the current scope (llm.ts refuses to
+  // set these on generated artifacts for the same reason).
+  'sys_scope',
+  'sys_package',
 ])
 
 function unescapeXml(s: string): string {
@@ -49,7 +55,10 @@ function unescapeXml(s: string): string {
  */
 function extractFields(inner: string): Record<string, string> {
   const fields: Record<string, string> = {}
-  const openRe = /<([a-zA-Z0-9_]+)(?:\s[^>]*)?>/g
+  // Group 3 captures a trailing slash so self-closing tags (`<tag/>`, `<tag />`,
+  // `<tag attr="x"/>`) are recognized; some serializers emit these for empty
+  // values and they must be captured as '' (explicitly cleared), not dropped.
+  const openRe = /<([a-zA-Z0-9_]+)((?:\s[^>]*?)?)(\/?)>/g
   const CDATA_OPEN = '<![CDATA['
   const CDATA_CLOSE = ']]>'
   let m: RegExpExecArray | null
@@ -57,7 +66,10 @@ function extractFields(inner: string): Record<string, string> {
     const tag = m[1]
     const contentStart = m.index + m[0].length
     const closeTag = `</${tag}>`
-    if (inner.startsWith(CDATA_OPEN, contentStart)) {
+    if (m[3] === '/') {
+      // Self-closing empty element: no body, no separate close tag to scan for.
+      fields[tag] = ''
+    } else if (inner.startsWith(CDATA_OPEN, contentStart)) {
       const bodyStart = contentStart + CDATA_OPEN.length
       const bodyEnd = inner.indexOf(CDATA_CLOSE, bodyStart)
       if (bodyEnd === -1) continue // malformed CDATA; skip this open tag

@@ -130,4 +130,45 @@ describe('importableFields', () => {
     expect(imp.number).toBeUndefined()
     expect(imp.caller_id).toBe('def456')
   })
+
+  it('drops sys_scope and sys_package (cross-instance scope safety)', () => {
+    // Copying a scoped record verbatim can fail or silently land in an
+    // unrelated app on the target instance; let the platform set scope/package.
+    const imp = importableFields({
+      sys_id: 'abc123',
+      sys_scope: 'x_mfec_myapp',
+      sys_package: 'pkg789',
+      sys_domain: 'global',
+      short_description: 'keep me',
+    })
+    expect(imp.sys_scope).toBeUndefined()
+    expect(imp.sys_package).toBeUndefined()
+    // Existing cross-instance drops still hold.
+    expect(imp.sys_id).toBeUndefined()
+    expect(imp.sys_domain).toBeUndefined()
+    // Normal fields survive.
+    expect(imp.short_description).toBe('keep me')
+  })
+})
+
+describe('self-closing empty tags', () => {
+  const SELF_CLOSED = `<?xml version="1.0" encoding="UTF-8"?>
+<incident action="INSERT_OR_UPDATE">
+  <short_description/>
+  <number>INC0009</number>
+  <close_notes />
+</incident>`
+
+  it('captures a self-closing tag as an empty string (present, not absent)', () => {
+    const parsed = parseUnloadXml(SELF_CLOSED, 'incident')
+    expect(parsed).not.toBeNull()
+    // Present in the map with an empty string, distinguishable from absent.
+    expect(parsed!.fields).toHaveProperty('short_description')
+    expect(parsed!.fields.short_description).toBe('')
+    // Self-closing with a space before the slash too.
+    expect(parsed!.fields).toHaveProperty('close_notes')
+    expect(parsed!.fields.close_notes).toBe('')
+    // A normal paired tag mixed in is still parsed.
+    expect(parsed!.fields.number).toBe('INC0009')
+  })
 })
