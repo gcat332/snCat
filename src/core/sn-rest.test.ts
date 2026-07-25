@@ -24,7 +24,26 @@ function loginRedirectResponse(): Partial<Response> {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
+
+/**
+ * A fetch stub that never settles on its own and only rejects with an
+ * AbortError when the AbortSignal it was handed fires. This is how the browser
+ * behaves for a stalled connection: the request hangs until something aborts
+ * it. With the buggy (no-timeout) implementation no signal is passed, so this
+ * promise stays pending forever and the calling op hangs — the exact bug.
+ */
+function stalledFetch() {
+  return vi.fn(
+    (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        })
+      }),
+  )
+}
 
 describe('executeApiRequest — session-expired login redirect (T-202)', () => {
   it('(a) op "text": treats a followed login redirect as 401, not real data', async () => {
@@ -80,6 +99,45 @@ describe('executeApiRequest — bgrun guards fire before any I/O (T-202)', () =>
     expect(res).toMatchObject({ ok: false, status: 401 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
+})
+
+describe('executeApiRequest — stalled connection times out (T-401)', () => {
+  it('(f) op "text": a hung fetch aborts and resolves to {ok:false,status:0,timeout}', async () => {
+    vi.useFakeTimers()
+    const fetchMock = stalledFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resP = executeApiRequest(
+      { op: 'text', host: SUBPROD, url: `https://${SUBPROD}/incident.do?XML` },
+      deps,
+    )
+    // Past the read timeout (30s) the request must be aborted and mapped.
+    await vi.advanceTimersByTimeAsync(60_000)
+    const res = await resP
+
+    expect(res).toEqual({ ok: false, status: 0, error: 'Request timed out.' })
+    // Wiring: fetch must have been handed an AbortSignal.
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
+  }, 10_000)
+
+  it('(g) op "bgrun": a hung server-side script aborts and resolves to {ok:false,status:0,timeout}', async () => {
+    vi.useFakeTimers()
+    const fetchMock = stalledFetch()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resP = executeApiRequest(
+      { op: 'bgrun', host: SUBPROD, script: 'gs.sleep(999999);' },
+      deps,
+    )
+    // bgrun gets a longer budget (120s); advance well past it.
+    await vi.advanceTimersByTimeAsync(200_000)
+    const res = await resP
+
+    expect(res).toEqual({ ok: false, status: 0, error: 'Request timed out.' })
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
+  }, 10_000)
 })
 
 describe('executeApiRequest — happy path (T-202)', () => {

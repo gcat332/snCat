@@ -25,6 +25,43 @@ export interface RestDeps {
   guardConfig?: ProdGuardConfig
 }
 
+/**
+ * Timeouts guard against a stalled connection (hung proxy, wedged instance)
+ * that would otherwise leave a fetch pending forever — the op never settles,
+ * the chrome messaging reply never arrives, and the side panel hangs with no
+ * failure path. Reads/text are quick; a background script runs real server-side
+ * code so it gets a much longer budget.
+ */
+const READ_TIMEOUT_MS = 30_000
+const BGRUN_TIMEOUT_MS = 120_000
+/** Distinct error surfaced when a request is aborted by its timeout. */
+const TIMEOUT_ERROR = 'Request timed out.'
+
+/** True for the DOMException fetch rejects with when its AbortSignal fires. */
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError'
+}
+
+/**
+ * fetch() wrapped in an AbortController that fires after `timeoutMs`. The timer
+ * is always cleared once the request settles (success or failure) so it never
+ * leaks or fires late. A timeout surfaces as the AbortError fetch throws, which
+ * callers map to {@link TIMEOUT_ERROR}.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function safeErrorDetail(res: Response): Promise<string | null> {
   try {
     const body = (await res.json()) as { error?: { message?: string; detail?: string } }
@@ -40,8 +77,9 @@ async function apiGet<T>(url: string, deps: RestDeps): Promise<ApiResult<T>> {
 
   let res: Response
   try {
-    res = await fetch(url, { method: 'GET', credentials: 'same-origin', headers })
+    res = await fetchWithTimeout(url, { method: 'GET', credentials: 'same-origin', headers }, READ_TIMEOUT_MS)
   } catch (err) {
+    if (isAbortError(err)) return { ok: false, status: 0, error: TIMEOUT_ERROR }
     return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
   }
 
@@ -67,8 +105,9 @@ async function apiGetText(url: string, deps: RestDeps): Promise<ApiResult<string
   if (deps.token) headers['X-UserToken'] = deps.token
   let res: Response
   try {
-    res = await fetch(url, { method: 'GET', credentials: 'same-origin', headers })
+    res = await fetchWithTimeout(url, { method: 'GET', credentials: 'same-origin', headers }, READ_TIMEOUT_MS)
   } catch (err) {
+    if (isAbortError(err)) return { ok: false, status: 0, error: TIMEOUT_ERROR }
     return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
   }
   if (res.status === 401) return { ok: false, status: 401, error: 'Not authenticated.' }
@@ -109,13 +148,18 @@ async function apiBgRun(
 
   let res: Response
   try {
-    res = await fetch(`https://${host}/sys.scripts.do`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    })
+    res = await fetchWithTimeout(
+      `https://${host}/sys.scripts.do`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      },
+      BGRUN_TIMEOUT_MS,
+    )
   } catch (err) {
+    if (isAbortError(err)) return { ok: false, status: 0, error: TIMEOUT_ERROR }
     return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
   }
   if (res.redirected && /login|sso/i.test(res.url)) {
