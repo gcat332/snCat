@@ -45,6 +45,7 @@ import { renderSpecHtml } from '@core/render-html'
 import { formatSpecDoc } from '@core/format'
 import { renderSpecDocxBlob } from '@core/render-docx'
 import { loadRootArtifact, tableRootArtifact, walkSpecGraph } from '@core/spec-runner'
+import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
@@ -122,6 +123,12 @@ function elText(tag: string, cls: string, text: string): HTMLElement {
   node.className = cls
   node.textContent = text
   return node
+}
+
+/** Render a REST failure into `container`; show a friendly re-auth message on 401. */
+function showApiError(container: HTMLElement, host: string, res: { status?: number; error?: string }): void {
+  const msg = isAuthError(res.status ?? 0, res.error) ? authExpiredMessage(host) : (res.error ?? 'Request failed.')
+  container.replaceChildren(elText('div', 'error', msg))
 }
 
 async function getActiveTab(): Promise<chrome.tabs.Tab | undefined> {
@@ -462,7 +469,7 @@ async function fetchRecordXml(): Promise<string | null> {
   if (!current?.table || !current.sysId) return null
   const res = await getText(current.host, buildRecordXmlUrl(current.host, current.table, current.sysId))
   if (!res.ok) {
-    xmlOut.replaceChildren(elText('div', 'error', res.error))
+    showApiError(xmlOut, current.host, res)
     return null
   }
   return res.data
@@ -482,7 +489,7 @@ async function saveXml() {
   if (list) {
     query = (await getListQueryFromPage(current.table)) ?? currentListQuery()
     const res = await getText(current.host, buildListXmlUrl(current.host, current.table, query))
-    xml = res.ok ? res.data : (xmlOut.replaceChildren(elText('div', 'error', res.error)), null)
+    xml = res.ok ? res.data : (showApiError(xmlOut, current.host, res), null)
   } else {
     xml = await fetchRecordXml()
   }
@@ -618,7 +625,7 @@ async function pasteXmlInner() {
   xmlOut.append(elText('div', 'empty', `Importing ${rows.length} ${noun}…`))
   const res = await runBackground(host, buildImportScript(clip.table, rows), {})
   if (!res.ok) {
-    xmlOut.append(elText('div', 'error', res.error))
+    showApiError(xmlOut, host, res)
     return
   }
   const parsed = parseSnjava(extractBgOutput(res.data), 'snJava:import ') as { rows?: ImportRowResult[] } | null
@@ -717,7 +724,7 @@ async function undoLastImport(host: string): Promise<void> {
     xmlOut.replaceChildren(elText('div', 'empty', `Undoing ${log.rows.length} change(s) on ${host}…`))
     const res = await runBackground(host, buildUndoScript(log.table, log.rows), {})
     if (!res.ok) {
-      xmlOut.replaceChildren(elText('div', 'error', res.error))
+      showApiError(xmlOut, host, res)
       return
     }
     const parsed = parseSnjava(extractBgOutput(res.data), 'snJava:undo ') as { rows?: Array<{ sysId: string; ok: boolean; error?: string }> } | null
@@ -850,7 +857,7 @@ async function runCondition() {
   condRun.disabled = false
 
   if (!countRes.ok) {
-    condResults.replaceChildren(elText('div', 'error', countRes.error))
+    showApiError(condResults, host, countRes)
     return
   }
   const n = countRes.data.count
@@ -892,7 +899,7 @@ async function fetchDictionaryInto(table: string, host: string): Promise<boolean
   const res = await getDictionary(host, table)
   schemaLoad.disabled = false
   if (!res.ok) {
-    schemaResults.replaceChildren(elText('div', 'error', res.error))
+    showApiError(schemaResults, host, res)
     return false
   }
   schemaTable = table
@@ -1420,7 +1427,7 @@ async function findScripts() {
   pickerFind.disabled = false
 
   if (!res.ok) {
-    pickerResults.replaceChildren(elText('div', 'error', res.error))
+    showApiError(pickerResults, current.host, res)
     return
   }
   pickerResults.replaceChildren()
@@ -1838,7 +1845,7 @@ async function runOnInstance() {
   simRun.disabled = false
 
   if (!res.ok) {
-    simResults.replaceChildren(elText('div', 'error', res.error))
+    showApiError(simResults, current.host, res)
     return
   }
   const output = extractBgOutput(res.data)
