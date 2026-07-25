@@ -62,13 +62,16 @@ export default defineManifest({
       all_frames: true,
     },
     {
-      // MAIN-world bridge: reads window.g_form / window.g_ck on classic UI and
-      // relays them to the isolated content script via window.postMessage.
+      // MAIN-world bridge: reads window.g_form / window.g_ck and relays them via
+      // window.postMessage; also injects the Fix-script icon next to script
+      // fields. all_frames:true because in Next Experience/Polaris the record
+      // form (with g_form + the script field) renders in a NESTED iframe — the
+      // top frame has no g_form. Frames without g_form no-op.
       matches: ['https://*.service-now.com/*'],
       js: ['src/content/mainworld.ts'],
       run_at: 'document_idle',
       world: 'MAIN',
-      all_frames: false,
+      all_frames: true,
     },
   ],
 
