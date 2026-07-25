@@ -11,6 +11,8 @@ Three features plus an optional AI layer:
 - **F3 — XML Mover** (Inspect tab): copy a record's unload XML on one instance and paste-import it into another, with an undo log.
 - **AI Generate** (Generate tab): turn a requirement into a plan of ServiceNow artifacts and create the dev/admin-facing ones on a sub-prod. Requires an LLM endpoint (see [Configure](#configure-first-run)).
 
+**New here?** Start with the 5-minute [Onboarding guide](./docs/ONBOARDING.md) (install → configure → first use, with screenshots).
+
 See [`handoff.md`](./handoff.md) for the full design, decisions, and milestones, and [`CLAUDE.md`](./CLAUDE.md) for the architecture guide.
 
 ## Stack
