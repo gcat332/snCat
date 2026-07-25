@@ -634,10 +634,13 @@ function buildImportScript(table: string, records: Record<string, string>[]): st
     `    var row = rows[i];`,
     `    var sysId = row['sys_id'];`,
     `    var gr = new GlideRecord(${JSON.stringify(table)});`,
-    `    gr.setWorkflow(false);`,
     `    var exists = sysId && gr.get(sysId);`,
     `    if (!exists) { gr.initialize(); if (sysId) gr.setNewGuidValue(sysId); }`,
     `    for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) gr.setValue(k, row[k]); }`,
+    // setWorkflow(false) MUST be the last thing before the DML: initialize()
+    // resets the flag, so setting it earlier would let business rules run.
+    `    gr.setWorkflow(false);`,
+    `    gr.autoSysFields(false);`,
     `    var ok = exists ? gr.update() : gr.insert();`,
     `    if (ok) { if (exists) { upd++; } else { ins++; } }`,
     `    else {`,
