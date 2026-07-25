@@ -1,5 +1,5 @@
 {
-  "phase": "fix",
+  "phase": "done",
   "baseline": {
     "head": "ab94407",
     "tests": {
@@ -65,85 +65,303 @@
       "id": "T-106",
       "type": "review",
       "target": "whole repo: dead code / unused features / unused deps & assets",
-      "status": "dispatched",
+      "status": "returned",
       "attempts": 1,
-      "evidence": "",
-      "notes": "user-requested cleanup sweep; deletions land as Phase 4 refactor tasks with Chesterton's Fence notes"
+      "evidence": "(inline in escalations.md)",
+      "notes": "user-requested cleanup sweep; deletions land as Phase 4 refactor tasks with Chesterton's Fence notes | CORRECTION: buildListXmlUrl SAFE-REMOVE was WRONG \u2014 live at main.ts:466 (saveXml list export). Kept."
     },
     {
       "id": "T-201",
       "type": "bugfix",
       "target": "src/core/prod-guard.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 35c2ea1; npm test 116 green",
       "notes": "prod-guard vanity-domain misclassification (high)"
     },
     {
       "id": "T-202",
       "type": "bugfix",
       "target": "src/core/sn-rest.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 90588cb; 121 green; apiWrite left for removal",
       "notes": "apiWrite/getText success-on-login-redirect (high) + char tests"
     },
     {
       "id": "T-203",
       "type": "bugfix",
       "target": "src/core/xml.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit b6da9f5; 124 green",
       "notes": "XML CDATA truncation (high)"
     },
     {
       "id": "T-204",
       "type": "bugfix",
       "target": "src/core/lint.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 5a69e9e; 126 green",
       "notes": "ruleUnconditionedQuery var-reuse mis-scope (high)"
     },
     {
       "id": "T-205",
       "type": "bugfix",
       "target": "src/core/sandbox-host.ts",
-      "status": "pending",
+      "status": "rejected",
       "attempts": 0,
       "evidence": "",
-      "notes": "ensure() readiness hang (high)"
+      "notes": "CLOSED won't-fix: code removed in T-209 (E-01 = Remove)."
     },
     {
       "id": "T-206",
       "type": "bugfix",
       "target": "src/manifest.config.ts",
-      "status": "pending",
+      "status": "rejected",
       "attempts": 0,
       "evidence": "",
-      "notes": "sandbox CSP connect-src egress (high)"
+      "notes": "CLOSED won't-fix: code removed in T-209 (E-01 = Remove)."
     },
     {
       "id": "T-207",
       "type": "bugfix",
       "target": "src/sidepanel/main.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 4869bc6; typecheck+build+126 tests (T-207-verify.txt)",
       "notes": "resolveScope fallback + deleteTestRecord host pin (2 high)"
     },
     {
       "id": "T-208",
       "type": "bugfix",
       "target": "src/background/index.ts",
-      "status": "pending",
-      "attempts": 0,
-      "evidence": "",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit df5a89b; typecheck+build+126 tests (T-208-verify.txt)",
       "notes": "runLlmJob stuck-running after SW death (high)"
+    },
+    {
+      "id": "T-209",
+      "type": "refactor",
+      "target": "L2 sandbox chain removal",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 0370633; single-pass build; 115 tests green",
+      "notes": "Owner-authorized E-01=Remove. Fixed stale CLAUDE.md rule."
+    },
+    {
+      "id": "T-210",
+      "type": "refactor",
+      "target": "dead direct Table-API write path (api.ts/api-client.ts/sn-rest.ts)",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit 3ee81de; typecheck+build+115 tests",
+      "notes": "T-106 SAFE-REMOVE; sequenced AFTER T-202 (done). Removes apiWrite+create/update/delete."
+    },
+    {
+      "id": "T-211",
+      "type": "refactor",
+      "target": "trivial dead code: buildListXmlUrl, dead CSS (.schema-row*, .dk-same), root java-emoji.svg dup",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "commit d0e88d9; CSS+SVG removed; buildListXmlUrl KEPT (live)",
+      "notes": "T-106 SAFE-REMOVE, ~64 LOC + dup asset"
+    },
+    {
+      "id": "T-301",
+      "type": "bugfix",
+      "target": "src/core/spec-runner.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "7004d6b; gate green",
+      "notes": "T-102: reference fields render as raw sys_id in Data Model 'References' column; + add spec-runner.test.ts (Phase-0 gap)"
+    },
+    {
+      "id": "T-302",
+      "type": "bugfix",
+      "target": "src/core/resolvers.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "fcdc0ab; gate green",
+      "notes": "T-102: variable_set/super_class reference labelFields show sys_id (displayValue:false in walk)"
+    },
+    {
+      "id": "T-303",
+      "type": "bugfix",
+      "target": "src/core/resolvers.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "3df0c4f; gate green",
+      "notes": "T-102: unanchored ACL nameSTARTSWITH pulls unrelated tables' ACLs"
+    },
+    {
+      "id": "T-304",
+      "type": "bugfix",
+      "target": "src/core/xml.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "ff69d71; gate green",
+      "notes": "T-104: add sys_scope/sys_package to SYSTEM_FIELDS; handle self-closing empty tags"
+    },
+    {
+      "id": "T-305",
+      "type": "bugfix",
+      "target": "src/core/lint.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "ae20bd2; gate green",
+      "notes": "T-103: stripComments not string-literal-aware -> false positives on pattern text in strings"
+    },
+    {
+      "id": "T-306",
+      "type": "bugfix",
+      "target": "src/core/llm.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "3eaf608; gate green",
+      "notes": "T-104: extractJson lastIndexOf brace heuristic -> spurious 'invalid JSON' on trailing text"
+    },
+    {
+      "id": "T-401",
+      "type": "bugfix",
+      "target": "src/core/sn-rest.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "92b6d56; gate green",
+      "notes": "T-101: no fetch timeout/AbortController on any call -> hung request never settles"
+    },
+    {
+      "id": "T-402",
+      "type": "bugfix",
+      "target": "src/core/api.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "cf1b7cc; gate green",
+      "notes": "T-101: unvalidated table name -> query-operator injection in dictionary/choices queries"
+    },
+    {
+      "id": "T-403",
+      "type": "bugfix",
+      "target": "src/core/llm.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "d9d9391; gate green",
+      "notes": "T-104: no endpoint allowlist + no redaction before sending script off-instance (handoff \u00a72.4)"
+    },
+    {
+      "id": "T-404",
+      "type": "bugfix",
+      "target": "src/background/index.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "e87ba83; gate green",
+      "notes": "T-104: no LLM job dedupe; no tabs.onRemoved cleanup -> races + unbounded storage"
+    },
+    {
+      "id": "T-405",
+      "type": "bugfix",
+      "target": "src/core/graph.ts+resolvers.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "bd4bbb6; gate green",
+      "notes": "T-102: BR->sys_db_object fetch amplification + sequential fetch (perf)"
+    },
+    {
+      "id": "T-406",
+      "type": "bugfix",
+      "target": "src/core/render-docx.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "ee18a2f; gate green",
+      "notes": "T-102: one styled Paragraph per code line -> bloated/slow .docx"
+    },
+    {
+      "id": "T-407",
+      "type": "bugfix",
+      "target": "src/core/render-html.ts+spec.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "b3786ea; gate green",
+      "notes": "T-102: esc() misses single-quote; logoDataUri unescaped; curl block lang:js; L3 anchor ids"
+    },
+    {
+      "id": "T-408",
+      "type": "bugfix",
+      "target": "src/core/context.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "af48cd0; gate green",
+      "notes": "T-104: route marker lastIndexOf picks wrong occurrence -> unknown classification"
+    },
+    {
+      "id": "T-409",
+      "type": "bugfix",
+      "target": "src/core/xml.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "474c593; gate green",
+      "notes": "T-203 residual: record-boundary regex foolable by CDATA containing the record's closing tag"
+    },
+    {
+      "id": "T-410",
+      "type": "bugfix",
+      "target": "src/sidepanel/main.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "31f56b4; gate green",
+      "notes": "T-105 reliability cluster: popup orphan, listener leak, storage quota, dup review delivery, startLlmJob error-write, TOCTOU snapshot, dead detect() branch, updateGuard dup"
+    },
+    {
+      "id": "T-411",
+      "type": "refactor",
+      "target": "src/sidepanel/main.ts",
+      "status": "verified",
+      "attempts": 1,
+      "evidence": "20b25ca; gate green",
+      "notes": "T-105 maintainability: extract runBgMarked/makeModal/confirmScopedWrite (behavior-preserving) | PARTIAL: makeModal extracted; runBgMarked deferred (heterogeneous sites, risk>reward)."
     }
   ],
   "findings": [],
-  "gate_checklist": {},
-  "branch": "pipeline/production-readiness"
+  "gate_checklist": {
+    "tests_green_ge_baseline": "PASS \u2014 153 pass / 15 files (baseline 110); +43 net tests across the pipeline",
+    "no_critical_high_open": "PASS \u2014 6 live highs fixed; 2 sandbox highs closed by removing the dead code; guardConfig(\u2192med) & egress(\u2192removed) adjudicated in decisions.log. Mediums/lows explicitly deferred (REPORT 'NOT done').",
+    "prod_build": "PASS \u2014 npm run build exit 0, single Vite pass.",
+    "lint_static": "WAIVER \u2014 no ESLint/Biome in repo; tsc --noEmit exit 0 is the sole static gate (documented).",
+    "no_secrets_debug_todo": "PASS \u2014 reviewed every fix diff; no secrets/API keys, no debug flags, no TODO-hacks, no commented-out code introduced. Removals only deleted dead code.",
+    "external_call_error_handling": "PASS \u2014 401/login-redirect/non-2xx/network + fetch TIMEOUT now handled on all calls (T-401)",
+    "changelog": "PASS \u2014 findings\u2192fix\u2192commit\u2192evidence table in .pipeline/REPORT.md.",
+    "rollback": "PASS \u2014 each fix is one isolated commit on pipeline/hardening off main; revert any by hash; branch has NO foreign commits so `git revert dc88652..5ccf50c` cleanly backs out the whole set."
+  },
+  "branch": "pipeline/production-readiness",
+  "concurrency_alert": "Separate active session committing to same branch: foreign commits 86ca92c/e732f49/39bf479 interleaved. All 9 pipeline fixes intact at d0e88d9; gate green. Halted commits to avoid collision. Awaiting user decision on de-entangling.",
+  "report": ".pipeline/REPORT.md",
+  "hardening_branch": {
+    "branch": "pipeline/hardening",
+    "base": "main (5239c73)",
+    "worktree": "scratchpad/hardening-wt",
+    "commits": [
+      "dc88652 prod-guard",
+      "3430084 sn-rest redirect",
+      "09a5551 xml CDATA",
+      "4a6fb41 lint",
+      "90fa2ce main.ts scope+host-pin",
+      "95fac05 llm job recovery",
+      "4b572ad sandbox removal",
+      "25ec196 write-path removal",
+      "5ccf50c css/svg"
+    ],
+    "gate": "typecheck 0, single-pass build 0, 115 tests pass, no foreign commits, pasteXml conflict hand-resolved (base semantics + checkTarget guard)"
+  },
+  "phase5": "PASS (independent) \u2014 gate green, 4/4 spot-checks PASS, 0 regressions",
+  "main_merged": "main fast-forwarded to fcdc0ab (highs+cleanup+6 medium correctness fixes); zero conflict",
+  "final_gate_medium": "typecheck 0, single-pass build 0, 125 tests pass (was 110 baseline)",
+  "wont_change": {
+    "prod-guard demo/training breadth (T-101 low)": "deliberate config \u2014 MFEC dev instance uses 'demo'; changing risks breaking the real dev host. Documented, not changed.",
+    "@codemirror/view dep (T-106 unclear)": "likely deliberate duplicate-instance pin for CodeMirror 6; leave."
+  },
+  "main_final": "main FF to 20b25ca (all highs+cleanup+medium+longtail); 153 tests; single-pass build",
+  "final_verify": "PASS (independent, whole branch) \u2014 5/5 spot-checks, 0 regressions, no dead refs/markers",
+  "merge_production_readiness": "MERGED into main via 23d9e9b (parents 20b25ca + b46e80d); pushed. pasteXml = XML-Mover sys_id-preserving import + hardening host-pin; saveXml merge-artifact fixed. typecheck 0, build single-pass 0, 153 tests."
 }

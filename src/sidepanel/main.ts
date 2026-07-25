@@ -1385,9 +1385,19 @@ async function consumeFixScriptRequest() {
     req.table && req.sysId
       ? { host: current?.host ?? '', table: req.table, sysId: req.sysId, scriptField: req.field }
       : null
+  // Set the Script kind honestly from the source, not the stale default. A known
+  // script table (sys_script, sys_script_client, …) maps to its real kind; an
+  // arbitrary field (widget template/css/server script) has no lint "kind", so
+  // map client-side fields to Client Script and everything else to Other. This
+  // stops a widget HTML template from showing as "Business Rule".
+  const kindFromTable = req.table ? scriptTableInfo(req.table)?.kind : undefined
+  const kindFromField: ScriptKind =
+    req.field === 'client_script' || req.field === 'link' ? 'client_script' : 'unknown'
+  scriptKind.value = kindFromTable ?? kindFromField
+  syncTimingVisibility()
   el('script-editor').scrollIntoView({ behavior: 'smooth', block: 'center' })
   el<HTMLTextAreaElement>('script-intent').focus()
-  showToast('Script loaded from ServiceNow — add the problem in “Intent & change requests”, then click “Java review”')
+  showToast('Script loaded — describe the problem in “Intent”, then click “Java review”.')
 }
 
 /** Toggle the BR timing selector. */
