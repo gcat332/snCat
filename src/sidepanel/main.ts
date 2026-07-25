@@ -6,7 +6,7 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildListXmlUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
@@ -661,6 +661,7 @@ async function pasteXmlInner() {
   )
   const list = document.createElement('div')
   list.className = 'diff-kv'
+  const okSysIds: string[] = []
   results.forEach((r, i) => {
     const row = document.createElement('div')
     row.className = 'info-row'
@@ -668,9 +669,24 @@ async function pasteXmlInner() {
       elText('span', 'info-name', `${i + 1}. ${r.sysId.slice(0, 8)}…`),
       elText('span', r.ok ? 'dk-tag sent' : 'error', r.ok ? `✓ ${r.action}` : `✗ ${r.error ?? 'failed'}`),
     )
+    if (r.ok) {
+      okSysIds.push(r.sysId)
+      const copyBtn = elText('button', 'tool-btn', 'Copy sys_id')
+      copyBtn.addEventListener('click', () => void copyText(r.sysId, copyBtn))
+      const openBtn = elText('button', 'tool-btn', 'Open')
+      openBtn.addEventListener('click', () => void chrome.tabs.create({ url: buildRecordFormUrl(host, clip.table, r.sysId) }))
+      row.append(copyBtn, openBtn)
+    }
     list.append(row)
   })
   xmlOut.append(list)
+  if (okSysIds.length) {
+    const openList = elText('button', 'btn btn-ghost', `Open ${okSysIds.length} record(s) as list`)
+    openList.addEventListener('click', () =>
+      void chrome.tabs.create({ url: buildListFormUrl(host, clip.table, `sys_idIN${okSysIds.join(',')}`) }),
+    )
+    xmlOut.append(openList)
+  }
   if (!undoAvailable) xmlOut.append(elText('div', 'info-sub', 'Note: Undo is unavailable for this import (nothing undoable or storage full).'))
 
   // Consume the clip once anything imported (matches prior one-shot semantics).
@@ -1729,6 +1745,7 @@ function updateGuard() {
   simRun.disabled = !l3Allowed
   l3Create.disabled = !(l3Allowed && current)
   l3Delete.disabled = !(l3Allowed && l3Created)
+  l3Open.hidden = !l3Created
 }
 
 /** Open the Background Scripts page and pre-fill it with the given script. */
@@ -1868,7 +1885,12 @@ async function runOnInstance() {
 const l3Table = el<HTMLInputElement>('l3-table')
 const l3Fields = el<HTMLTextAreaElement>('l3-fields')
 const l3Create = el<HTMLButtonElement>('l3-create')
+const l3Open = el<HTMLButtonElement>('l3-open')
 const l3Delete = el<HTMLButtonElement>('l3-delete')
+
+l3Open.addEventListener('click', () => {
+  if (l3Created) void chrome.tabs.create({ url: buildRecordFormUrl(l3Created.host, l3Created.table, l3Created.sysId) })
+})
 const l3Results = simResults // shared results area in the Test Runner card
 
 let l3Allowed = false
