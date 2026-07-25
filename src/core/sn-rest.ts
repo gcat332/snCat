@@ -12,7 +12,6 @@ import {
   buildRecordUrl,
   buildStatsCountUrl,
   buildDictionaryUrl,
-  buildCreateUrl,
   type ApiRequest,
   type ApiResult,
   type DictionaryField,
@@ -78,51 +77,6 @@ async function apiGetText(url: string, deps: RestDeps): Promise<ApiResult<string
   }
   if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` }
   return { ok: true, data: await res.text() }
-}
-
-async function apiWrite<T>(
-  host: string,
-  url: string,
-  method: 'POST' | 'DELETE' | 'PATCH',
-  deps: RestDeps,
-  body?: unknown,
-): Promise<ApiResult<T>> {
-  // HARD GATE (handoff §2 decision 5): refuse to write unless sub-prod.
-  const verdict = classifyInstance(host, deps.guardConfig)
-  if (!verdict.allowed) return { ok: false, status: 403, error: `Prod guard: ${verdict.reason}` }
-
-  if (!deps.token) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Writes need X-UserToken (g_ck), which was not captured on this page. Open a classic ServiceNow form and retry.',
-    }
-  }
-  const headers: Record<string, string> = { Accept: 'application/json', 'X-UserToken': deps.token }
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
-
-  let res: Response
-  try {
-    res = await fetch(url, {
-      method,
-      credentials: 'same-origin',
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-  } catch (err) {
-    return { ok: false, status: 0, error: `Network error: ${(err as Error).message}` }
-  }
-
-  if (!res.ok) {
-    return { ok: false, status: res.status, error: (await safeErrorDetail(res)) || `HTTP ${res.status}` }
-  }
-  if (res.status === 204) return { ok: true, data: undefined as T }
-  try {
-    const parsed = (await res.json()) as { result: T }
-    return { ok: true, data: parsed.result }
-  } catch {
-    return { ok: true, data: undefined as T }
-  }
 }
 
 /**
@@ -192,18 +146,6 @@ export async function executeApiRequest(
       if (!res.ok) return res
       return { ok: true, data: { count: Number(res.data.stats?.count ?? '0') } }
     }
-    case 'create':
-      return apiWrite<RecordRow>(req.host, buildCreateUrl(req.host, req.table), 'POST', deps, req.fields)
-    case 'update':
-      return apiWrite<RecordRow>(
-        req.host,
-        buildRecordUrl(req.host, req.table, req.sysId),
-        'PATCH',
-        deps,
-        req.fields,
-      )
-    case 'delete':
-      return apiWrite<void>(req.host, buildRecordUrl(req.host, req.table, req.sysId), 'DELETE', deps)
     case 'text':
       return apiGetText(req.url, deps)
     case 'bgrun':

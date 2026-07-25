@@ -58,10 +58,6 @@ export type ApiRequest =
   | { op: 'count'; host: string; table: string; query?: string }
   | { op: 'record'; host: string; table: string; sysId: string; fields?: string[] }
   | { op: 'dictionary'; host: string; table: string }
-  // Layer 3 WRITES — gated by the prod guard before any fetch.
-  | { op: 'create'; host: string; table: string; fields: Record<string, string> }
-  | { op: 'update'; host: string; table: string; sysId: string; fields: Record<string, string> }
-  | { op: 'delete'; host: string; table: string; sysId: string }
   // Raw text GET (e.g. record unload XML) — read-only, not JSON.
   | { op: 'text'; host: string; url: string }
   // Run a server-side background script (sys.scripts.do) — prod-guarded WRITE.
@@ -119,14 +115,6 @@ export function buildListXmlUrl(host: string, table: string, query = '', limit?:
   params.set('XML', '')
   if (limit && limit > 0) params.set('sysparm_record_count', String(limit))
   return `${origin(host)}/${encodeURIComponent(table)}_list.do?${params.toString()}`
-}
-
-/** Build the Table API collection URL (for create/POST). */
-export function buildCreateUrl(host: string, table: string): string {
-  const params = new URLSearchParams()
-  params.set('sysparm_display_value', 'all')
-  params.set('sysparm_exclude_reference_link', 'true')
-  return `${origin(host)}${API_BASE}/table/${encodeURIComponent(table)}?${params.toString()}`
 }
 
 /** Build an Aggregate (stats) API URL that returns a row count for a query. */
