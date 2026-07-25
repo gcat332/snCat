@@ -1,0 +1,11 @@
+=== T-208 verify Sat Jul 25 01:56:20 +07 2026 ===
+--- typecheck ---
+> tsc --noEmit
+
+TYPECHECK_EXIT=0
+--- build ---
+dist/public/sandbox/sandbox.js  5.71 kB │ gzip: 2.13 kB
+✓ built in 33ms
+BUILD_EXIT=0
+--- test ---
+      Tests  126 passed (126)

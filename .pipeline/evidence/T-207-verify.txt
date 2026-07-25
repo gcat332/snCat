@@ -1,0 +1,14 @@
+=== T-207 verify Sat Jul 25 01:52:22 +07 2026 ===
+--- typecheck ---
+> snjava@0.0.0 typecheck
+> tsc --noEmit
+
+TYPECHECK_EXIT=0
+--- build ---
+rendering chunks...
+computing gzip size...
+dist/public/sandbox/sandbox.js  5.71 kB │ gzip: 2.13 kB
+✓ built in 33ms
+BUILD_EXIT=0
+--- test ---
+      Tests  126 passed (126)
