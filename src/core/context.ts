@@ -162,11 +162,15 @@ function extractNextRecordRoute(
   pathname: string,
 ): { table: string; sysId: string } | null {
   const segs = pathname.split('/').filter(Boolean)
-  const rIdx = segs.lastIndexOf('record')
-  if (rIdx !== -1 && segs[rIdx + 1] && segs[rIdx + 2]) {
-    const table = segs[rIdx + 1]
-    const sysId = segs[rIdx + 2]
-    if (TABLE_RE.test(table) && isSysId(sysId)) {
+  // A path may contain more than one "record" marker (e.g. a related-list
+  // drill-down nested under a record route). Anchoring on the last one can
+  // land on a segment not followed by a valid <table>/<sysId> pair, so scan
+  // occurrences and take the FIRST marker followed by a valid pair.
+  for (let i = 0; i < segs.length; i++) {
+    if (segs[i] !== 'record') continue
+    const table = segs[i + 1]
+    const sysId = segs[i + 2]
+    if (table && sysId && TABLE_RE.test(table) && isSysId(sysId)) {
       return { table, sysId }
     }
   }
@@ -180,11 +184,15 @@ function extractNextRecordRoute(
  */
 function extractNextListRoute(pathname: string): string | null {
   const segs = pathname.split('/').filter(Boolean)
-  const lIdx = segs.lastIndexOf('list')
-  if (lIdx === -1) return null
-  const next = segs[lIdx + 1]
-  if (next && next !== 'params' && TABLE_RE.test(next)) return next
-  // params form: try to find a "tableName" pair later in the path
+  // As with record routes, a path may carry more than one "list" marker; scan
+  // occurrences and take the FIRST marker immediately followed by a valid
+  // <table> segment rather than unconditionally anchoring on the last.
+  for (let i = 0; i < segs.length; i++) {
+    if (segs[i] !== 'list') continue
+    const next = segs[i + 1]
+    if (next && next !== 'params' && TABLE_RE.test(next)) return next
+  }
+  // params form: try to find a "tableName" pair anywhere in the path
   const tnIdx = segs.indexOf('tableName')
   if (tnIdx !== -1 && segs[tnIdx + 1] && TABLE_RE.test(segs[tnIdx + 1])) {
     return segs[tnIdx + 1]

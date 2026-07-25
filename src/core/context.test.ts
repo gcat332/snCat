@@ -79,6 +79,35 @@ describe('parseServiceNowContext — Polaris / Next Experience', () => {
     const ctx = parseServiceNowContext(`https://${HOST}/now/sow/list/incident`)
     expect(ctx).toMatchObject({ table: 'incident', sysId: null, view: 'list', ui: 'workspace' })
   })
+
+  it('resolves the earlier valid record route when a later "record" segment is invalid', () => {
+    // Related-list drill-down nested under a valid record route: the LAST
+    // "record" segment (…/record/task/not-a-sysid) is NOT a valid table/sysId
+    // pair, but the EARLIER one (record/incident/<SID2>) is. Must not fall
+    // through to unknown by anchoring on the last occurrence.
+    const ctx = parseServiceNowContext(
+      `https://${HOST}/now/sow/record/incident/${SID2}/record/task/not-a-sysid`,
+    )
+    expect(ctx).toMatchObject({ table: 'incident', sysId: SID2, view: 'form', ui: 'workspace' })
+  })
+
+  it('resolves the earlier valid record route when the last "record" has no trailing pair', () => {
+    // Trailing "record" segment with only one following segment: the last
+    // occurrence cannot form a table/sysId pair at all.
+    const ctx = parseServiceNowContext(
+      `https://${HOST}/now/cwf/agent/record/task/${SID}/related/record/child`,
+    )
+    expect(ctx).toMatchObject({ table: 'task', sysId: SID, view: 'form', ui: 'workspace' })
+  })
+
+  it('resolves the earlier valid list route when a later "list" segment is invalid', () => {
+    // Nested list drill-down: last "list" is followed by "params" with no
+    // tableName pair; the earlier list/incident is the valid target.
+    const ctx = parseServiceNowContext(
+      `https://${HOST}/now/sow/list/incident/detail/list/params`,
+    )
+    expect(ctx).toMatchObject({ table: 'incident', sysId: null, view: 'list', ui: 'workspace' })
+  })
 })
 
 describe('parseServiceNowContext — edge cases', () => {
