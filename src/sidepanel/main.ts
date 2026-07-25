@@ -19,6 +19,7 @@ import {
 import { importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
 import {
   buildUndoLog,
+  buildUndoScript,
   partitionPreview,
   buildImportScript,
   type ImportRowResult,
@@ -668,8 +669,78 @@ async function pasteXmlInner() {
   await refreshXmlControls()
 }
 
-/** Temporary stub — Task 3 replaces this with the real undo-controls renderer. */
-async function renderUndoControls(_host: string): Promise<void> {}
+/** Show/refresh the "Undo last import" button for the current host, if a log exists. */
+async function renderUndoControls(host: string): Promise<void> {
+  const store = await chrome.storage.local.get(`undoLog:${host}`)
+  const log = store[`undoLog:${host}`] as UndoLog | undefined
+  if (!log || log.rows.length === 0) {
+    // Clear any stale button even when there's nothing to show — overlapping
+    // detect() calls (onActivated + onUpdated) can race here, so the removal
+    // must happen right before this early return too, not just before append.
+    document.querySelectorAll('#undo-last').forEach((n) => n.remove())
+    return
+  }
+
+  // Remove ALL matching nodes (not just getElementById's first match) right
+  // before appending, so the last-completing concurrent call always leaves
+  // exactly one button instead of orphaning duplicates from a race.
+  document.querySelectorAll('#undo-last').forEach((n) => n.remove())
+  const btn = document.createElement('button')
+  btn.id = 'undo-last'
+  btn.className = 'btn btn-ghost'
+  const nIns = log.rows.filter((r) => r.action === 'insert').length
+  const nUpd = log.rows.length - nIns
+  btn.textContent = `Undo last import (${nIns} inserted, ${nUpd} updated)`
+  btn.addEventListener('click', () => void undoLastImport(host))
+  xmlOut.before(btn)
+}
+
+/** Re-entrancy guard: a double-click must not stack two confirm dialogs / undo runs. */
+let undoInFlight = false
+
+/** Reverse the last import on `host`: delete inserts, restore updated fields. */
+async function undoLastImport(host: string): Promise<void> {
+  if (undoInFlight) return
+  undoInFlight = true // set synchronously, before any await, so a second click no-ops
+  try {
+    const store = await chrome.storage.local.get(`undoLog:${host}`)
+    const log = store[`undoLog:${host}`] as UndoLog | undefined
+    if (!log || log.rows.length === 0) return
+    if (
+      !(await confirmDialog(
+        `Undo the last import on ${host}?\n\nDeletes ${log.rows.filter((r) => r.action === 'insert').length} inserted record(s) and restores ${log.rows.filter((r) => r.action === 'update').length} updated record(s) to their previous values.`,
+      ))
+    ) {
+      return
+    }
+    xmlOut.replaceChildren(elText('div', 'empty', `Undoing ${log.rows.length} change(s) on ${host}…`))
+    const res = await runBackground(host, buildUndoScript(log.table, log.rows), {})
+    if (!res.ok) {
+      xmlOut.replaceChildren(elText('div', 'error', res.error))
+      return
+    }
+    const parsed = parseSnjava(extractBgOutput(res.data), 'snJava:undo ') as { rows?: Array<{ sysId: string; ok: boolean; error?: string }> } | null
+    const undone = parsed?.rows ?? []
+    const okIds = new Set(undone.filter((r) => r.ok).map((r) => r.sysId))
+    const okCount = okIds.size
+
+    // Keep only the rows that FAILED to undo; clear the log if all undone.
+    const remaining = log.rows.filter((r) => !okIds.has(r.sysId))
+    if (remaining.length === 0) {
+      await chrome.storage.local.remove(`undoLog:${host}`)
+    } else {
+      await chrome.storage.local.set({ [`undoLog:${host}`]: { ...log, rows: remaining } })
+    }
+
+    xmlOut.replaceChildren(
+      elText('div', okCount === log.rows.length ? 'ok-banner' : 'error', `${okCount === log.rows.length ? '✓' : '⚠'} Undid ${okCount}/${log.rows.length} change(s)`),
+    )
+    undone.filter((r) => !r.ok).forEach((r) => xmlOut.append(elText('div', 'error', `${r.sysId.slice(0, 8)}…: ${r.error ?? 'failed'}`)))
+    await renderUndoControls(host)
+  } finally {
+    undoInFlight = false
+  }
+}
 
 /** Background script that inserts a record with the given fields (scope-aware). */
 function buildRecordInsertScript(table: string, fields: Record<string, string>): string {
@@ -2733,6 +2804,7 @@ async function detect() {
     pickerTable.value = current.table
   }
   void refreshXmlControls()
+  if (current?.host) void renderUndoControls(current.host)
   void maybeAutoLoadScript()
 }
 
