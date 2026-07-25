@@ -17,6 +17,13 @@ import {
   runBackground,
 } from '@core/api-client'
 import { importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
+import {
+  buildUndoLog,
+  partitionPreview,
+  buildImportScript,
+  type ImportRowResult,
+  type UndoLog,
+} from '@core/f3-import'
 import { diffStats, lineDiff } from '@core/diff'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
@@ -562,47 +569,107 @@ async function pasteXmlInner() {
     return
   }
   const noun = rows.length === 1 ? 'record' : 'records'
+
+  // PREVIEW (read-only, works on any instance): which sys_ids already exist?
+  xmlOut.replaceChildren(elText('div', 'empty', `Checking ${rows.length} ${noun} on ${host}…`))
+  const ids = rows.map((r) => r['sys_id']).filter(Boolean)
+  const q = await queryRecords(host, clip.table, {
+    query: `sys_idIN${ids.join(',')}`,
+    fields: ['sys_id'],
+    limit: rows.length,
+  })
+  if (!q.ok) {
+    xmlOut.replaceChildren(elText('div', 'error', `Preview failed: ${q.error}`))
+    return
+  }
+  const existing = new Set((q.data as Array<Record<string, unknown>>).map((r) => String(r['sys_id'])))
+  const preview = partitionPreview(rows, existing)
+  const nUpd = preview.filter((p) => p.action === 'update').length
+  const nIns = preview.length - nUpd
+
+  // Render the preview table.
+  xmlOut.replaceChildren()
+  xmlOut.append(elText('div', 'sim-after-title', `Preview — ${nIns} insert, ${nUpd} update`))
+  const tbl = document.createElement('div')
+  tbl.className = 'diff-kv'
+  preview.forEach((p, i) => {
+    const r = document.createElement('div')
+    r.className = 'info-row'
+    r.append(
+      elText('span', 'info-name', `${i + 1}. ${p.sysId.slice(0, 8)}…`),
+      elText('span', p.action === 'update' ? 'dk-tag engine' : 'dk-tag sent', p.action === 'update' ? '⚠ UPDATE' : 'INSERT'),
+    )
+    tbl.append(r)
+  })
+  xmlOut.append(tbl)
+
   if (
     !(await confirmDialog(
-      `Import ${rows.length} "${clip.table}" ${noun} into ${host}?\n\nReplicates ServiceNow's direct XML import: the original sys_id is preserved (setNewGuidValue) and it is INSERT_OR_UPDATE by sys_id — a matching record is updated, never duplicated. Business rules are skipped, exactly as the native XML import does. No update set is used.`,
+      `Import ${rows.length} "${clip.table}" ${noun} into ${host}?\n\n${nIns} new record(s) inserted (sys_id preserved), ${nUpd} existing record(s) UPDATED (overwritten). Business rules skipped. You can Undo this afterwards.`,
     ))
   ) {
+    xmlOut.append(elText('div', 'info-sub', 'Cancelled — nothing was written.'))
     return
   }
-  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${rows.length} ${noun} via background script…`))
-  const bg = buildImportScript(clip.table, rows)
-  const res = await runBackground(host, bg, {})
+
+  // IMPORT (prod-guarded write).
+  xmlOut.append(elText('div', 'empty', `Importing ${rows.length} ${noun}…`))
+  const res = await runBackground(host, buildImportScript(clip.table, rows), {})
   if (!res.ok) {
-    xmlOut.replaceChildren(elText('div', 'error', res.error))
+    xmlOut.append(elText('div', 'error', res.error))
     return
   }
-  const out = extractBgOutput(res.data)
-  const m = out.match(/snJava: moved ins=(\d+) upd=(\d+) total=(\d+)/i)
-  const errm = out.match(/snJava: errors (.+)/i)
-  if (m) {
-    const [, ins, upd, total] = m
-    const done = Number(ins) + Number(upd)
-    xmlOut.replaceChildren(
-      elText(
-        'div',
-        done === Number(total) ? 'ok-banner' : 'error',
-        `${done === Number(total) ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} — ${ins} inserted, ${upd} updated`,
-      ),
-    )
-    if (errm) {
-      const e = elText('div', 'error', errm[1].slice(0, 600))
-      e.style.marginTop = '6px'
-      xmlOut.append(e)
-    }
-    if (done > 0) {
-      await chrome.storage.local.remove('xmlClip')
-      await refreshXmlControls()
-      xmlOut.append(elText('div', 'info-sub', 'Copied XML cleared — Copy again to import another set.'))
-    }
-  } else {
-    xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
+  const parsed = parseSnjava(extractBgOutput(res.data), 'snJava:import ') as { rows?: ImportRowResult[] } | null
+  const results: ImportRowResult[] = parsed?.rows ?? []
+  if (results.length === 0) {
+    xmlOut.append(elText('div', 'error', `Import may have failed — output: ${extractBgOutput(res.data).slice(0, 400)}`))
+    return
   }
+  const okCount = results.filter((r) => r.ok).length
+
+  // Persist the undo log (last import per host). Quota failure ⇒ warn, don't fail.
+  const log: UndoLog = buildUndoLog(host, clip.table, results, new Date().toISOString())
+  let undoAvailable = log.rows.length > 0
+  if (undoAvailable) {
+    try {
+      await chrome.storage.local.set({ [`undoLog:${host}`]: log })
+    } catch {
+      undoAvailable = false
+    }
+  }
+
+  // Per-row result list.
+  xmlOut.replaceChildren(
+    elText(
+      'div',
+      okCount === results.length ? 'ok-banner' : 'error',
+      `${okCount === results.length ? '✓' : '⚠'} Imported ${okCount}/${results.length} ${clip.table} ${noun}`,
+    ),
+  )
+  const list = document.createElement('div')
+  list.className = 'diff-kv'
+  results.forEach((r, i) => {
+    const row = document.createElement('div')
+    row.className = 'info-row'
+    row.append(
+      elText('span', 'info-name', `${i + 1}. ${r.sysId.slice(0, 8)}…`),
+      elText('span', r.ok ? 'dk-tag sent' : 'error', r.ok ? `✓ ${r.action}` : `✗ ${r.error ?? 'failed'}`),
+    )
+    list.append(row)
+  })
+  xmlOut.append(list)
+  if (!undoAvailable) xmlOut.append(elText('div', 'info-sub', 'Note: Undo is unavailable for this import (nothing undoable or storage full).'))
+
+  // Consume the clip once anything imported (matches prior one-shot semantics).
+  if (okCount > 0) {
+    await chrome.storage.local.remove('xmlClip')
+  }
+  await renderUndoControls(host) // defined in Task 3
+  await refreshXmlControls()
 }
+
+/** Temporary stub — Task 3 replaces this with the real undo-controls renderer. */
+async function renderUndoControls(_host: string): Promise<void> {}
 
 /** Background script that inserts a record with the given fields (scope-aware). */
 function buildRecordInsertScript(table: string, fields: Record<string, string>): string {
@@ -615,51 +682,6 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
     `  ${sets}`,
     `var id = gr.insert();`,
     `if (id) { gs.info('snJava: imported ' + id); } else { gs.error('snJava: insert failed'); }`,
-  ].join('\n')
-}
-
-/**
- * Background script that imports unload-XML rows the way a ServiceNow XML import
- * behaves, but with a real GlideRecord insert (which actually writes data rows).
- * Keyed by sys_id (INSERT_OR_UPDATE): a matching record is UPDATED, a missing one
- * is INSERTED preserving the original sys_id (setNewGuidValue) — so it is
- * idempotent and never duplicates. Business rules are skipped (setWorkflow(false)
- * set immediately before the DML, since initialize() resets that flag).
- * Reports "moved ins=.. upd=.. total=..".
- */
-function buildImportScript(table: string, records: Record<string, string>[]): string {
-  const T = JSON.stringify(table)
-  return [
-    `var rows = ${JSON.stringify(records)};`,
-    // Only drop what would break on the target or is recomputed. Audit fields are
-    // preserved (like a real XML import) via autoSysFields(false).
-    `var DROP = {sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
-    `var ins = 0, upd = 0, errs = [];`,
-    `for (var i = 0; i < rows.length; i++) {`,
-    `  try {`,
-    `    var row = rows[i];`,
-    `    var sysId = row['sys_id'];`,
-    // Existence check on its own GlideRecord (INSERT_OR_UPDATE by sys_id).
-    `    var found = null;`,
-    `    if (sysId) { var chk = new GlideRecord(${T}); if (chk.get(sysId)) { found = chk; } }`,
-    `    if (found) {`,
-    `      for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) found.setValue(k, row[k]); }`,
-    `      found.setWorkflow(false); found.autoSysFields(false);`,
-    `      if (found.update()) { upd++; } else { errs.push('row ' + i + ': ' + (found.getLastErrorMessage() || 'update rejected')); }`,
-    `    } else {`,
-    // Fresh record for the insert; setNewGuidValue AFTER setValue, BEFORE insert.
-    `      var gr = new GlideRecord(${T});`,
-    `      gr.initialize();`,
-    `      for (var k2 in row) { if (row.hasOwnProperty(k2) && k2 !== 'sys_id' && !DROP[k2]) gr.setValue(k2, row[k2]); }`,
-    `      if (sysId) gr.setNewGuidValue(sysId);`,
-    `      gr.setWorkflow(false); gr.autoSysFields(false);`,
-    `      var id = gr.insert();`,
-    `      if (id) { ins++; } else { errs.push('row ' + i + ': ' + (gr.getLastErrorMessage() || 'insert rejected (ACL / mandatory / data policy)')); }`,
-    `    }`,
-    `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
-    `}`,
-    `gs.info('snJava: moved ins=' + ins + ' upd=' + upd + ' total=' + rows.length);`,
-    `if (errs.length) { gs.info('snJava: errors ' + errs.slice(0, 5).join(' || ')); }`,
   ].join('\n')
 }
 
