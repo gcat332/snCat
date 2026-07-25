@@ -19,6 +19,7 @@ declare global {
     g_form?: {
       getTableName?: () => string
       getUniqueValue?: () => string
+      getValue?: (f: string) => string
     }
     g_ck?: string
   }
@@ -50,9 +51,75 @@ function post() {
   }
 }
 
+const SCRIPT_FIELDS = ['script', 'script_plain', 'client_script']
+
+// Best-effort injection of a 🔧 "fix with AI" icon next to script fields on
+// classic ServiceNow forms. This must NEVER throw on the page — a DOM quirk
+// here must not break the g_form snapshot / fetch bridge above. Idempotency
+// is scoped to the CURRENT mount's DOM (via a `data-snjava-fix` attribute on
+// the icon itself), not a module-level record of field names — that way a
+// fresh render after in-page AJAX navigation (classic UI record switch) gets
+// its own icon instead of silently staying icon-less forever.
+function injectFixIcons() {
+  const gf = window.g_form
+  if (!gf?.getValue) return
+  for (const field of SCRIPT_FIELDS) {
+    let value: string
+    try {
+      value = gf.getValue(field)
+    } catch {
+      continue // field not on this form
+    }
+    if (typeof value !== 'string') continue
+    // Classic form: the field control lives under an element whose id is the field name.
+    const control = document.getElementById(field)
+    const mount = control?.closest('.form-group, td, .sn-widget-list_v2') ?? control?.parentElement
+    if (!mount) continue
+    if (mount.querySelector(`[data-snjava-fix="${field}"]`)) continue
+    const icon = document.createElement('span')
+    icon.dataset.snjavaFix = field
+    icon.textContent = '🔧'
+    icon.title = 'snJava — fix this script with AI'
+    icon.style.cssText = 'cursor:pointer;margin-left:6px;font-size:14px;user-select:none'
+    icon.addEventListener('click', () => {
+      let script = ''
+      try {
+        script = gf.getValue!(field)
+      } catch {
+        return
+      }
+      window.postMessage(
+        {
+          kind: 'sncat:fix-script',
+          payload: {
+            table: gf.getTableName?.() ?? null,
+            sysId: gf.getUniqueValue?.() ?? null,
+            field,
+            script,
+          },
+        },
+        window.location.origin,
+      )
+    })
+    mount.appendChild(icon)
+  }
+}
+
+function safeInjectFixIcons() {
+  try {
+    injectFixIcons()
+  } catch {
+    /* never break the page for icon injection */
+  }
+}
+
 // Post once now, and again shortly after in case g_form initializes late.
 post()
-setTimeout(post, 800)
+safeInjectFixIcons()
+setTimeout(() => {
+  post()
+  safeInjectFixIcons()
+}, 800)
 
 interface FetchMessage {
   kind: 'sncat:fetch'

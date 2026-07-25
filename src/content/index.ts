@@ -35,6 +35,7 @@ window.addEventListener('message', (event) => {
   const data = event.data as
     | GFormSnapshot
     | { kind: 'sncat:fetch-result'; id: string; result: ApiResult<unknown> }
+    | { kind: 'sncat:fix-script'; payload?: unknown }
     | undefined
 
   if (data?.kind === 'sncat:g_form') {
@@ -48,6 +49,9 @@ window.addEventListener('message', (event) => {
       pending.delete(data.id)
       resolve(data.result)
     }
+  } else if (data?.kind === 'sncat:fix-script') {
+    const p = (event.data as { payload?: unknown }).payload
+    chrome.storage.session.set({ fixScriptRequest: p }).catch(() => {})
   }
 })
 

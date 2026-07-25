@@ -8,10 +8,12 @@
  * own review/generate result and the panel restores it on reopen / tab switch.
  */
 import {
+  runFixScript,
   runGeneratePlan,
   runJavaReview,
   runSpecNarrative,
   testLlmConnection,
+  type FixScriptInput,
   type LlmConfig,
   type NarrativeInput,
   type ReviewInput,
@@ -20,7 +22,7 @@ import {
 interface LlmRunMessage {
   kind: 'snjava:llm-run'
   tabId: number
-  op: 'review' | 'generate' | 'narrative' | 'test'
+  op: 'review' | 'generate' | 'narrative' | 'test' | 'fixscript'
   payload: ReviewInput & {
     requirement?: string
     table?: string
@@ -75,6 +77,8 @@ async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
         })
       } else if (msg.op === 'test') {
         outcome = await testLlmConnection(msg.payload as unknown as LlmConfig)
+      } else if (msg.op === 'fixscript') {
+        outcome = await runFixScript(msg.payload as unknown as FixScriptInput)
       } else {
         outcome = await runSpecNarrative(msg.payload as NarrativeInput)
       }
@@ -135,6 +139,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     jobKey(tabId, 'generate'),
     jobKey(tabId, 'narrative'),
     jobKey(tabId, 'test'),
+    jobKey(tabId, 'fixscript'),
   ]
   chrome.storage.session
     .remove(keys)
