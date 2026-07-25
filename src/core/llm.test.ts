@@ -45,6 +45,16 @@ describe('extractJson', () => {
   it('parses JSON embedded in prose', () => {
     expect(extractJson('Here you go: {"a":3} thanks')).toEqual({ a: 3 })
   })
+  it('parses a valid object whose string values and trailing prose both contain braces (T-104)', () => {
+    const reply =
+      '{"optimizedScript":"function f(){ return {a:1}; }","testScript":"gs.info(\'x\');","notes":["ok"]}' +
+      '\n\nHope this helps! :)}'
+    expect(extractJson(reply)).toEqual({
+      optimizedScript: 'function f(){ return {a:1}; }',
+      testScript: "gs.info('x');",
+      notes: ['ok'],
+    })
+  })
   it('throws on non-JSON', () => {
     expect(() => extractJson('no json here')).toThrow()
   })

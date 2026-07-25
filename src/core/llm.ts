@@ -130,13 +130,49 @@ export function extractJson(text: string): unknown {
   try {
     return JSON.parse(candidate.trim())
   } catch {
-    const start = candidate.indexOf('{')
-    const end = candidate.lastIndexOf('}')
-    if (start !== -1 && end > start) {
-      return JSON.parse(candidate.slice(start, end + 1))
+    const slice = firstBalancedObject(candidate)
+    if (slice !== null) {
+      return JSON.parse(slice)
     }
     throw new Error('Model did not return valid JSON.')
   }
+}
+
+/**
+ * Scan from the first `{` and return the substring through its true matching
+ * `}`, tracking brace depth. Braces inside string literals are ignored, and
+ * `\` escapes inside strings are respected, so trailing prose (or a JSON value
+ * that is itself a script full of `{`/`}`) cannot fool the end detection.
+ * Returns null if no balanced object is present.
+ */
+function firstBalancedObject(text: string): string | null {
+  const start = text.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth++
+    } else if (ch === '}') {
+      depth--
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return null
 }
 
 function coerceResult(raw: unknown): ReviewResult {
