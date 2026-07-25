@@ -43,6 +43,17 @@ function containsFill(node: unknown, fill: string, seen = new Set<unknown>()): b
 
 const CODE_SHADING = 'F4F6FB' // SURFACE_ALT — the fill unique to code blocks
 
+// True if `text` appears verbatim as a string leaf anywhere in the docx object graph
+// (a TextRun's text content is stored as a raw string element inside its `w:t` node).
+function containsText(node: unknown, text: string, seen = new Set<unknown>()): boolean {
+  if (typeof node === 'string') return node === text
+  if (node == null || typeof node !== 'object') return false
+  if (seen.has(node)) return false
+  seen.add(node)
+  const n = node as any
+  return Object.keys(n).some((k) => containsText(n[k], text, seen))
+}
+
 describe('buildDocxDocument / packing', () => {
   it('builds a Document and packs to a non-empty buffer', async () => {
     const document = buildDocxDocument(doc)
@@ -76,5 +87,16 @@ describe('buildDocxDocument / packing', () => {
     // Packing still succeeds.
     const buffer = await Packer.toBuffer(document)
     expect(buffer.length).toBeGreaterThan(500)
+  })
+
+  it('includes an AI-generated overview paragraph when aiOverview is set', () => {
+    const withAi: SpecDocument = { ...doc, aiOverview: 'Prose about the module.' }
+    const documentWithAi = buildDocxDocument(withAi)
+    expect(containsText(documentWithAi, 'Prose about the module.')).toBe(true)
+    expect(containsText(documentWithAi, 'Overview (AI-generated)')).toBe(true)
+
+    const documentWithoutAi = buildDocxDocument(doc)
+    expect(containsText(documentWithoutAi, 'Prose about the module.')).toBe(false)
+    expect(containsText(documentWithoutAi, 'Overview (AI-generated)')).toBe(false)
   })
 })

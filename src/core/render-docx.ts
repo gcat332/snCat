@@ -115,6 +115,19 @@ export function buildDocxDocument(doc: SpecDocument, logo?: Uint8Array): Documen
   children.push(new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun({ text: doc.title, color: BLUE_DARK })] }))
   children.push(new Paragraph({ children: [new TextRun({ text: doc.subtitle, color: '5B6172' })] }))
 
+  if (doc.aiOverview) {
+    children.push(
+      new Paragraph({
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 240 },
+        children: [new TextRun({ text: 'Overview (AI-generated)', color: BLUE_DARK })],
+      }),
+    )
+    for (const para of doc.aiOverview.split(/\n\n+/)) {
+      children.push(new Paragraph({ children: [new TextRun({ text: para, color: INK })] }))
+    }
+  }
+
   const metaRows = doc.meta.filter((m) => m.value).map((m) => [m.key, m.value])
   if (metaRows.length) children.push(dataTable(['Field', 'Value'], metaRows))
 

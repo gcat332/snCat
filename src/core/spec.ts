@@ -25,6 +25,8 @@ export interface SpecDocument {
   subtitle: string
   meta: { key: string; value: string }[]
   sections: SpecSection[]
+  /** Optional AI-drafted narrative overview, rendered as a labeled block by both renderers. */
+  aiOverview?: string
 }
 
 export interface ComposeInput {
@@ -38,6 +40,8 @@ export interface ComposeInput {
   primaryTable?: string
   /** Dictionary fields of the primary table. */
   schema?: SpecSchemaField[]
+  /** Optional AI-drafted narrative overview to pass through onto the SpecDocument. */
+  aiOverview?: string
 }
 
 export interface SpecSchemaField {
@@ -104,6 +108,7 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     title,
     subtitle,
     meta,
+    aiOverview: input.aiOverview,
     sections: [
       overviewSection(rootKind, isTableSpec ? tableDisplay : rootLabel, instance, rootFields, isTableSpec),
       dataModelSection(table, rootFields, artifacts, schema),

@@ -131,4 +131,9 @@ describe('composeSpec', () => {
     expect(code.some((b) => b.code === 'active=true')).toBe(true)
     expect(code.some((b) => b.code.includes('hasRole'))).toBe(true)
   })
+
+  it('passes aiOverview through composeSpec when provided', () => {
+    const doc = composeSpec({ instance: 'x', rootTable: 'incident', rootLabel: 'Incident', rootFields: {}, artifacts: [], aiOverview: 'This module handles incidents.' })
+    expect(doc.aiOverview).toBe('This module handles incidents.')
+  })
 })

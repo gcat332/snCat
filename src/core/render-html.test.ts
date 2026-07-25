@@ -85,4 +85,13 @@ describe('renderSpecHtml', () => {
     const html = renderSpecHtml(d)
     expect(html).toMatch(/<h4 class="sub3" id="[^"]+">HelperBR<\/h4>/)
   })
+
+  it('renders a labeled AI-generated overview block when aiOverview is set, omits when absent', () => {
+    const base = { title: 'T', subtitle: 'S', meta: [], sections: [] }
+    const withAi = renderSpecHtml({ ...base, aiOverview: 'Prose about the module.' })
+    expect(withAi).toContain('AI-generated')
+    expect(withAi).toContain('Prose about the module.')
+    const without = renderSpecHtml(base)
+    expect(without).not.toContain('AI-generated')
+  })
 })
