@@ -63,6 +63,18 @@ describe('root resolver dispatch', () => {
   })
 })
 
+describe('resolveTable ACL fetch (T-102: sibling-table leak)', () => {
+  it('anchors the ACL query to the table\'s own record + field ACLs, not sibling tables', () => {
+    const specs = RESOLVERS.table!(art('sys_db_object', { name: 'incident' }, 'table'))
+    const acl = specs.find((s) => s.table === 'sys_security_acl')!
+    expect(acl).toBeDefined()
+    // Anchored form: exact table name OR field ACLs prefixed with `incident.`
+    expect(acl.query).toContain('name=incident^ORnameSTARTSWITHincident.')
+    // Must NOT use a bare STARTSWITH that would also catch `incident_sla`, `incident_task`, etc.
+    expect(acl.query).not.toMatch(/nameSTARTSWITHincident(?![.])/)
+  })
+})
+
 describe('SUPPORTED_ROOT_TABLES', () => {
   it('includes the priority root types', () => {
     expect(SUPPORTED_ROOT_TABLES.has('sys_script')).toBe(true)

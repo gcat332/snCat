@@ -173,7 +173,10 @@ const resolveTable: Resolver = (a) => {
     },
     {
       table: 'sys_security_acl',
-      query: `nameSTARTSWITH${name}`,
+      // Anchored to this table only: exact record-level ACL `<table>` OR
+      // field-level ACLs `<table>.<field>`. A bare STARTSWITH would also
+      // catch sibling tables like `incident_sla`/`incident_task` (T-102).
+      query: `name=${name}^ORnameSTARTSWITH${name}.`,
       type: 'acl',
       relation: 'ACL',
       labelField: 'name',
