@@ -27,3 +27,8 @@ npm-debug.log*
 
 # Large brand source (kept locally, not committed; logos extracted into public/brand/)
 *.pptx
+
+# Playwright output
+/test-results/
+/playwright-report/
+/blob-report/

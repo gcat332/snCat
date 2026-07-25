@@ -11,10 +11,12 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:dist": "node scripts/verify-dist.mjs"
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "test:smoke": "playwright test"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.26",
+    "@playwright/test": "^1.62.0",
     "@types/chrome": "^0.0.270",
     "@types/node": "^22.5.0",
     "typescript": "^5.5.4",
