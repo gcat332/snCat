@@ -578,6 +578,7 @@ async function pasteXmlInner() {
     query: `sys_idIN${ids.join(',')}`,
     fields: ['sys_id'],
     limit: rows.length,
+    displayValue: false,
   })
   if (!q.ok) {
     xmlOut.replaceChildren(elText('div', 'error', `Preview failed: ${q.error}`))
