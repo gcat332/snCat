@@ -66,6 +66,62 @@ function normalizeFormat(f: unknown): LlmFormat {
   return f === 'openai' || f === 'agenthub' ? f : 'anthropic'
 }
 
+/**
+ * handoff §2 decision 4 (T-104, security): customer script content leaves the
+ * instance when we call the LLM. Before it does, mask obvious secrets so
+ * proprietary credentials are never sent off-box. Redaction is deliberately
+ * TARGETED — it only touches string literals that (a) are assigned to a
+ * secret-named identifier/property, (b) are the argument of a secret-keyed
+ * gs.getProperty(...) call, or (c) look like a hardcoded key (long hex/base64
+ * or an sk-/pk- token). Ordinary code — GlideRecord queries, field names,
+ * table names — is left byte-for-byte intact so the review stays useful.
+ */
+const REDACTED = '***REDACTED***'
+/** Identifier/property/property-key names that imply a secret value. */
+const SECRET_NAME = /password|passwd|pwd|pw|secret|token|api[_.\- ]?key|apikey|credential/i
+/** A string literal that itself looks like a hardcoded key/credential. */
+const KEY_LITERAL =
+  /^(?:sk|pk|rk)[-_][A-Za-z0-9_-]{8,}$|^[A-Fa-f0-9]{32,}$|^[A-Za-z0-9+/]{32,}={0,2}$/
+
+export function redactScript(script: string): string {
+  if (!script) return script
+  const mask = (q: string): string => `${q}${REDACTED}${q}`
+  let out = script
+  // (a) assignment / property to a secret-named identifier: name = "..." | name: "..."
+  out = out.replace(
+    /([A-Za-z_$][\w$]*)(\s*[:=]\s*)(["'])((?:\\.|(?!\3).)*)\3/g,
+    (full, name: string, op: string, q: string) => (SECRET_NAME.test(name) ? `${name}${op}${mask(q)}` : full),
+  )
+  // (b) gs.getProperty('...secret.key...') — mask the property-key argument
+  out = out.replace(
+    /(getProperty\s*\(\s*)(["'])((?:\\.|(?!\2).)*)\2/g,
+    (full, pre: string, q: string, content: string) => (SECRET_NAME.test(content) ? `${pre}${mask(q)}` : full),
+  )
+  // (c) standalone hardcoded-key-looking literals
+  out = out.replace(/(["'])((?:\\.|(?!\1).)*)\1/g, (full, q: string, content: string) =>
+    KEY_LITERAL.test(content) ? mask(q) : full,
+  )
+  return out
+}
+
+/**
+ * handoff §2 decision 4 (T-104, security): the endpoint is user-configured, so
+ * a typo'd or tampered value could silently exfiltrate script content anywhere.
+ * Only known-good provider hosts (over https) are permitted; everything else is
+ * refused before any fetch. Hosts mirror manifest.config.ts host_permissions
+ * plus the two hosted-provider APIs the format adapters target.
+ */
+const ALLOWED_ENDPOINT_HOSTS = new Set(['api.anthropic.com', 'api.openai.com', 'dev-agenthub.mfec.co.th'])
+
+export function isAllowedEndpoint(url: string): boolean {
+  try {
+    const u = new URL(url)
+    return u.protocol === 'https:' && ALLOWED_ENDPOINT_HOSTS.has(u.hostname)
+  } catch {
+    return false
+  }
+}
+
 const KIND_LABEL: Record<ScriptKind, string> = {
   business_rule: 'Business Rule',
   client_script: 'Client Script',
@@ -105,7 +161,7 @@ export function buildReviewPrompt(input: ReviewInput): { system: string; user: s
     '',
     'SCRIPT:',
     '```javascript',
-    input.script,
+    redactScript(input.script),
     '```',
     '',
     'Reply with a JSON object with these keys:',
@@ -268,7 +324,7 @@ export function buildPlanPrompt(requirement: string, ctx: PlanContext): { system
 
   const user = [
     'Requirement:',
-    requirement,
+    redactScript(requirement),
     '',
     ctx.table ? `Current table: ${ctx.table}` : 'No specific table.',
     `Target application scope: ${ctx.scope || 'Global'}. All artifacts are created in THIS scope, which the user already selected in the UI.`,
@@ -367,6 +423,12 @@ async function callAgentHub(cfg: LlmConfig, system: string, user: string): Promi
 
 /** Dispatch a system+user prompt to the configured provider, returning raw text. */
 async function callProvider(cfg: LlmConfig, system: string, user: string): Promise<string> {
+  // T-104 security gate: never send script content to an unrecognised endpoint.
+  if (!isAllowedEndpoint(cfg.endpoint)) {
+    throw new Error(
+      `Refusing to send: endpoint "${cfg.endpoint}" is not on the allowlist (${[...ALLOWED_ENDPOINT_HOSTS].join(', ')}). Check the configured LLM endpoint.`,
+    )
+  }
   if (cfg.format === 'openai') return callOpenai(cfg, system, user)
   if (cfg.format === 'agenthub') return callAgentHub(cfg, system, user)
   return callAnthropic(cfg, system, user)
