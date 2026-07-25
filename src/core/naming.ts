@@ -1,21 +1,48 @@
 /**
- * Naming convention for generated (F1/Generate-tab) artifacts.
+ * Naming convention for generated (Generate-tab) artifacts.
  *
- * Script records created by the Generate tab get a name prefixed with
- * `[MF-AI][<CODE>] ` so they're easy to spot and attribute in the instance,
- * where CODE is a short module code derived from the table the script targets
- * (incident -> INC, change_request -> CHG, …). Only script records are
- * prefixed (Business Rule, Client Script, Script Include, Fix Script); fields,
- * ACLs and choices keep the model's chosen name.
+ * Configuration records that an admin/developer browses get their display name
+ * prefixed with `[MF-AI][<CODE>] ` so they're easy to spot and attribute in the
+ * instance. CODE is a short module code derived from the table the artifact
+ * targets (incident -> INC, change_request -> CHG, …).
+ *
+ * We prefix dev/admin-facing config (Business Rule, Client Script, Script
+ * Include, Fix Script, UI Policy, UI Action, notifications, scheduled jobs, …)
+ * but NEVER:
+ *   - structural records whose name is meaningful/constrained — Field
+ *     (sys_dictionary), Table (sys_db_object), ACL (sys_security_acl);
+ *   - end-user-facing text — Choice (sys_choice) labels appear in dropdowns to
+ *     real users, not just admins;
+ *   - business data records (any non-`sys*` table).
  */
 
-/** Metadata tables whose created records are "scripts" and get the name prefix. */
-export const SCRIPT_TARGET_TABLES = new Set<string>([
-  'sys_script', // Business Rule
-  'sys_script_client', // Client Script
-  'sys_script_include', // Script Include
-  'sys_script_fix', // Fix Script
+/** Config tables whose name must stay untouched (structural or user-facing). */
+const NO_PREFIX_TABLES = new Set<string>([
+  'sys_dictionary', // Field — column name is an identifier
+  'sys_db_object', // Table — name is an identifier
+  'sys_security_acl', // ACL — name is "operation.table"
+  'sys_choice', // Choice — label is shown to end users
 ])
+
+/** Tables whose human-visible name lives in a column other than `name`. */
+const NAME_FIELD_OVERRIDES: Record<string, string> = {
+  sys_ui_policy: 'short_description',
+  sys_data_policy2: 'short_description',
+}
+
+/**
+ * The column that should carry the `[MF-AI]` name prefix for a created
+ * artifact, or `null` if this record type must keep its name untouched. Only
+ * configuration/metadata tables (`sys*`) qualify — never business data.
+ */
+export function namePrefixField(targetTable: string | null | undefined): string | null {
+  const t = (targetTable ?? '').trim().toLowerCase()
+  if (!t || NO_PREFIX_TABLES.has(t)) return null
+  if (t in NAME_FIELD_OVERRIDES) return NAME_FIELD_OVERRIDES[t]
+  // Configuration/metadata records only — never rename business data records.
+  if (!t.startsWith('sys')) return null
+  return 'name'
+}
 
 /** Well-known ServiceNow module codes (mirrors the platform number prefixes). */
 const MODULE_CODES: Record<string, string> = {
@@ -58,10 +85,11 @@ export function moduleCode(table: string | null | undefined): string {
 const PREFIX_RE = /^\s*\[MF-AI\]\[[^\]]*\]\s*/
 
 /**
- * Prepend the `[MF-AI][<CODE>] ` convention to a script record name. Idempotent:
- * an existing prefix (any code) is stripped first, so re-running never stacks.
+ * Prepend the `[MF-AI][<CODE>] ` convention to an artifact's display name.
+ * Idempotent: an existing prefix (any code) is stripped first, so re-running
+ * never stacks.
  */
-export function prefixScriptName(name: string, table: string | null | undefined): string {
+export function prefixArtifactName(name: string, table: string | null | undefined): string {
   const base = (name ?? '').replace(PREFIX_RE, '').trim()
   return `[MF-AI][${moduleCode(table)}] ${base}`.trim()
 }
