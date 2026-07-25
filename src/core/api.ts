@@ -69,6 +69,21 @@ function origin(host: string): string {
   return `https://${host}`
 }
 
+/**
+ * Valid ServiceNow identifier (table or column/element name): letters, digits,
+ * and underscores only. Anything else (spaces, `^`, `=`, `:`, ...) could be
+ * decoded and interpreted by ServiceNow as extra encoded-query operators, so
+ * such names must never be interpolated into a sysparm_query value (T-101).
+ */
+const IDENTIFIER_RE = /^[a-z0-9_]+$/i
+
+/** Guard an identifier before interpolating it into an encoded-query value. */
+function assertIdentifier(kind: string, value: string): void {
+  if (!IDENTIFIER_RE.test(value)) {
+    throw new Error(`Invalid ${kind} name: ${value}`)
+  }
+}
+
 /** Build a Table API query URL. */
 export function buildTableQueryUrl(
   host: string,
@@ -130,6 +145,7 @@ export function buildStatsCountUrl(host: string, table: string, query?: string):
  * Filters to rows that have an element (skips the collection row) for this table.
  */
 export function buildDictionaryUrl(host: string, table: string): string {
+  assertIdentifier('table', table)
   const query = `name=${table}^elementISNOTEMPTY^ORDERBYelement`
   return buildTableQueryUrl(host, 'sys_dictionary', {
     query,
@@ -141,6 +157,8 @@ export function buildDictionaryUrl(host: string, table: string): string {
 
 /** Encoded query for a table+field's choice options (against sys_choice). */
 export function buildChoicesQuery(table: string, element: string): string {
+  assertIdentifier('table', table)
+  assertIdentifier('element', element)
   return `name=${table}^element=${element}^inactive=false^ORDERBYsequence^ORDERBYlabel`
 }
 

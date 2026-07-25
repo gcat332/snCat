@@ -4,6 +4,7 @@ import {
   buildRecordUrl,
   buildStatsCountUrl,
   buildDictionaryUrl,
+  buildChoicesQuery,
   cellValue,
   cellDisplay,
   pickLabel,
@@ -53,6 +54,43 @@ describe('URL builders', () => {
     expect(url.pathname).toBe('/api/now/table/sys_dictionary')
     expect(url.searchParams.get('sysparm_query')).toContain('name=incident')
     expect(url.searchParams.get('sysparm_query')).toContain('elementISNOTEMPTY')
+  })
+})
+
+describe('identifier injection guard (T-101)', () => {
+  const VALID_TABLES = ['incident', 'sys_user', 'u_my_table', 'x_scope_app_table']
+
+  it('rejects a table name with an encoded-query metacharacter in buildDictionaryUrl', () => {
+    expect(() => buildDictionaryUrl(HOST, 'incident^ORx')).toThrow()
+    expect(() => buildDictionaryUrl(HOST, 'incident^ORr:payload=1')).toThrow()
+    expect(() => buildDictionaryUrl(HOST, 'foo bar')).toThrow()
+    expect(() => buildDictionaryUrl(HOST, 'name=incident^ORDERBYsys_id')).toThrow()
+  })
+
+  it('accepts valid table names in buildDictionaryUrl and produces the expected query', () => {
+    for (const table of VALID_TABLES) {
+      const url = new URL(buildDictionaryUrl(HOST, table))
+      expect(url.pathname).toBe('/api/now/table/sys_dictionary')
+      expect(url.searchParams.get('sysparm_query')).toBe(
+        `name=${table}^elementISNOTEMPTY^ORDERBYelement`,
+      )
+    }
+  })
+
+  it('rejects table/element names with metacharacters in buildChoicesQuery', () => {
+    expect(() => buildChoicesQuery('incident^ORx', 'state')).toThrow()
+    expect(() => buildChoicesQuery('incident', 'state^ORx')).toThrow()
+    expect(() => buildChoicesQuery('incident', 'state=1^ORDERBYx')).toThrow()
+    expect(() => buildChoicesQuery('foo bar', 'state')).toThrow()
+  })
+
+  it('accepts valid names in buildChoicesQuery and produces the expected query', () => {
+    expect(buildChoicesQuery('incident', 'state')).toBe(
+      'name=incident^element=state^inactive=false^ORDERBYsequence^ORDERBYlabel',
+    )
+    expect(buildChoicesQuery('u_my_table', 'u_field')).toBe(
+      'name=u_my_table^element=u_field^inactive=false^ORDERBYsequence^ORDERBYlabel',
+    )
   })
 })
 
