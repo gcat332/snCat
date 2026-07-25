@@ -20,37 +20,62 @@ function jobKey(tabId: number, op: string): string {
   return `llmJob:${tabId}:${op}`
 }
 
+// In-memory set of jobKeys with a run currently in flight in THIS worker.
+// Two concurrent snjava:llm-run messages for the same tab+op (a double-click, a
+// panel retry) would otherwise both run and race to write the final result to
+// the same storage key — and a stale earlier run finishing after a fresh retry
+// would silently overwrite the newer result. We coalesce instead: while a run
+// for a key is in flight, a second request is ignored and the in-flight run's
+// result stands. The key is cleared once its run fully settles (see finally).
+const inFlight = new Set<string>()
+
 async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
   const key = jobKey(msg.tabId, msg.op)
-  // startedAt lets the panel detect a job that never finished: if this worker is
-  // killed mid-fetch (browser/extension update, OS suspend, memory eviction) the
-  // done/error write below never happens, so the panel would otherwise spin on
-  // 'running' forever. It treats a running entry older than a threshold as failed.
-  await setJob(key, { status: 'running', op: msg.op, startedAt: Date.now() })
-  let entry: unknown
-  try {
-    const outcome =
-      msg.op === 'review'
-        ? await runJavaReview(msg.payload)
-        : await runGeneratePlan(msg.payload.requirement ?? '', {
-            table: msg.payload.table,
-            sysId: msg.payload.sysId,
-            fields: msg.payload.fields,
-            scope: msg.payload.scope,
-          })
-    entry = { status: 'done', op: msg.op, outcome }
-  } catch (err) {
-    entry = { status: 'error', op: msg.op, error: (err as Error).message }
+  if (inFlight.has(key)) {
+    // A run for this tab+op is already active. Coalesce: do not start a second
+    // run whose stale result could clobber the in-flight one. Report 'running'
+    // so the panel keeps waiting on the existing job's result.
+    return { status: 'running', op: msg.op }
   }
-  await setJob(key, entry)
-  return entry
+  inFlight.add(key)
+  try {
+    // startedAt lets the panel detect a job that never finished: if this worker
+    // is killed mid-fetch (browser/extension update, OS suspend, memory
+    // eviction) the done/error write below never happens, so the panel would
+    // otherwise spin on 'running' forever. It treats a running entry older than
+    // a threshold as failed.
+    await setJob(key, { status: 'running', op: msg.op, startedAt: Date.now() })
+    let entry: unknown
+    try {
+      const outcome =
+        msg.op === 'review'
+          ? await runJavaReview(msg.payload)
+          : await runGeneratePlan(msg.payload.requirement ?? '', {
+              table: msg.payload.table,
+              sysId: msg.payload.sysId,
+              fields: msg.payload.fields,
+              scope: msg.payload.scope,
+            })
+      entry = { status: 'done', op: msg.op, outcome }
+    } catch (err) {
+      entry = { status: 'error', op: msg.op, error: (err as Error).message }
+    }
+    await setJob(key, entry)
+    return entry
+  } finally {
+    // Clear only after the final write settles, so no second run can begin (and
+    // race the final write) until this one is fully persisted.
+    inFlight.delete(key)
+  }
 }
 
 async function setJob(key: string, value: unknown): Promise<void> {
   try {
     await chrome.storage.session.set({ [key]: value })
-  } catch {
-    /* session storage may be unavailable in some contexts — ignore */
+  } catch (err) {
+    // Surface the failure: silently dropping the final done/error write would
+    // leave the panel stuck on 'running'. Nothing else can retry this here.
+    console.error('[snJava] failed to persist job entry', key, err)
   }
 }
 
@@ -77,6 +102,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true // keep the channel open for the async response
   }
   return undefined
+})
+
+// Purge a tab's job entries when it closes. llmJob entries can hold full script
+// bodies / plan artifacts; left behind they accumulate in chrome.storage.session
+// toward its ~10MB quota. Remove both ops for the closed tab.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const keys = [jobKey(tabId, 'review'), jobKey(tabId, 'generate')]
+  chrome.storage.session
+    .remove(keys)
+    .catch((err) => console.error('[snJava] failed to purge job entries for tab', tabId, err))
 })
 
 // Open the side panel when the toolbar icon is clicked.
