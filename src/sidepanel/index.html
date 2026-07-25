@@ -298,6 +298,14 @@
               <button class="btn" id="spec-pdf" type="button">PDF</button>
               <button class="btn" id="spec-docx" type="button">Word</button>
             </div>
+            <div class="btn-row" id="spec-ai-row" style="margin-top: 8px" hidden>
+              <button class="btn" id="spec-ai" type="button">✨ Add AI narrative</button>
+              <span class="spinner" id="spec-ai-spinner" hidden></span>
+            </div>
+            <p class="ai-note" id="spec-ai-status" hidden>
+              Uses your configured LLM endpoint to draft a plain-English overview. Script bodies are redacted before
+              sending.
+            </p>
             <p class="ai-note">Template output — no AI-generated prose (LLM off).</p>
           </div>
         </section>

@@ -34,6 +34,8 @@ import {
   saveLlmConfig,
   type LlmConfig,
   type LlmFormat,
+  type NarrativeInput,
+  type NarrativeOutcome,
   type PlanArtifact,
   type PlanOutcome,
   type ReviewOutcome,
@@ -52,9 +54,9 @@ let currentTabId: number | null = null
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
-  | { status: 'running'; op: 'review' | 'generate'; startedAt?: number }
-  | { status: 'done'; op: 'review' | 'generate'; outcome: unknown }
-  | { status: 'error'; op: 'review' | 'generate'; error: string }
+  | { status: 'running'; op: 'review' | 'generate' | 'narrative'; startedAt?: number }
+  | { status: 'done'; op: 'review' | 'generate' | 'narrative'; outcome: unknown }
+  | { status: 'error'; op: 'review' | 'generate' | 'narrative'; error: string }
 
 /**
  * A 'running' job is stale once its startedAt is older than this. The background
@@ -74,17 +76,18 @@ function isStaleJob(entry: LlmJobEntry): boolean {
   return Date.now() - entry.startedAt > STALE_JOB_MS
 }
 
-function jobKey(tabId: number, op: 'review' | 'generate'): string {
+function jobKey(tabId: number, op: 'review' | 'generate' | 'narrative'): string {
   return `llmJob:${tabId}:${op}`
 }
 
-function applyJob(op: 'review' | 'generate', entry: LlmJobEntry | undefined) {
+function applyJob(op: 'review' | 'generate' | 'narrative', entry: LlmJobEntry | undefined) {
   if (op === 'review') applyReviewJob(entry)
-  else applyGenerateJob(entry)
+  else if (op === 'generate') applyGenerateJob(entry)
+  else applyNarrativeJob(entry)
 }
 
 /** Start an LLM job in the background so it survives the panel closing. */
-async function startLlmJob(op: 'review' | 'generate', payload: unknown): Promise<boolean> {
+async function startLlmJob(op: 'review' | 'generate' | 'narrative', payload: unknown): Promise<boolean> {
   if (currentTabId == null) return false
   const tabId = currentTabId
   try {
@@ -2152,12 +2155,20 @@ const specOutput = el('spec-output')
 const specHtmlBtn = el<HTMLButtonElement>('spec-html')
 const specPdfBtn = el<HTMLButtonElement>('spec-pdf')
 const specDocxBtn = el<HTMLButtonElement>('spec-docx')
+const specAiRow = el('spec-ai-row')
+const specAiBtn = el<HTMLButtonElement>('spec-ai')
+const specAiSpinner = el('spec-ai-spinner')
+const specAiStatus = el('spec-ai-status')
 
 let specRoot: ArtifactRef | null = null
 let specArtifacts: ArtifactRef[] = []
 let specPrimaryTable = ''
 let specSchema: import('@core/spec').SpecSchemaField[] = []
 const specExcluded = new Set<string>()
+/** AI-drafted overview text for the current spec, or null until generated (or re-discovered). */
+let specAiOverview: string | null = null
+/** Once the user consents to a narrative send, don't ask again for the rest of this panel session. */
+let narrativeDontAskAgain = false
 let logoDataUriCache: string | undefined
 
 const ARTIFACT_GROUP: Record<string, string> = {
@@ -2230,6 +2241,9 @@ async function discoverArtifacts() {
     specPrimaryTable = outcome.primaryTable
     specSchema = outcome.schema
     specExcluded.clear()
+    // A fresh discovery invalidates any prior AI overview — it described a
+    // different root/artifact set and must not silently attach to this one.
+    specAiOverview = null
     renderChecklist()
   } catch (err) {
     specChecklist.replaceChildren(elText('div', 'error', (err as Error).message))
@@ -2276,11 +2290,36 @@ function renderChecklist() {
   }
 
   specOutput.hidden = false
+  void updateSpecAiButton()
+}
+
+/** Artifacts the user hasn't unchecked — the set actually documented/sent. */
+function includedSpecArtifacts(): ArtifactRef[] {
+  return specArtifacts.filter((a) => !specExcluded.has(a.id))
+}
+
+/**
+ * Show/enable the "Add AI narrative" button only when there's an LLM endpoint
+ * configured (mirrors the configured-check the Generate/Review tabs apply to
+ * their own outcomes) and there's something discovered to narrate. Called
+ * wherever the spec preview/export buttons are (re)enabled after discovery.
+ */
+async function updateSpecAiButton() {
+  const configured = !!(await loadLlmConfig())
+  const show = configured && specArtifacts.length > 0
+  specAiRow.hidden = !show
+  specAiStatus.hidden = !show
+  if (show) {
+    specAiBtn.disabled = false
+    specAiSpinner.hidden = true
+    specAiStatus.textContent =
+      'Uses your configured LLM endpoint to draft a plain-English overview. Script bodies are redacted before sending.'
+  }
 }
 
 function buildSpecDoc(): SpecDocument | null {
   if (!specRoot || !current) return null
-  const included = specArtifacts.filter((a) => !specExcluded.has(a.id))
+  const included = includedSpecArtifacts()
   return composeSpec({
     instance: current.host,
     rootTable: specRoot.table,
@@ -2289,6 +2328,7 @@ function buildSpecDoc(): SpecDocument | null {
     artifacts: included,
     primaryTable: specPrimaryTable,
     schema: specSchema,
+    aiOverview: specAiOverview ?? undefined,
   })
 }
 
@@ -2359,6 +2399,107 @@ async function exportDocx() {
   }
 }
 
+/* ---------- Spec AI narrative ---------- */
+
+/** Best-effort host for the consent dialog; falls back to the raw string if it doesn't parse as a URL. */
+function hostOf(endpoint: string): string {
+  try {
+    return new URL(endpoint).host || endpoint
+  } catch {
+    return endpoint
+  }
+}
+
+/**
+ * Consent-gated: send a redacted summary of the discovered artifacts to the
+ * configured LLM endpoint and draft a plain-English overview for the spec.
+ * Runs in the background (op 'narrative'), same plumbing as review/generate.
+ */
+async function specAiNarrative() {
+  if (!specRoot) return
+  const included = includedSpecArtifacts()
+
+  if (!narrativeDontAskAgain) {
+    const cfg = await loadLlmConfig()
+    const host = cfg ? hostOf(cfg.endpoint) : 'the configured endpoint'
+    const n = included.length
+    const proceed = await confirmDialog(
+      `Send a summary of "${specRoot.table}" (${n} artifact${n === 1 ? '' : 's'}) to ${host} to draft an AI overview?\n\n` +
+        `Script bodies are redacted (secrets/URLs stripped) before sending. You won't be asked again this session.`,
+    )
+    if (!proceed) return
+    // Consent is per-session, not per-request: once the user proceeds here, don't
+    // re-prompt for subsequent narrative sends until the panel is reloaded.
+    narrativeDontAskAgain = true
+  }
+
+  const input: NarrativeInput = {
+    table: specRoot.table,
+    rootLabel: specRoot.label,
+    artifacts: included.map((a) => ({ name: a.label, type: a.type, script: a.fields.script })),
+  }
+
+  specAiBtn.disabled = true
+  specAiSpinner.hidden = false
+  specAiStatus.hidden = false
+  specAiStatus.textContent = 'Asking the AI for a design overview… (keeps running if you close this panel)'
+
+  const started = await startLlmJob('narrative', input)
+  if (!started) {
+    specAiBtn.disabled = false
+    specAiSpinner.hidden = true
+    specAiStatus.textContent = 'Open a ServiceNow tab first.'
+    return
+  }
+  applyNarrativeJob({ status: 'running', op: 'narrative', startedAt: Date.now() })
+}
+
+/** Render the narrative job from a job entry (running / done / error). */
+function applyNarrativeJob(entry: LlmJobEntry | undefined) {
+  if (!entry) return
+  if (entry.status === 'running') {
+    // Stale (or timestamp-less) running entry: the background worker was killed
+    // mid-fetch, so no done/error will ever arrive — surface it as retryable.
+    if (isStaleJob(entry)) {
+      specAiSpinner.hidden = true
+      specAiBtn.disabled = false
+      specAiStatus.hidden = false
+      specAiStatus.textContent = "The previous request didn't finish (the background worker was interrupted). Try again."
+      return
+    }
+    specAiSpinner.hidden = false
+    specAiBtn.disabled = true
+    specAiStatus.hidden = false
+    specAiStatus.textContent = 'Asking the AI for a design overview… (keeps running if you close this panel)'
+    return
+  }
+  specAiSpinner.hidden = true
+  specAiBtn.disabled = false
+
+  if (entry.status === 'error') {
+    specAiStatus.hidden = false
+    specAiStatus.textContent = `AI error: ${entry.error}`
+    return
+  }
+  const outcome = entry.outcome as NarrativeOutcome
+  if (!outcome.configured) {
+    // Config was removed between click and completion — nothing to attach to.
+    specAiRow.hidden = true
+    specAiStatus.hidden = true
+    return
+  }
+  if (!outcome.ok) {
+    showToast(outcome.error)
+    specAiStatus.hidden = false
+    specAiStatus.textContent = `AI error: ${outcome.error}`
+    return
+  }
+  specAiOverview = outcome.text
+  specAiStatus.hidden = false
+  specAiStatus.textContent = 'AI overview attached — included in the next export.'
+  showToast('AI overview added')
+}
+
 /* ---------- AI settings ---------- */
 
 async function loadAiSettings() {
@@ -2381,6 +2522,9 @@ async function saveAiSettings() {
   aiSaved.hidden = false
   setTimeout(() => (aiSaved.hidden = true), 1500)
   aiStatus.textContent = 'AI settings saved. Run “Java review” to use them.'
+  // Reflect the newly-configured (or newly-cleared) endpoint on the Spec tab
+  // immediately, without requiring a re-discovery.
+  void updateSpecAiButton()
 }
 
 /* ---------- Generate (plan of artifacts) ---------- */
@@ -2740,9 +2884,11 @@ async function restoreLlmJobs() {
   const store = await chrome.storage.session.get([
     jobKey(currentTabId, 'review'),
     jobKey(currentTabId, 'generate'),
+    jobKey(currentTabId, 'narrative'),
   ])
   applyReviewJob(store[jobKey(currentTabId, 'review')] as LlmJobEntry | undefined)
   applyGenerateJob(store[jobKey(currentTabId, 'generate')] as LlmJobEntry | undefined)
+  applyNarrativeJob(store[jobKey(currentTabId, 'narrative')] as LlmJobEntry | undefined)
 }
 
 // Background writes job results to storage — reflect changes for the active tab.
@@ -2750,8 +2896,10 @@ chrome.storage.session.onChanged.addListener((changes) => {
   if (currentTabId == null) return
   const rk = jobKey(currentTabId, 'review')
   const gk = jobKey(currentTabId, 'generate')
+  const nk = jobKey(currentTabId, 'narrative')
   if (changes[rk]) applyReviewJob(changes[rk].newValue as LlmJobEntry | undefined)
   if (changes[gk]) applyGenerateJob(changes[gk].newValue as LlmJobEntry | undefined)
+  if (changes[nk]) applyNarrativeJob(changes[nk].newValue as LlmJobEntry | undefined)
 })
 
 /* ---------- detect + wiring ---------- */
@@ -2881,6 +3029,7 @@ specWalk.addEventListener('click', discoverArtifacts)
 specHtmlBtn.addEventListener('click', exportHtml)
 specPdfBtn.addEventListener('click', exportPdf)
 specDocxBtn.addEventListener('click', exportDocx)
+specAiBtn.addEventListener('click', specAiNarrative)
 
 chrome.tabs.onActivated.addListener(detect)
 chrome.tabs.onUpdated.addListener((_id, info, tab) => {
