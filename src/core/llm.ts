@@ -477,6 +477,19 @@ async function callProvider(cfg: LlmConfig, system: string, user: string): Promi
   return callAnthropic(cfg, system, user)
 }
 
+/** Quick connectivity/auth check against the configured provider. */
+export async function testLlmConnection(
+  config: LlmConfig,
+): Promise<{ ok: boolean; error?: string; ms?: number }> {
+  const t0 = Date.now()
+  try {
+    await callProvider(config, 'You are a connection test.', 'Reply with the single word: OK')
+    return { ok: true, ms: Date.now() - t0 }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 export type ReviewOutcome =
   | { configured: false }
   | { configured: true; ok: true; result: ReviewResult }

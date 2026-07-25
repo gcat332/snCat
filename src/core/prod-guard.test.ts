@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyInstance, instanceLabel, DEFAULT_PROD_GUARD_CONFIG } from './prod-guard'
+import { classifyInstance, instanceLabel, DEFAULT_PROD_GUARD_CONFIG, parseSubProdPatterns } from './prod-guard'
 
 const sn = (label: string) => `${label}.service-now.com`
 
@@ -104,5 +104,13 @@ describe('config', () => {
 
   it('default config includes demo (our dev instance marker)', () => {
     expect(DEFAULT_PROD_GUARD_CONFIG.subProdPatterns).toContain('demo')
+  })
+})
+
+describe('parseSubProdPatterns', () => {
+  it('splits on comma/newline, trims, drops empties and invalid regex', () => {
+    expect(parseSubProdPatterns('dev, test\nuat ,, sub-?prod')).toEqual(['dev', 'test', 'uat', 'sub-?prod'])
+    expect(parseSubProdPatterns('good, [unclosed, qa')).toEqual(['good', 'qa'])
+    expect(parseSubProdPatterns('   ')).toEqual([])
   })
 })

@@ -38,6 +38,22 @@ export function instanceLabel(host: string): string {
  */
 const FORCED_PROD = /(?<!sub)(?<!pre)(?<!non)prod(uction)?/i
 
+/** Parse a comma/newline-separated sub-prod pattern list into valid regex sources. */
+export function parseSubProdPatterns(text: string): string[] {
+  return text
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter((p) => {
+      try {
+        new RegExp(p, 'i')
+        return true
+      } catch {
+        return false
+      }
+    })
+}
+
 export function classifyInstance(
   host: string,
   config: ProdGuardConfig = DEFAULT_PROD_GUARD_CONFIG,
