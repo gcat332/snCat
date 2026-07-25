@@ -17,9 +17,26 @@ function rawFields(rec: Record<string, unknown>): Record<string, string> {
   return out
 }
 
+/**
+ * Reference fields whose sys_id is only ever rendered as a human label (never
+ * used to build a sub-query), so the display value must win over the raw sys_id
+ * (T-302). `fields` stays raw for every other key, keeping resolver queries and
+ * sys_id extraction untouched.
+ */
+const REFERENCE_LABEL_FIELDS = new Set(['variable_set', 'super_class'])
+
 function toArtifact(spec: FetchSpec, rec: Record<string, unknown>, depth: number): ArtifactRef {
   const fields = rawFields(rec)
-  const sysId = fields['sys_id'] ?? ''
+  // Overlay display names for reference LABEL fields so lists/columns show the
+  // referenced record's name, not its sys_id. Requires the bulk fetch to have
+  // requested display values (displayValue:'all', see fetchPage).
+  for (const key of REFERENCE_LABEL_FIELDS) {
+    if (key in rec) {
+      const display = cellDisplay(rec[key])
+      if (display) fields[key] = display
+    }
+  }
+  const sysId = cellValue(rec['sys_id'])
   const label = spec.labelField ? fields[spec.labelField] || pickLabel(rec) : pickLabel(rec)
   return {
     id: makeId(spec.table, sysId),
@@ -94,7 +111,11 @@ export async function walkSpecGraph(
       query: spec.query,
       fields: spec.fields,
       limit: spec.limit ?? 50,
-      displayValue: false,
+      // Request both raw + display so reference LABEL fields (variable_set,
+      // super_class) can render the referenced record's name (T-302). rawFields
+      // still keeps the raw value for every field, so resolver queries are
+      // unaffected.
+      displayValue: 'all',
     })
     if (!res.ok) return []
     return res.data.map((rec) => toArtifact(spec, rec, depth))
