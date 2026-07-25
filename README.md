@@ -3,7 +3,7 @@
 A Chrome Extension with a shared core engine and two features:
 
 - **F1 — Design Spec Generator**: generate a Design Spec (PDF / Word `.docx` / HTML) from any ServiceNow record, styled in the MFEC light theme.
-- **F2 — Script Tester**: 3-layer testing (static AI review → sandbox simulation → guarded real execution) for Business Rules / Client Scripts.
+- **F2 — Script Tester**: 3-layer testing (static AI review → prod-guarded background-script run → guarded real execution) for Business Rules / Client Scripts.
 
 See [`handoff.md`](./handoff.md) for the full design, decisions, and milestones.
 
@@ -52,13 +52,11 @@ Then load the extension in Chrome:
 - Side panel **Script Tester** tab: auto-loads the script from a Business Rule / Client Script / Script Include record, kind + timing selectors, intent capture, findings list by severity.
 - AI logic-vs-intent review is stubbed off (LLM disabled) per handoff §7 decision 2.
 
-**M3 — Script Tester Layer 2 (sandbox simulation)** ✅
-- Glide mocks (`src/sandbox/glide-mocks.ts`): `current`/`previous` (Proxy-backed, field get/set), `gs`, `GlideRecord`, `GlideRecordSecure` (scoped alias), `action`, `g_form`/`g_user`. **Invariant: zero instance writes** — insert/update/deleteRecord are captured as `write-blocked`, never executed.
-- Pure simulation engine (`src/sandbox/engine.ts`) executes the user script via `new Function` and returns a typed execution trace — **fully unit-tested in Node** (`engine.test.ts`, 11 tests).
-- Runs inside a **sandboxed iframe** (opaque origin, `sandbox` manifest CSP) built as a **classic IIFE** (`vite.sandbox.config.ts`) because ES modules do not load in MV3 sandbox pages. Host driver (`src/core/sandbox-host.ts`) posts the job and enforces a timeout (resets the frame on runaway loops).
-- Side panel **Layer 2** card: seed `current` from a real record ("Fill from a record"), edit current/previous, run → execution trace + `current` (after) + fidelity note (V8 vs Rhino).
+**M3 — Script Tester Layer 2** ✅
+- **Superseded by commit `8fa4415`:** the original in-extension sandbox — a sandboxed iframe (opaque origin, classic IIFE) that ran user scripts via `new Function` against Glide mocks and returned a typed trace — has been removed as dead code. Layer 2 now runs the tester script as a **real, prod-guarded background-script run** ("bgrun", via `sys.scripts.do` through `src/core/sn-rest.ts`) rather than simulating it in-panel.
+- Side panel **Layer 2** card: seed `current` from a real record ("Fill from a record"), edit current/previous, and run the script against the instance under the prod guard.
 
-> ⚠️ **Needs a real-browser smoke test:** the engine logic is proven by unit tests, but the iframe postMessage round-trip + classic-script load in the sandboxed opaque origin can only be confirmed by loading `dist/` in Chrome. Everything else in M0–M3 is verified.
+> ⚠️ **Needs a real-browser smoke test:** the bgrun round-trip (`sys.scripts.do` execution + prod-guard enforcement) can only be confirmed by loading `dist/` in Chrome. Everything else in M0–M3 is verified.
 
 **M4 — F1 Design Spec Generator** ✅ (LLM-free, template-driven)
 - **Graph walker** (`src/core/graph.ts`): bounded BFS (depth 2), dedupe, injected fetch — unit-tested.
@@ -72,7 +70,7 @@ Then load the extension in Chrome:
 - Guarded write ops in the REST client (`create`/`delete`): the background classifies the host and refuses the write **before any network I/O** on prod; writes also require `X-UserToken` (g_ck).
 - Side panel **Layer 3** card: prod-guard badge, create a real test record on a sub-prod → read it back → highlight fields the engine changed → delete it (all with explicit confirmation; disabled on prod).
 
-> ⚠️ **Real-browser smoke test items:** M1 auth (session/g_ck), M3 sandbox iframe round-trip, M4 resolver table/field names per instance version, and M5 writes (create/delete on the sub-prod). Pure logic is unit-tested; live I/O needs `dist/` loaded in Chrome against `mfecplcdemo10`.
+> ⚠️ **Real-browser smoke test items:** M1 auth (session/g_ck), M3 Layer 2 bgrun round-trip (`sys.scripts.do`), M4 resolver table/field names per instance version, and M5 writes (create/delete on the sub-prod). Pure logic is unit-tested; live I/O needs `dist/` loaded in Chrome against `mfecplcdemo10`.
 
 Next: **F3** — XML Mover (design in handoff §9). Optional later: LLM enhancement layer (Layer 1 intent review, F1 prose), ATF-based Layer 3.
 

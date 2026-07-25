@@ -43,16 +43,8 @@ export default defineManifest({
     default_path: 'src/sidepanel/index.html',
   },
 
-  // Layer 2 sandbox: user scripts run here (opaque origin) where eval/new
-  // Function are allowed but chrome.* and cookies are not (no allow-same-origin).
-  sandbox: {
-    pages: ['public/sandbox/index.html'],
-  },
-
   content_security_policy: {
     extension_pages: "script-src 'self'; object-src 'self'",
-    sandbox:
-      "sandbox allow-scripts; script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'self'",
   },
 
   permissions: ['sidePanel', 'tabs', 'scripting', 'storage'],
