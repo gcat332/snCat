@@ -52,6 +52,12 @@ import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
+// Tables we auto-filled from the active page. detect() keeps the Layer 3 target
+// and the picker filter following page navigation, but only while the field
+// still holds the value we last auto-filled — once the user types their own
+// table, these stop matching and we leave the field alone.
+let autoL3Table = ''
+let autoPickerTable = ''
 
 /** Per-tab LLM job state (mirrors what the background writes to storage). */
 type LlmJobEntry =
@@ -1433,10 +1439,14 @@ async function loadScriptIntoTester(host: string, scriptTable: string, sysId: st
   scriptEd.setValue(cellValue(rec[info.scriptField]))
   scriptKind.value = info.kind
   if (info.timingField) scriptTiming.value = normalizeTiming(cellValue(rec[info.timingField]))
-  // Layer 3: point the target table at what this script runs against.
+  // Layer 3: point the target table at what this script runs against. Record it
+  // as auto-filled so navigating to a normal data record later re-syncs it.
   if (info.tableField) {
     const target = cellValue(rec[info.tableField])
-    if (target) l3Table.value = target
+    if (target) {
+      l3Table.value = target
+      autoL3Table = target
+    }
   }
   // Show the script's application scope, and target writes at it by default.
   const scopeName = cellDisplay(rec['sys_scope'])
@@ -3072,13 +3082,23 @@ async function detect() {
   updateGuard()
   void populateScopeBar()
 
-  // Default the Layer 3 target table to the current data table.
-  if (current?.table && !scriptTableInfo(current.table) && !l3Table.value.trim()) {
-    l3Table.value = current.table
-  }
-  // Prefill the picker's table filter with the current data table.
-  if (current?.table && !scriptTableInfo(current.table) && !pickerTable.value.trim()) {
-    pickerTable.value = current.table
+  // Keep the Layer 3 target table and the picker's table filter following the
+  // active page as the user navigates records. Sticky: only overwrite while the
+  // field still equals the value we last auto-filled (or is empty), so a table
+  // the user typed themselves is never clobbered. Script records are skipped —
+  // maybeAutoLoadScript() targets those at the script's own table instead.
+  if (current?.table && !scriptTableInfo(current.table)) {
+    const t = current.table
+    const l3Cur = l3Table.value.trim()
+    if (!l3Cur || l3Cur === autoL3Table) {
+      l3Table.value = t
+      autoL3Table = t
+    }
+    const pickCur = pickerTable.value.trim()
+    if (!pickCur || pickCur === autoPickerTable) {
+      pickerTable.value = t
+      autoPickerTable = t
+    }
   }
   void refreshXmlControls()
   if (current?.host) void renderUndoControls(current.host)
