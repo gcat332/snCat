@@ -77,20 +77,27 @@ function applyJob(op: 'review' | 'generate', entry: LlmJobEntry | undefined) {
 /** Start an LLM job in the background so it survives the panel closing. */
 async function startLlmJob(op: 'review' | 'generate', payload: unknown): Promise<boolean> {
   if (currentTabId == null) return false
+  const tabId = currentTabId
   try {
     await chrome.storage.session.set({
-      [jobKey(currentTabId, op)]: { status: 'running', op, startedAt: Date.now() },
+      [jobKey(tabId, op)]: { status: 'running', op, startedAt: Date.now() },
     })
   } catch {
     /* ignore */
   }
   // Reply comes back directly (reliable) AND is mirrored to storage (survives close).
   chrome.runtime
-    .sendMessage({ kind: 'snjava:llm-run', tabId: currentTabId, op, payload })
+    .sendMessage({ kind: 'snjava:llm-run', tabId, op, payload })
     .then((entry) => {
       if (entry) applyJob(op, entry as LlmJobEntry)
     })
-    .catch(() => {})
+    .catch((e) => {
+      // Messaging failed AFTER we set 'running' — persist an error entry so the UI
+      // renders the failure (instead of spinning forever) and stored state agrees.
+      const error: LlmJobEntry = { status: 'error', op, error: e instanceof Error ? e.message : 'Failed to start the background job.' }
+      void chrome.storage.session.set({ [jobKey(tabId, op)]: error }).catch(() => {})
+      if (tabId === currentTabId) applyJob(op, error)
+    })
   return true
 }
 
@@ -261,6 +268,9 @@ async function refreshUpdateSets(selectName?: string) {
 /** Create a new in-progress update set (in the selected scope) via a bg script. */
 async function createUpdateSet() {
   if (!current) return
+  // Pin the target host before the prompt/scope dialogs so a tab switch can't
+  // retarget the write.
+  const host = current.host
   const name = await promptDialog('New update set name:', 'e.g. snJava changes')
   if (!name) return
   const sc = await checkScope()
@@ -279,7 +289,7 @@ async function createUpdateSet() {
     .join('\n')
 
   el<HTMLButtonElement>('us-new').disabled = true
-  const res = await runBackground(current.host, bg, { scope: scopeId })
+  const res = await runBackground(host, bg, { scope: scopeId })
   el<HTMLButtonElement>('us-new').disabled = false
   if (!res.ok) {
     showToast(`Create failed: ${res.error.slice(0, 50)}`)
@@ -500,7 +510,21 @@ async function saveXml() {
     count: records.length,
     savedAt: new Date().toISOString(),
   }
-  await chrome.storage.local.set({ xmlClip: clip })
+  // The clip carries only the parsed records (xml stays '') — that's all Paste
+  // needs. Storing can still exceed the local-storage quota on a big export, and
+  // that rejection would otherwise be swallowed (stuck on "Exporting…").
+  try {
+    await chrome.storage.local.set({ xmlClip: clip })
+  } catch (e) {
+    xmlOut.replaceChildren(
+      elText(
+        'div',
+        'error',
+        `Couldn't copy the records — the export is too large for extension storage (${records.length} records). Try a tighter filter. (${e instanceof Error ? e.message : String(e)})`,
+      ),
+    )
+    return
+  }
   await refreshXmlControls()
   const noun = records.length === 1 ? 'record' : 'records'
   xmlOut.replaceChildren(
@@ -528,6 +552,9 @@ async function pasteXml() {
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   if (!clip || !current) return
+  // Pin the target host BEFORE the confirm dialog so a tab switch between confirm
+  // and send can't retarget the write to a different instance.
+  const host = current.host
   // Prefer the finalized records captured at save time; fall back to re-parsing
   // (older clips) with the same dedupe applied.
   const rawRecords = clip.records ?? dedupeRecords(parseUnloadXmlAll(clip.xml, clip.table)).map((r) => r.fields)
@@ -541,7 +568,7 @@ async function pasteXml() {
   if (!tgt) return
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${current.host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${tgt.scopeLabel}"${
+      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${tgt.scopeLabel}"${
         tgt.usLabel ? ` and update set "${tgt.usLabel}"` : ''
       }.`,
     ))
@@ -553,7 +580,7 @@ async function pasteXml() {
   // Import via background inserts so they land in the selected scope + update set
   // (Table API writes bypass update-set capture).
   const bg = buildMultiInsertScript(clip.table, fieldsList)
-  const res = await runBackground(current.host, bg, tgt.opts)
+  const res = await runBackground(host, bg, tgt.opts)
   xmlPaste.disabled = false
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
@@ -873,8 +900,19 @@ function buildSchemaRow(d: DictionaryField): HTMLElement {
     ch.className = 'choices'
     ch.textContent = 'choices ▾'
     let pop: HTMLElement | null = null
-    const open = () => void showChoices(ch, element, (p) => (pop = p))
+    let wanted = false // true while the pointer is over the chip / a load is in flight
+    const open = () => {
+      if (pop || wanted) return // popup already shown or a load already running — don't orphan a second
+      wanted = true
+      void showChoices(
+        ch,
+        element,
+        () => wanted,
+        (p) => (pop = p),
+      )
+    }
     const close = () => {
+      wanted = false
       pop?.remove()
       pop = null
     }
@@ -923,7 +961,12 @@ async function fetchChoices(host: string, table: string, element: string): Promi
   return out
 }
 
-async function showChoices(anchor: HTMLElement, element: string, setPop: (p: HTMLElement) => void) {
+async function showChoices(
+  anchor: HTMLElement,
+  element: string,
+  isWanted: () => boolean,
+  setPop: (p: HTMLElement) => void,
+) {
   if (!current) return
   const key = `${schemaTable}.${element}`
   let choices = choicesCache.get(key)
@@ -931,6 +974,7 @@ async function showChoices(anchor: HTMLElement, element: string, setPop: (p: HTM
     choices = await fetchChoices(current.host, schemaTable, element)
     choicesCache.set(key, choices)
   }
+  if (!isWanted()) return // pointer left during the fetch — don't append an orphan popup
   // Append to <body>, fixed-positioned, so the scroll container can't clip it.
   const pop = document.createElement('div')
   pop.className = 'choice-pop floating'
@@ -1379,7 +1423,16 @@ function applyReviewJob(entry: LlmJobEntry | undefined) {
   }
   const { optimizedScript, testScript, notes } = outcome.result
   aiStatus.textContent = notes.length ? `AI review: ${notes.length} note(s).` : 'AI review complete.'
-  for (const n of notes) lintResults.append(elText('div', 'review-note', n))
+  // Render notes into a dedicated container that is REPLACED on every apply, so a
+  // duplicate 'done' delivery (direct sendMessage reply + storage.onChanged) can't
+  // append the same notes twice.
+  let notesBox = lintResults.querySelector<HTMLElement>('.review-notes')
+  if (!notesBox) {
+    notesBox = document.createElement('div')
+    notesBox.className = 'review-notes'
+    lintResults.append(notesBox)
+  }
+  notesBox.replaceChildren(...notes.map((n) => elText('div', 'review-note', n)))
   if (optimizedScript) {
     optimizeEd.setValue(optimizedScript)
     optimizeSection.hidden = false
@@ -1564,9 +1617,19 @@ async function openBackgroundScripts(host: string, script: string) {
   const tabId = tab.id
   if (tabId == null) return
   void copyText(script) // clipboard fallback in case the field can't be filled
+  const cleanup = () => {
+    chrome.tabs.onUpdated.removeListener(onUpdated)
+    chrome.tabs.onRemoved.removeListener(onRemoved)
+  }
+  // If the tab is closed before it finishes loading, onUpdated never fires with
+  // 'complete' — so also drop the listeners when the tab is removed, else they
+  // leak for the panel's lifetime.
+  const onRemoved = (id: number) => {
+    if (id === tabId) cleanup()
+  }
   const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo) => {
     if (id !== tabId || info.status !== 'complete') return
-    chrome.tabs.onUpdated.removeListener(onUpdated)
+    cleanup()
     // Retry a few times — the modern page's editor mounts after load.
     let tries = 0
     const attempt = () => {
@@ -1589,6 +1652,7 @@ async function openBackgroundScripts(host: string, script: string) {
     attempt()
   }
   chrome.tabs.onUpdated.addListener(onUpdated)
+  chrome.tabs.onRemoved.addListener(onRemoved)
 }
 
 /**
@@ -1719,6 +1783,9 @@ async function l3FillFromRecord() {
 
 async function createTestRecord() {
   if (!current || !l3Allowed) return
+  // Pin the target host before the confirm dialog so a tab switch can't retarget
+  // the write (and so the recorded l3Created.host matches where we wrote).
+  const host = current.host
   const table = l3Table.value.trim()
   if (!table) {
     l3Results.replaceChildren(elText('div', 'error', 'Enter a target table.'))
@@ -1729,7 +1796,7 @@ async function createTestRecord() {
   if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create a REAL record in "${table}" on ${current.host}?\n\nRuns the actual Business Rules, in scope "${tgt.scopeLabel}"${
+      `Create a REAL record in "${table}" on ${host}?\n\nRuns the actual Business Rules, in scope "${tgt.scopeLabel}"${
         tgt.usLabel ? ` / update set "${tgt.usLabel}"` : ''
       }. Then read the result and delete.`,
     ))
@@ -1743,12 +1810,12 @@ async function createTestRecord() {
   l3Results.replaceChildren(elText('div', 'sim-after-title', 'Guarded run'), log)
   const step = (text: string, cls = '') => log.append(elText('div', `log-step ${cls}`, `• ${text}`))
 
-  step(`Creating a ${table} record on ${current.host} (scope ${tgt.scopeLabel})…`)
+  step(`Creating a ${table} record on ${host} (scope ${tgt.scopeLabel})…`)
   const t0 = Date.now()
   // Create via a background insert so it runs in the chosen scope + update set
   // (Table API 403s on scoped-app tables). Dumps ALL fields + a default record
   // so we can show exactly what the Business Rules changed.
-  const res = await runBackground(current.host, buildGuardedInsertScript(table, fields), tgt.opts)
+  const res = await runBackground(host, buildGuardedInsertScript(table, fields), tgt.opts)
   if (!res.ok) {
     step(`✗ Create failed (HTTP ${res.status}): ${res.error}`, 'err')
     l3Create.disabled = false
@@ -1775,7 +1842,7 @@ async function createTestRecord() {
     updateGuard()
     return
   }
-  l3Created = { host: current.host, table, sysId }
+  l3Created = { host, table, sysId }
   step(`✓ Created ${sysId.slice(0, 8)}… in ${Date.now() - t0}ms — Business Rules ran on insert`, 'ok')
   renderL3Diff(fields, result as Record<string, L3Cell>, defaults as Record<string, L3Cell>)
   step('Done. Delete the test record when finished.')
@@ -2420,11 +2487,13 @@ function renderPlan(summary: string, artifacts: PlanArtifact[]) {
 /** Create several artifacts back-to-back, reporting progress in genStatus. */
 async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) {
   if (!current) return
+  // Pin the target host before the confirm dialog so a tab switch can't retarget.
+  const host = current.host
   const tgt = await checkTarget()
   if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create ${list.length} artifact(s) on ${current.host}?\n\nScope "${tgt.scopeLabel}"${
+      `Create ${list.length} artifact(s) on ${host}?\n\nScope "${tgt.scopeLabel}"${
         tgt.usLabel ? `, update set "${tgt.usLabel}"` : ''
       }.`,
     ))
@@ -2435,7 +2504,7 @@ async function createAllArtifacts(list: PlanArtifact[], btn: HTMLButtonElement) 
   let ok = 0
   for (let i = 0; i < list.length; i++) {
     genStatus.textContent = `Creating ${i + 1}/${list.length}: ${list[i].title}…`
-    const res = await createArtifactCore(list[i], tgt.opts)
+    const res = await createArtifactCore(list[i], host, tgt.opts)
     if (res.ok) ok++
     else showToast(`Failed: ${list[i].title.slice(0, 40)} — ${res.error?.slice(0, 40) ?? ''}`)
   }
@@ -2512,6 +2581,7 @@ function showArtifact(a: PlanArtifact) {
 /** Insert one planned record via a scope-aware background script. No UI. */
 async function createArtifactCore(
   a: PlanArtifact,
+  host: string,
   opts: { scope?: string; updateSet?: string },
 ): Promise<{ ok: boolean; sysId?: string; error?: string }> {
   if (!current || !a.targetTable || !a.fields) return { ok: false, error: 'nothing to create' }
@@ -2519,7 +2589,7 @@ async function createArtifactCore(
   // Never let the plan choose the scope — records go into the scope selected in
   // the header (via sys_scope form field + GlideUpdateSet in the background run).
   const bg = buildRecordInsertScript(a.targetTable, stripScopeFields(a.fields))
-  const res = await runBackground(current.host, bg, opts)
+  const res = await runBackground(host, bg, opts)
   if (!res.ok) return { ok: false, error: res.error }
   const m = extractBgOutput(res.data).match(/snJava: imported ([0-9a-f]{32})/i)
   return m ? { ok: true, sysId: m[1] } : { ok: false, error: 'no sys_id reported' }
@@ -2528,11 +2598,13 @@ async function createArtifactCore(
 /** Create a planned customization record via a background insert (scope-aware). */
 async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: HTMLElement) {
   if (!current || !a.targetTable || !a.fields) return
+  // Pin the target host before the confirm dialog so a tab switch can't retarget.
+  const host = current.host
   const tgt = await checkTarget()
   if (!tgt) return
   if (
     !(await confirmDialog(
-      `Create this ${a.kind} in ${a.targetTable} on ${current.host}?\n\nScope "${tgt.scopeLabel}"${
+      `Create this ${a.kind} in ${a.targetTable} on ${host}?\n\nScope "${tgt.scopeLabel}"${
         tgt.usLabel ? `, update set "${tgt.usLabel}"` : ''
       }.`,
     ))
@@ -2541,7 +2613,7 @@ async function createArtifact(a: PlanArtifact, btn: HTMLButtonElement, overlay: 
   }
   btn.disabled = true
   btn.textContent = 'Creating…'
-  const res = await createArtifactCore(a, tgt.opts)
+  const res = await createArtifactCore(a, host, tgt.opts)
   btn.disabled = false
   btn.textContent = 'Create in instance'
   if (res.ok) {
@@ -2607,10 +2679,7 @@ async function detect() {
     /* content script not present in this frame — URL parse stands. */
   }
 
-  if (context?.table) {
-    current = context
-    renderContext(context)
-  } else if (context) {
+  if (context) {
     current = context
     renderContext(context)
   } else {
@@ -2632,7 +2701,6 @@ async function detect() {
   if (current?.table && !scriptTableInfo(current.table) && !pickerTable.value.trim()) {
     pickerTable.value = current.table
   }
-  updateGuard()
   void refreshXmlControls()
   void maybeAutoLoadScript()
 }
