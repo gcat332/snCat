@@ -6,7 +6,7 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildListXmlUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   countRecords,
@@ -16,7 +16,7 @@ import {
   queryRecords,
   runBackground,
 } from '@core/api-client'
-import { dedupeRecords, importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
+import { importableFields, parseUnloadXml, parseUnloadXmlAll } from '@core/xml'
 import { diffStats, lineDiff } from '@core/diff'
 import { classifyInstance } from '@core/prod-guard'
 import { lintScript, type BrTiming, type LintFinding, type ScriptKind } from '@core/lint'
@@ -438,7 +438,7 @@ async function refreshXmlControls() {
   const formHas = !!(current?.table && current.sysId && current.view === 'form')
   const listHas = isListView()
   xmlRow.hidden = !(formHas || listHas)
-  xmlSave.textContent = listHas ? 'Copy list' : 'Copy record'
+  xmlSave.textContent = 'Copy'
   xmlSave.title = listHas ? 'Copy every record in this list' : 'Copy this record'
   xmlView.hidden = !formHas
   const store = await chrome.storage.local.get('xmlClip')
@@ -460,59 +460,44 @@ async function fetchRecordXml(): Promise<string | null> {
   return res.data
 }
 
-const LIST_SAVE_LIMIT = 500
-
 async function saveXml() {
   if (!current?.table) return
   xmlSave.disabled = true
   const list = isListView()
-  xmlOut.replaceChildren(elText('div', 'empty', list ? 'Reading the list…' : 'Reading the record…'))
+  xmlOut.replaceChildren(elText('div', 'empty', list ? 'Exporting list XML…' : 'Exporting record XML…'))
 
-  // Fetch the EXACT records via the Table API (raw values). We deliberately do
-  // NOT use the classic `&XML` unload: that is a *deep* unload and drags in
-  // related same-table records, which produced phantom duplicates on import.
-  let records: Record<string, string>[] = []
+  // Capture the genuine ServiceNow unload XML (`.do?...&XML`). On Paste this is
+  // fed to GlideUpdateManager2.loadXML — a real XML import: sys_id preserved,
+  // INSERT_OR_UPDATE (idempotent, never duplicates).
+  let xml: string | null
   let query = ''
   if (list) {
     query = (await getListQueryFromPage(current.table)) ?? currentListQuery()
-    const res = await queryRecords(current.host, current.table, {
-      query,
-      limit: LIST_SAVE_LIMIT,
-      displayValue: false,
-    })
-    if (!res.ok) {
-      xmlSave.disabled = false
-      xmlOut.replaceChildren(elText('div', 'error', res.error))
-      return
-    }
-    records = res.data.map(rawStringFields)
-  } else if (current.sysId) {
-    const res = await getRecord(current.host, current.table, current.sysId)
-    if (!res.ok) {
-      xmlSave.disabled = false
-      xmlOut.replaceChildren(elText('div', 'error', res.error))
-      return
-    }
-    records = [rawStringFields(res.data)]
+    const res = await getText(current.host, buildListXmlUrl(current.host, current.table, query))
+    xml = res.ok ? res.data : (xmlOut.replaceChildren(elText('div', 'error', res.error)), null)
+  } else {
+    xml = await fetchRecordXml()
   }
   xmlSave.disabled = false
+  if (!xml) return
 
-  if (records.length === 0) {
-    xmlOut.replaceChildren(elText('div', 'error', 'No records to save.'))
+  const count = parseUnloadXmlAll(xml, current.table).length
+  if (count === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'The export contained no records.'))
     return
   }
   const clip: XmlClip = {
     host: current.host,
     table: current.table,
     sysId: current.sysId ?? undefined,
-    xml: '',
-    records,
-    count: records.length,
+    xml,
+    count,
     savedAt: new Date().toISOString(),
   }
-  // The clip carries only the parsed records (xml stays '') — that's all Paste
-  // needs. Storing can still exceed the local-storage quota on a big export, and
-  // that rejection would otherwise be swallowed (stuck on "Exporting…").
+  // The clip carries the raw unload XML (Paste re-parses it and inserts via
+  // GlideRecord, preserving sys_id). Storing can still exceed the local-storage
+  // quota on a big export, and that rejection would otherwise be swallowed
+  // (stuck on "Exporting…").
   try {
     await chrome.storage.local.set({ xmlClip: clip })
   } catch (e) {
@@ -520,82 +505,88 @@ async function saveXml() {
       elText(
         'div',
         'error',
-        `Couldn't copy the records — the export is too large for extension storage (${records.length} records). Try a tighter filter. (${e instanceof Error ? e.message : String(e)})`,
+        `Couldn't copy the records — the export is too large for extension storage (${count} records). Try a tighter filter. (${e instanceof Error ? e.message : String(e)})`,
       ),
     )
     return
   }
   await refreshXmlControls()
-  const noun = records.length === 1 ? 'record' : 'records'
+  const noun = count === 1 ? 'record' : 'records'
   xmlOut.replaceChildren(
     elText(
       'div',
       'ok-banner',
-      `✓ Copied ${records.length} ${clip.table} ${noun}. Use “Paste” on any list or form to insert them as new records.`,
+      `✓ Copied ${count} ${clip.table} ${noun} as XML. Use “Paste” on the target instance to import (real XML load — sys_id preserved).`,
     ),
   )
   if (list) {
     xmlOut.append(
-      elText('div', 'info-sub', query ? `Filter applied: ${query}` : 'No filter — saved the whole table (max ' + LIST_SAVE_LIMIT + ').'),
+      elText('div', 'info-sub', query ? `Filter applied: ${query}` : 'No filter — copied the whole list.'),
     )
   }
 }
 
-/** Flatten a Table API row (raw or {value,display_value} cells) to a string map. */
-function rawStringFields(rec: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(rec)) out[k] = cellValue(v)
-  return out
-}
+/** Re-entrancy guard: a paste in flight must not be started again (double-click,
+ *  panel re-fire) — otherwise the same clip is read twice and inserted twice. */
+let pasteInFlight = false
 
 async function pasteXml() {
+  if (pasteInFlight) return
+  pasteInFlight = true // set synchronously, before any await, so a second click no-ops
+  xmlPaste.disabled = true
+  try {
+    await pasteXmlInner()
+  } finally {
+    pasteInFlight = false
+    void refreshXmlControls()
+  }
+}
+
+async function pasteXmlInner() {
   const store = await chrome.storage.local.get('xmlClip')
   const clip = store['xmlClip'] as XmlClip | undefined
   if (!clip || !current) return
   // Pin the target host BEFORE the confirm dialog so a tab switch between confirm
   // and send can't retarget the write to a different instance.
   const host = current.host
-  // Prefer the finalized records captured at save time; fall back to re-parsing
-  // (older clips) with the same dedupe applied.
-  const rawRecords = clip.records ?? dedupeRecords(parseUnloadXmlAll(clip.xml, clip.table)).map((r) => r.fields)
-  if (rawRecords.length === 0) {
-    xmlOut.replaceChildren(elText('div', 'error', 'No copied records to paste.'))
+  if (!clip.xml) {
+    xmlOut.replaceChildren(elText('div', 'error', 'This copy has no XML — Copy again with the latest version.'))
     return
   }
-  const fieldsList = rawRecords.map((f) => importableFields(f))
-  const noun = fieldsList.length === 1 ? 'record' : 'records'
-  const tgt = await checkTarget()
-  if (!tgt) return
+  // Parse the unload XML into rows (with sys_id) and insert them ourselves via
+  // GlideRecord. GlideUpdateManager2.loadXML only stages update-set XML and does
+  // NOT insert data records — that's why it reported ok but nothing appeared.
+  const rows = parseUnloadXmlAll(clip.xml, clip.table).map((r) => r.fields)
+  if (rows.length === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'No records found in the copied XML.'))
+    return
+  }
+  const noun = rows.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${fieldsList.length} "${clip.table}" ${noun} into ${host}?\n\nEach is created as a NEW record with a fresh number (system fields dropped), with business rules / workflows skipped (setWorkflow(false)), in scope "${tgt.scopeLabel}"${
-        tgt.usLabel ? ` and update set "${tgt.usLabel}"` : ''
-      }.`,
+      `Import ${rows.length} "${clip.table}" ${noun} into ${host}?\n\nReplicates ServiceNow's direct XML import: the original sys_id is preserved (setNewGuidValue) and it is INSERT_OR_UPDATE by sys_id — a matching record is updated, never duplicated. Business rules are skipped, exactly as the native XML import does. No update set is used.`,
     ))
   ) {
     return
   }
-  xmlPaste.disabled = true
-  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${fieldsList.length} ${noun} via background script…`))
-  // Import via background inserts so they land in the selected scope + update set
-  // (Table API writes bypass update-set capture).
-  const bg = buildMultiInsertScript(clip.table, fieldsList)
-  const res = await runBackground(host, bg, tgt.opts)
-  xmlPaste.disabled = false
+  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${rows.length} ${noun} via background script…`))
+  const bg = buildImportScript(clip.table, rows)
+  const res = await runBackground(host, bg, {})
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
     return
   }
   const out = extractBgOutput(res.data)
-  const m = out.match(/snJava: imported (\d+)\/(\d+)/i)
+  const m = out.match(/snJava: moved ins=(\d+) upd=(\d+) total=(\d+)/i)
   const errm = out.match(/snJava: errors (.+)/i)
   if (m) {
-    const [, done, total] = m
+    const [, ins, upd, total] = m
+    const done = Number(ins) + Number(upd)
     xmlOut.replaceChildren(
       elText(
         'div',
-        done === total ? 'ok-banner' : 'error',
-        `${done === total ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} (scope ${tgt.scopeLabel})`,
+        done === Number(total) ? 'ok-banner' : 'error',
+        `${done === Number(total) ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} — ${ins} inserted, ${upd} updated`,
       ),
     )
     if (errm) {
@@ -603,12 +594,10 @@ async function pasteXml() {
       e.style.marginTop = '6px'
       xmlOut.append(e)
     }
-    // Consume the clip once anything imported, so pressing Paste again can't
-    // silently re-create the same records. Save again to import once more.
-    if (Number(done) > 0) {
+    if (done > 0) {
       await chrome.storage.local.remove('xmlClip')
       await refreshXmlControls()
-      xmlOut.append(elText('div', 'info-sub', 'Copied records cleared — Copy again to insert another set.'))
+      xmlOut.append(elText('div', 'info-sub', 'Copied XML cleared — Copy again to import another set.'))
     }
   } else {
     xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
@@ -629,27 +618,47 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
   ].join('\n')
 }
 
-/** Background script that inserts many records and reports "imported N/total". */
-function buildMultiInsertScript(table: string, records: Record<string, string>[]): string {
+/**
+ * Background script that imports unload-XML rows the way a ServiceNow XML import
+ * behaves, but with a real GlideRecord insert (which actually writes data rows).
+ * Keyed by sys_id (INSERT_OR_UPDATE): a matching record is UPDATED, a missing one
+ * is INSERTED preserving the original sys_id (setNewGuidValue) — so it is
+ * idempotent and never duplicates. Business rules are skipped (setWorkflow(false)
+ * set immediately before the DML, since initialize() resets that flag).
+ * Reports "moved ins=.. upd=.. total=..".
+ */
+function buildImportScript(table: string, records: Record<string, string>[]): string {
+  const T = JSON.stringify(table)
   return [
     `var rows = ${JSON.stringify(records)};`,
-    `var ok = 0, errs = [];`,
+    // Only drop what would break on the target or is recomputed. Audit fields are
+    // preserved (like a real XML import) via autoSysFields(false).
+    `var DROP = {sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
+    `var ins = 0, upd = 0, errs = [];`,
     `for (var i = 0; i < rows.length; i++) {`,
     `  try {`,
-    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
-    `    gr.initialize();`,
-    `    gr.setWorkflow(false);`, // ignore business rules / workflows on this insert
     `    var row = rows[i];`,
-    `    for (var k in row) { if (row.hasOwnProperty(k)) gr.setValue(k, row[k]); }`,
-    `    var id = gr.insert();`,
-    `    if (id) { ok++; } else {`,
-    `      var why = '';`,
-    `      try { why = gr.getLastErrorMessage(); } catch (e2) {}`,
-    `      errs.push('row ' + i + ': ' + (why || 'insert rejected (ACL / mandatory / data policy / before-insert BR abort)'));`,
+    `    var sysId = row['sys_id'];`,
+    // Existence check on its own GlideRecord (INSERT_OR_UPDATE by sys_id).
+    `    var found = null;`,
+    `    if (sysId) { var chk = new GlideRecord(${T}); if (chk.get(sysId)) { found = chk; } }`,
+    `    if (found) {`,
+    `      for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) found.setValue(k, row[k]); }`,
+    `      found.setWorkflow(false); found.autoSysFields(false);`,
+    `      if (found.update()) { upd++; } else { errs.push('row ' + i + ': ' + (found.getLastErrorMessage() || 'update rejected')); }`,
+    `    } else {`,
+    // Fresh record for the insert; setNewGuidValue AFTER setValue, BEFORE insert.
+    `      var gr = new GlideRecord(${T});`,
+    `      gr.initialize();`,
+    `      for (var k2 in row) { if (row.hasOwnProperty(k2) && k2 !== 'sys_id' && !DROP[k2]) gr.setValue(k2, row[k2]); }`,
+    `      if (sysId) gr.setNewGuidValue(sysId);`,
+    `      gr.setWorkflow(false); gr.autoSysFields(false);`,
+    `      var id = gr.insert();`,
+    `      if (id) { ins++; } else { errs.push('row ' + i + ': ' + (gr.getLastErrorMessage() || 'insert rejected (ACL / mandatory / data policy)')); }`,
     `    }`,
     `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
-    `gs.info('snJava: imported ' + ok + '/' + rows.length);`,
+    `gs.info('snJava: moved ins=' + ins + ' upd=' + upd + ' total=' + rows.length);`,
     `if (errs.length) { gs.info('snJava: errors ' + errs.slice(0, 5).join(' || ')); }`,
   ].join('\n')
 }
