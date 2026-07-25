@@ -86,6 +86,23 @@ describe('composeSpec', () => {
     expect(JSON.stringify(table)).toContain('sys_user')
   })
 
+  it('tags the REST "list records" curl example as text, not javascript', () => {
+    const doc = composeSpec({
+      instance: 'x.service-now.com',
+      rootTable: 'sys_script',
+      rootLabel: 'My BR',
+      rootFields: { sys_id: 'r1' },
+      artifacts: [],
+    })
+    const api = doc.sections.find((s) => s.heading === 'REST API (Table API)')!
+    const listExample = api.blocks.find(
+      (b): b is Extract<SpecBlock, { kind: 'code' }> => b.kind === 'code' && b.caption === 'GET (query)',
+    )!
+    expect(listExample).toBeTruthy()
+    expect(listExample.code).toContain('curl')
+    expect(listExample.lang).toBe('text')
+  })
+
   it('documents each ACL with its condition and script together', () => {
     const doc = composeSpec({
       instance: 'x',

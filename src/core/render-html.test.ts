@@ -47,4 +47,42 @@ describe('renderSpecHtml', () => {
     )
     expect(renderSpecHtml(doc)).toContain('logo-text')
   })
+
+  it('escapes single-quotes (and the other special chars) in content', () => {
+    const d: SpecDocument = { ...doc, title: `O'Brien "x" <b> & y` }
+    const html = renderSpecHtml(d)
+    expect(html).toContain('&#39;') // single-quote escaped
+    expect(html).toContain('O&#39;Brien &quot;x&quot; &lt;b&gt; &amp; y')
+    expect(html).not.toContain("O'Brien") // raw single-quote not present in title
+  })
+
+  it('does not emit a non-data:image logoDataUri raw in the img src', () => {
+    const html = renderSpecHtml(doc, { logoDataUri: 'javascript:alert(1)' })
+    expect(html).not.toContain('javascript:alert(1)')
+    expect(html).not.toContain('src="javascript')
+    // falls back to the safe text logo instead
+    expect(html).toContain('logo-text')
+    // a genuine embedded image is still emitted
+    expect(renderSpecHtml(doc, { logoDataUri: 'data:image/png;base64,AAAA' })).toContain(
+      'src="data:image/png;base64,AAAA"',
+    )
+  })
+
+  it('assigns an id to level-3 artifact subheadings so the TOC can deep-link', () => {
+    const d: SpecDocument = {
+      ...doc,
+      sections: [
+        {
+          heading: 'Logic',
+          blocks: [
+            { kind: 'subheading', level: 2, text: 'Business Rules (1)' },
+            { kind: 'subheading', level: 3, text: 'HelperBR' },
+            { kind: 'code', caption: 'Script', code: 'gs.info("x");' },
+          ],
+        },
+      ],
+    }
+    const html = renderSpecHtml(d)
+    expect(html).toMatch(/<h4 class="sub3" id="[^"]+">HelperBR<\/h4>/)
+  })
 })

@@ -29,6 +29,7 @@ function esc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function renderBlock(block: SpecBlock): string {
@@ -135,8 +136,11 @@ function slug(s: string): string {
 }
 
 export function renderSpecHtml(doc: SpecDocument, opts: RenderHtmlOptions = {}): string {
-  const logo = opts.logoDataUri
-    ? `<img src="${opts.logoDataUri}" alt="MFEC" />`
+  // Only emit an <img> when the logo is a safe embedded image (a data:image/…
+  // URI). Any other value (e.g. a javascript: or http: URL) is rejected to
+  // prevent an attribute-breakout / untrusted resource, falling back to text.
+  const logo = opts.logoDataUri?.startsWith('data:image/')
+    ? `<img src="${esc(opts.logoDataUri)}" alt="MFEC" />`
     : `<div class="logo-text">MFEC</div>`
 
   const meta = doc.meta
@@ -145,25 +149,42 @@ export function renderSpecHtml(doc: SpecDocument, opts: RenderHtmlOptions = {}):
     .join('')
 
   // Render sections while assigning stable ids to each section and its level-2
-  // subheadings, and collect a matching table-of-contents tree.
+  // and level-3 subheadings, and collect a matching table-of-contents tree.
+  // Level-3 links nest under the preceding level-2 entry so deep links resolve.
   const toc: string[] = []
   const sections = doc.sections
     .map((s, i) => {
       const secId = `sec-${i}-${slug(s.heading)}`
-      const subLinks: string[] = []
+      // Each entry is a level-2 (or orphan level-3) link plus its level-3 children.
+      const subEntries: { link: string; children: string[] }[] = []
       let subIdx = 0
       const body = s.blocks
         .map((b) => {
-          if (b.kind === 'subheading' && b.level === 2) {
+          if (b.kind === 'subheading' && (b.level === 2 || b.level === 3)) {
             const subId = `${secId}-${subIdx++}-${slug(b.text)}`
-            subLinks.push(`<li><a href="#${subId}">${esc(b.text)}</a></li>`)
-            return `<h3 class="sub2" id="${subId}">${esc(b.text)}</h3>`
+            const link = `<li><a href="#${subId}">${esc(b.text)}</a></li>`
+            if (b.level === 2) {
+              subEntries.push({ link, children: [] })
+              return `<h3 class="sub2" id="${subId}">${esc(b.text)}</h3>`
+            }
+            // level 3: attach to the current level-2, or stand alone if none yet.
+            const parent = subEntries[subEntries.length - 1]
+            if (parent) parent.children.push(link)
+            else subEntries.push({ link, children: [] })
+            return `<h4 class="sub3" id="${subId}">${esc(b.text)}</h4>`
           }
           return renderBlock(b)
         })
         .join('')
+      const subLinks = subEntries
+        .map((e) =>
+          e.children.length
+            ? e.link.replace(/<\/li>$/, `<ul>${e.children.join('')}</ul></li>`)
+            : e.link,
+        )
+        .join('')
       toc.push(
-        `<li><a href="#${secId}">${esc(s.heading)}</a>${subLinks.length ? `<ul>${subLinks.join('')}</ul>` : ''}</li>`,
+        `<li><a href="#${secId}">${esc(s.heading)}</a>${subLinks ? `<ul>${subLinks}</ul>` : ''}</li>`,
       )
       return `<section><h2 id="${secId}">${esc(s.heading)}</h2>${body}</section>`
     })

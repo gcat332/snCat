@@ -157,7 +157,7 @@ function apiSpecSection(instance: string, table: string, schema?: SpecSchemaFiel
     { kind: 'subheading', level: 2, text: 'Example — list records' },
     {
       kind: 'code',
-      lang: 'javascript',
+      lang: 'text',
       caption: 'GET (query)',
       code: `curl -s -u "USER:PASS" \\
   -H "Accept: application/json" \\
