@@ -1334,6 +1334,8 @@ const aiModel = el<HTMLInputElement>('ai-model')
 const aiFormat = el<HTMLSelectElement>('ai-format')
 const aiSave = el<HTMLButtonElement>('ai-save')
 const aiSaved = el('ai-saved')
+const aiTestBtn = el<HTMLButtonElement>('ai-test')
+const aiTestResult = el('ai-test-result')
 
 /** Switch to a named tab programmatically. */
 function activateTab(tabId: string) {
@@ -2511,13 +2513,18 @@ async function loadAiSettings() {
   aiFormat.value = cfg.format
 }
 
-async function saveAiSettings() {
-  const cfg: LlmConfig = {
+/** Build an LlmConfig from the current Settings form (unsaved values). */
+function currentFormConfig(): LlmConfig {
+  return {
     endpoint: aiEndpoint.value.trim(),
     apiKey: aiKey.value.trim(),
     model: aiModel.value.trim() || 'claude-opus-4-8',
     format: aiFormat.value as LlmFormat,
   }
+}
+
+async function saveAiSettings() {
+  const cfg = currentFormConfig()
   await saveLlmConfig(cfg)
   aiSaved.hidden = false
   setTimeout(() => (aiSaved.hidden = true), 1500)
@@ -3003,6 +3010,31 @@ el<HTMLButtonElement>('ai-preset-agenthub').addEventListener('click', () => {
   aiEndpoint.value = 'https://dev-agenthub.mfec.co.th/api/browser-ingest'
   if (!aiModel.value.trim()) aiModel.value = 'claude-opus-4-8'
   showToast('AgentHub preset filled — paste your token and Save')
+})
+aiTestBtn.addEventListener('click', async () => {
+  const cfg = currentFormConfig()
+  if (!cfg.endpoint || !cfg.apiKey) {
+    aiTestResult.textContent = 'Fill endpoint + key first.'
+    return
+  }
+  aiTestResult.textContent = 'Testing…'
+  aiTestBtn.disabled = true
+  try {
+    const entry = (await chrome.runtime.sendMessage({
+      kind: 'snjava:llm-run',
+      tabId: currentTabId ?? -1,
+      op: 'test',
+      payload: cfg,
+    })) as { outcome?: { ok: boolean; ms?: number; error?: string }; error?: string } | undefined
+    const o = entry?.outcome
+    aiTestResult.textContent = o?.ok
+      ? `✓ Connected (${o.ms} ms)`
+      : `✗ ${o?.error ?? entry?.error ?? 'failed'}`
+  } catch (e) {
+    aiTestResult.textContent = `✗ ${(e as Error).message}`
+  } finally {
+    aiTestBtn.disabled = false
+  }
 })
 void loadAiSettings()
 initGenerate()

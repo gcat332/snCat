@@ -7,12 +7,20 @@
  * state is stored per browser TAB in chrome.storage.session so each tab has its
  * own review/generate result and the panel restores it on reopen / tab switch.
  */
-import { runGeneratePlan, runJavaReview, runSpecNarrative, type NarrativeInput, type ReviewInput } from '@core/llm'
+import {
+  runGeneratePlan,
+  runJavaReview,
+  runSpecNarrative,
+  testLlmConnection,
+  type LlmConfig,
+  type NarrativeInput,
+  type ReviewInput,
+} from '@core/llm'
 
 interface LlmRunMessage {
   kind: 'snjava:llm-run'
   tabId: number
-  op: 'review' | 'generate' | 'narrative'
+  op: 'review' | 'generate' | 'narrative' | 'test'
   payload: ReviewInput & {
     requirement?: string
     table?: string
@@ -65,6 +73,8 @@ async function runLlmJob(msg: LlmRunMessage): Promise<unknown> {
           fields: msg.payload.fields,
           scope: msg.payload.scope,
         })
+      } else if (msg.op === 'test') {
+        outcome = await testLlmConnection(msg.payload as unknown as LlmConfig)
       } else {
         outcome = await runSpecNarrative(msg.payload as NarrativeInput)
       }
@@ -120,7 +130,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // bodies / plan artifacts; left behind they accumulate in chrome.storage.session
 // toward its ~10MB quota. Remove both ops for the closed tab.
 chrome.tabs.onRemoved.addListener((tabId) => {
-  const keys = [jobKey(tabId, 'review'), jobKey(tabId, 'generate'), jobKey(tabId, 'narrative')]
+  const keys = [
+    jobKey(tabId, 'review'),
+    jobKey(tabId, 'generate'),
+    jobKey(tabId, 'narrative'),
+    jobKey(tabId, 'test'),
+  ]
   chrome.storage.session
     .remove(keys)
     .catch((err) => console.error('[snJava] failed to purge job entries for tab', tabId, err))
