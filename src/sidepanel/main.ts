@@ -525,36 +525,54 @@ async function pasteXmlInner() {
     xmlOut.replaceChildren(elText('div', 'error', 'This copy has no XML — Copy again with the latest version.'))
     return
   }
-  const count = clip.count || parseUnloadXmlAll(clip.xml, clip.table).length
-  const noun = count === 1 ? 'record' : 'records'
+  // Parse the unload XML into rows (with sys_id) and insert them ourselves via
+  // GlideRecord. GlideUpdateManager2.loadXML only stages update-set XML and does
+  // NOT insert data records — that's why it reported ok but nothing appeared.
+  const rows = parseUnloadXmlAll(clip.xml, clip.table).map((r) => r.fields)
+  if (rows.length === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'No records found in the copied XML.'))
+    return
+  }
+  const noun = rows.length === 1 ? 'record' : 'records'
   if (
     !(await confirmDialog(
-      `Import ${count} "${clip.table}" ${noun} into ${current.host}?\n\nThis is a genuine ServiceNow XML load (GlideUpdateManager2.loadXML): the original sys_id is preserved and it is INSERT_OR_UPDATE — a matching record is updated, never duplicated. Business rules run, as in a normal XML import. No update set is used.`,
+      `Import ${rows.length} "${clip.table}" ${noun} into ${current.host}?\n\nsys_id is preserved and it is INSERT_OR_UPDATE — a matching record is updated, never duplicated. Business rules are skipped (setWorkflow(false)). No update set is used.`,
     ))
   ) {
     return
   }
-  xmlOut.replaceChildren(elText('div', 'empty', `Loading ${count} ${noun} via XML import…`))
-  // Genuine XML import. No scope / update set (feature runs a plain load).
-  const bg = buildLoadXmlScript(clip.xml)
+  xmlOut.replaceChildren(elText('div', 'empty', `Importing ${rows.length} ${noun} via background script…`))
+  const bg = buildImportScript(clip.table, rows)
   const res = await runBackground(current.host, bg, {})
   if (!res.ok) {
     xmlOut.replaceChildren(elText('div', 'error', res.error))
     return
   }
   const out = extractBgOutput(res.data)
-  if (/snJava: loaded ok/i.test(out)) {
+  const m = out.match(/snJava: moved ins=(\d+) upd=(\d+) total=(\d+)/i)
+  const errm = out.match(/snJava: errors (.+)/i)
+  if (m) {
+    const [, ins, upd, total] = m
+    const done = Number(ins) + Number(upd)
     xmlOut.replaceChildren(
-      elText('div', 'ok-banner', `✓ Imported ${count} ${clip.table} ${noun} via XML load (sys_id preserved).`),
+      elText(
+        'div',
+        done === Number(total) ? 'ok-banner' : 'error',
+        `${done === Number(total) ? '✓' : '⚠'} Imported ${done}/${total} ${clip.table} ${noun} — ${ins} inserted, ${upd} updated`,
+      ),
     )
-    await chrome.storage.local.remove('xmlClip')
-    await refreshXmlControls()
-    xmlOut.append(elText('div', 'info-sub', 'Copied XML cleared — Copy again to import another set.'))
+    if (errm) {
+      const e = elText('div', 'error', errm[1].slice(0, 600))
+      e.style.marginTop = '6px'
+      xmlOut.append(e)
+    }
+    if (done > 0) {
+      await chrome.storage.local.remove('xmlClip')
+      await refreshXmlControls()
+      xmlOut.append(elText('div', 'info-sub', 'Copied XML cleared — Copy again to import another set.'))
+    }
   } else {
-    const fail = out.match(/snJava: loadfail (.+)/i)
-    xmlOut.replaceChildren(
-      elText('div', 'error', fail ? `XML import failed: ${fail[1].slice(0, 400)}` : `XML import may have failed — output: ${out.slice(0, 400)}`),
-    )
+    xmlOut.replaceChildren(elText('div', 'error', `Import may have failed — output: ${out.slice(0, 400)}`))
   }
 }
 
@@ -573,22 +591,40 @@ function buildRecordInsertScript(table: string, fields: Record<string, string>):
 }
 
 /**
- * Background script that performs a GENUINE ServiceNow XML import of an unload
- * XML string via GlideUpdateManager2.loadXML — the same loader update-set commits
- * and the list "Import XML" action use. It is keyed by sys_id (INSERT_OR_UPDATE),
- * so it preserves sys_id and is idempotent (a matching record is updated, never
- * duplicated). Business rules run, exactly as a real XML import.
+ * Background script that imports unload-XML rows the way a ServiceNow XML import
+ * behaves, but with a real GlideRecord insert (which actually writes data rows).
+ * Keyed by sys_id (INSERT_OR_UPDATE): a matching record is UPDATED, a missing one
+ * is INSERTED preserving the original sys_id (setNewGuidValue) — so it is
+ * idempotent and never duplicates. Business rules are skipped (setWorkflow(false)
+ * set immediately before the DML, since initialize() resets that flag).
+ * Reports "moved ins=.. upd=.. total=..".
  */
-function buildLoadXmlScript(xml: string): string {
+function buildImportScript(table: string, records: Record<string, string>[]): string {
   return [
-    `var xml = ${JSON.stringify(xml)};`,
-    `try {`,
-    `  var mgr = new GlideUpdateManager2();`,
-    `  mgr.loadXML(xml);`,
-    `  gs.info('snJava: loaded ok');`,
-    `} catch (e) {`,
-    `  gs.error('snJava: loadfail ' + e);`,
+    `var rows = ${JSON.stringify(records)};`,
+    `var DROP = {sys_created_on:1, sys_created_by:1, sys_updated_on:1, sys_updated_by:1, sys_mod_count:1, sys_tags:1, sys_domain:1, sys_domain_path:1};`,
+    `var ins = 0, upd = 0, errs = [];`,
+    `for (var i = 0; i < rows.length; i++) {`,
+    `  try {`,
+    `    var row = rows[i];`,
+    `    var sysId = row['sys_id'];`,
+    `    var gr = new GlideRecord(${JSON.stringify(table)});`,
+    `    var exists = sysId && gr.get(sysId);`,
+    `    if (!exists) { gr.initialize(); if (sysId) gr.setNewGuidValue(sysId); }`,
+    `    for (var k in row) { if (row.hasOwnProperty(k) && k !== 'sys_id' && !DROP[k]) gr.setValue(k, row[k]); }`,
+    `    gr.setWorkflow(false);`,
+    `    gr.autoSysFields(false);`,
+    `    var ok = exists ? gr.update() : gr.insert();`,
+    `    if (ok) { if (exists) { upd++; } else { ins++; } }`,
+    `    else {`,
+    `      var why = '';`,
+    `      try { why = gr.getLastErrorMessage(); } catch (e2) {}`,
+    `      errs.push('row ' + i + ': ' + (why || 'rejected (ACL / mandatory / data policy)'));`,
+    `    }`,
+    `  } catch (e) { errs.push('row ' + i + ': ' + e); }`,
     `}`,
+    `gs.info('snJava: moved ins=' + ins + ' upd=' + upd + ' total=' + rows.length);`,
+    `if (errs.length) { gs.info('snJava: errors ' + errs.slice(0, 5).join(' || ')); }`,
   ].join('\n')
 }
 
