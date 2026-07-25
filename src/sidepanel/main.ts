@@ -660,7 +660,7 @@ async function pasteXmlInner() {
     ),
   )
   const list = document.createElement('div')
-  list.className = 'diff-kv'
+  list.className = 'import-list'
   const okSysIds: string[] = []
   results.forEach((r, i) => {
     const row = document.createElement('div')
@@ -671,9 +671,9 @@ async function pasteXmlInner() {
     )
     if (r.ok) {
       okSysIds.push(r.sysId)
-      const copyBtn = elText('button', 'tool-btn', 'Copy sys_id')
+      const copyBtn = elText('button', 'row-action', 'Copy sys_id')
       copyBtn.addEventListener('click', () => void copyText(r.sysId, copyBtn))
-      const openBtn = elText('button', 'tool-btn', 'Open')
+      const openBtn = elText('button', 'row-action', 'Open')
       openBtn.addEventListener('click', () => void chrome.tabs.create({ url: buildRecordFormUrl(host, clip.table, r.sysId) }))
       row.append(copyBtn, openBtn)
     }
