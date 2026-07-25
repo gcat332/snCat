@@ -1,89 +1,99 @@
 # snJava — ServiceNow Java Assistant (Chrome Extension, MV3)
 
-A Chrome Extension with a shared core engine and two features:
+A Chrome side-panel extension that assists ServiceNow development. It reads the
+record you're on and works through the ServiceNow REST API, all styled in the
+MFEC light theme.
 
-- **F1 — Design Spec Generator**: generate a Design Spec (PDF / Word `.docx` / HTML) from any ServiceNow record, styled in the MFEC light theme.
-- **F2 — Script Tester**: 3-layer testing (static AI review → prod-guarded background-script run → guarded real execution) for Business Rules / Client Scripts.
+Three features plus an optional AI layer:
 
-See [`handoff.md`](./handoff.md) for the full design, decisions, and milestones.
+- **F1 — Design Spec Generator** (Spec tab): walk a record's related artifacts and export a Design Spec as **HTML / PDF / Word `.docx`**.
+- **F2 — Script Tester** (Tester tab): 3 layers — static lint (Layer 1) → prod-guarded background-script run "bgrun" (Layer 2) → guarded real create/read/delete (Layer 3) — for Business Rules / Client Scripts / Script Includes.
+- **F3 — XML Mover** (Inspect tab): copy a record's unload XML on one instance and paste-import it into another, with an undo log.
+- **AI Generate** (Generate tab): turn a requirement into a plan of ServiceNow artifacts and create the dev/admin-facing ones on a sub-prod. Requires an LLM endpoint (see [Configure](#configure-first-run)).
+
+See [`handoff.md`](./handoff.md) for the full design, decisions, and milestones, and [`CLAUDE.md`](./CLAUDE.md) for the architecture guide.
 
 ## Stack
 
 TypeScript · Vite · [`@crxjs/vite-plugin`](https://crxjs.dev) (MV3) · Vitest
 
-## Develop
+## Install & use
+
+This extension is not on the Chrome Web Store — load it yourself.
+
+### On your machine (Load unpacked)
 
 ```bash
-npm install
-npm run dev      # Vite dev server with HMR
+npm install          # first time only
+npm run build        # produces dist/
 ```
 
-Then load the extension in Chrome:
+1. Open `chrome://extensions` → enable **Developer mode** (top right).
+2. **Load unpacked** → select the `dist/` folder.
+3. Open a ServiceNow page (dev instance: `mfecplcdemo10.service-now.com`) and click the **snJava** toolbar icon — the side panel opens and reports the current **table + sys_id**.
 
-1. `npm run build` (or use the `dev` server output)
-2. Open `chrome://extensions` → enable **Developer mode**
-3. **Load unpacked** → select the `dist/` folder
-4. Open a ServiceNow page (dev instance: `mfecplcdemo10.service-now.com`) → click the snJava toolbar icon → the side panel opens and reports the current **table + sys_id**.
+To update later: `git pull && npm run build`, then click ↻ on the extension card in `chrome://extensions`.
+
+### Share with the team
+
+- **Quick:** zip the `dist/` folder and have teammates Load unpacked (steps 1–3 above).
+- **Managed:** publish to the [Chrome Web Store](https://chrome.google.com/webstore/devconsole) as **Unlisted/Private** for the org — this also gives everyone auto-updates.
+
+## Configure (first run)
+
+Open the side panel → **Settings** tab.
+
+- **LLM endpoint** — the AI features (Java review, Generate, AI spec overview) stay hidden until an **Endpoint URL + key** are set. Supported formats: `anthropic`, `openai`, and MFEC **AgentHub** (`dev-agenthub.mfec.co.th`). Script bodies are redacted before being sent. Without config, non-AI features work and AI features report `configured: false` instead of failing.
+- **Prod guard** — all writes (Tester Layer 3, Generate "create", XML paste) are **default-DENY**: allowed only on confirmed sub-prod hostnames (`dev`/`test`/`uat`/`sandbox`/`demo`/…), and an explicit production marker hard-blocks even if a sub-prod marker is also present. Adjust the sub-prod patterns here if your instance uses a non-standard hostname.
+
+## Tabs
+
+| Tab | Feature | What it does |
+|---|---|---|
+| **Inspect** | Context + F3 | Shows table/sys_id/scope; **Copy / Paste** record unload XML across instances with undo; open records/lists. |
+| **Tester** | F2 | Load a script (from a record, paste, or the on-page **javaHelp** chip), lint it (Layer 1), run it prod-guarded (Layer 2), and do a guarded real create/delete against a sub-prod (Layer 3). |
+| **Generate** | AI | Requirement → plan of artifacts → create the creatable ones on a sub-prod (scope-aware). |
+| **Spec** | F1 | Discover related artifacts → include/exclude checklist → export HTML / PDF / Word. |
+| **Settings** | — | LLM endpoint + prod-guard configuration. |
+
+### javaHelp chip
+
+On a ServiceNow form with a script field, snJava injects a small **javaHelp** chip next to the field label. Clicking it opens the side panel, loads the script into the Tester tab, and sets the Script kind — so you can add the problem and run **Java review** immediately.
+
+### `[MF-AI]` naming convention
+
+When the **Generate** tab creates a dev/admin-facing config record (Business Rule, Client Script, Script Include, Fix Script, UI Policy, UI Action, notification, …), its display name is prefixed with `[MF-AI][<CODE>] `, where `<CODE>` is a short module code derived from the target table (`incident` → `INC`, `change_request` → `CHG`, …). **Not** applied to Field / Table / ACL (structural names), Choice (user-facing labels), or business data. See `src/core/naming.ts`.
 
 ## Scripts
 
 | Command | What |
 |---|---|
-| `npm run dev` | Vite dev server (HMR) |
+| `npm run dev` | Vite dev server (HMR), port 5199 |
 | `npm run build` | Typecheck + production build to `dist/` |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Run Vitest unit tests |
+| `npm test` | Run Vitest unit tests (187) |
+| `npx vitest run src/core/lint.test.ts` | Run a single test file |
 
-## Current status — M1 (API core)
+## Status
 
-**M0 — Skeleton** ✅
-- MV3 scaffold, side panel opens on icon click.
-- Content script detects **table + sys_id** from the URL on **classic UI**, **Next Experience / Polaris**, and **workspace** routes, with a `g_form` / `g_ck` MAIN-world bridge fallback.
-- Context parser unit-tested (`src/core/context.test.ts`).
+Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See `handoff.md` for the milestone log.
 
-**M1 — API core** ✅
-- ServiceNow REST client in the service worker (`src/background/api.ts`): Table API, Aggregate/stats count, single record, `sys_dictionary` schema. Session-cookie auth via `credentials:'include'` + `X-UserToken` (g_ck) when available.
-- Pure URL builders + cell helpers, unit-tested (`src/core/api.test.ts`).
-- **Condition Tester** end-to-end: encoded query → match count + sample rows.
-- **Table schema** loader (sys_dictionary → field list).
+Unit tests cover **pure logic only** (187 tests, all in `src/core/`). Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
 
-**M2 — Script Tester Layer 1** ✅ (LLM-free)
-- Deterministic anti-pattern lint engine (`src/core/lint.ts`), unit-tested (`src/core/lint.test.ts`): `update-in-before-br`, `gliderecord-in-client-script`, `gs-in-client-script`, `previous-in-async-br`, `unconditioned-query`, `eval-usage`, `empty-catch`, `hardcoded-sys-id`. Comment/string-aware scanner keeps line numbers accurate and avoids false hits inside comments.
-- Side panel **Script Tester** tab: auto-loads the script from a Business Rule / Client Script / Script Include record, kind + timing selectors, intent capture, findings list by severity.
-- AI logic-vs-intent review is stubbed off (LLM disabled) per handoff §7 decision 2.
-
-**M3 — Script Tester Layer 2** ✅
-- **Superseded by commit `8fa4415`:** the original in-extension sandbox — a sandboxed iframe (opaque origin, classic IIFE) that ran user scripts via `new Function` against Glide mocks and returned a typed trace — has been removed as dead code. Layer 2 now runs the tester script as a **real, prod-guarded background-script run** ("bgrun", via `sys.scripts.do` through `src/core/sn-rest.ts`) rather than simulating it in-panel.
-- Side panel **Layer 2** card: seed `current` from a real record ("Fill from a record"), edit current/previous, and run the script against the instance under the prod guard.
-
-> ⚠️ **Needs a real-browser smoke test:** the bgrun round-trip (`sys.scripts.do` execution + prod-guard enforcement) can only be confirmed by loading `dist/` in Chrome. Everything else in M0–M3 is verified.
-
-**M4 — F1 Design Spec Generator** ✅ (LLM-free, template-driven)
-- **Graph walker** (`src/core/graph.ts`): bounded BFS (depth 2), dedupe, injected fetch — unit-tested.
-- **Resolvers** (`src/core/resolvers.ts`): Business Rule (target table + referenced Script Includes via script scan), Catalog Item (variables, variable sets, UI policies, catalog client scripts, workflow), Script Include (recursive refs), Table→ACLs, Transform Map→entries — unit-tested pure helpers.
-- **Composer** (`src/core/spec.ts`): artifacts → SpecDocument with the fixed skeleton (Overview → Data Model → Logic → Integration Points → Security/ACL) — unit-tested.
-- **Renderers**: HTML (`render-html.ts`, self-contained, MFEC light theme + logo + print CSS, HTML-escaped — unit-tested) and Word `.docx` (`render-docx.ts`, `docx` lib — pack-tested).
-- Side panel **Design Spec** tab: discover artifacts → include/exclude checklist → export **HTML / PDF (print) / Word**.
-
-**M5 — Script Tester Layer 3 (guarded real execution) + prod guard** ✅
-- **Prod guard** (`src/core/prod-guard.ts`): default-DENY hostname classifier — writes are only allowed on confirmed sub-prods (`dev`/`test`/`uat`/`sandbox`/`demo`/…, configurable); explicit production markers hard-block even if a sub-prod marker is also present. 15 unit tests.
-- Guarded write ops in the REST client (`create`/`delete`): the background classifies the host and refuses the write **before any network I/O** on prod; writes also require `X-UserToken` (g_ck).
-- Side panel **Layer 3** card: prod-guard badge, create a real test record on a sub-prod → read it back → highlight fields the engine changed → delete it (all with explicit confirmation; disabled on prod).
-
-> ⚠️ **Real-browser smoke test items:** M1 auth (session/g_ck), M3 Layer 2 bgrun round-trip (`sys.scripts.do`), M4 resolver table/field names per instance version, and M5 writes (create/delete on the sub-prod). Pure logic is unit-tested; live I/O needs `dist/` loaded in Chrome against `mfecplcdemo10`.
-
-Next: **F3** — XML Mover (design in handoff §9). Optional later: LLM enhancement layer (Layer 1 intent review, F1 prose), ATF-based Layer 3.
+> ⚠️ **Needs a real-browser smoke test:** session/`g_ck` auth · Layer 2 bgrun round-trip (`sys.scripts.do`) · Layer 3 create/delete on a sub-prod · Generate artifact creation + `[MF-AI]` prefix · javaHelp chip injection · F1 resolver table/field names per instance version.
 
 ## Layout
 
 ```
 src/
 ├── manifest.config.ts   # MV3 manifest (@crxjs defineManifest)
-├── background/          # service worker (opens side panel; message broker)
-├── content/            # index.ts (isolated) + mainworld.ts (g_form/g_ck bridge)
-├── core/               # context parser + shared types (unit-tested)
-└── sidepanel/          # side panel UI (MFEC light theme)
+├── background/          # service worker: opens the panel, brokers messages, runs LLM jobs per tab
+├── content/             # index.ts (isolated world) + mainworld.ts (g_form/g_ck bridge + javaHelp chip)
+├── core/                # pure, unit-tested modules (no chrome.* except api-client.ts):
+│                        #   context · api · sn-rest · lint · prod-guard · graph · resolvers ·
+│                        #   spec · render-html · render-docx · llm · xml · f3-import · naming · diff
+└── sidepanel/           # side panel UI (main.ts + index.html + styles.css), MFEC light theme
 public/
-├── brand/              # MFEC logos (extracted from company profile PPTX)
-└── icons/              # extension icons
+├── brand/               # MFEC logos
+└── icons/               # extension icons
 ```
