@@ -49,7 +49,7 @@ import {
 } from '@core/llm'
 import { createCodeEditor } from './editor'
 import type { ArtifactRef } from '@core/graph'
-import type { TableHierarchy } from '@core/hierarchy'
+import { resolveAncestors, type HierarchyFetch, type TableHierarchy } from '@core/hierarchy'
 import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
 import { formatSpecDoc } from '@core/format'
@@ -989,45 +989,16 @@ async function conditionToCopy(table: string): Promise<string> {
 }
 
 /**
- * Walk a table's `super_class` chain up to its root, returning
- * [table, parent, grandparent, …]. `sys_dictionary` (see getDictionary /
- * buildDictionaryUrl) only returns fields declared DIRECTLY on the queried
- * table — so looking up refs for `incident` alone would miss `assigned_to`,
- * `assignment_group`, `opened_by` and `cmdb_ci`, all of which are declared on
- * `task`. resolveClipLabels() needs the full ancestor chain to catch those.
- * `super_class`'s DISPLAY value is the parent table's name (same pattern as
- * resolvers.ts's `resolveBusinessRule` and spec-runner.ts's
- * REFERENCE_LABEL_FIELDS). Capped at 10 hops with a visited set so a
- * malformed or cyclic hierarchy can't spin forever. A failed or empty lookup
- * just stops the walk — the caller still has what was found so far.
- */
-async function getTableAncestry(host: string, table: string): Promise<string[]> {
-  const chain: string[] = [table]
-  const visited = new Set<string>([table])
-  let current = table
-  for (let i = 0; i < 10; i++) {
-    const res = await queryRecords(host, 'sys_db_object', {
-      query: `name=${current}`,
-      fields: ['sys_id', 'name', 'super_class'],
-      limit: 1,
-      displayValue: 'all',
-    })
-    if (!res.ok || !res.data[0]) break
-    const parent = cellDisplay(res.data[0]['super_class'])
-    if (!parent || visited.has(parent)) break
-    visited.add(parent)
-    chain.push(parent)
-    current = parent
-  }
-  return chain
-}
-
-/**
  * Resolve display values for the sys_ids in a query: one sys_dictionary read
- * (across the table's whole ancestor chain — see getTableAncestry) to learn
- * each field's reference table, then one batched `sys_idIN…` query per
- * referenced table. Unresolvable tokens are simply absent from the result —
- * the paste warning says "could not resolve" rather than guessing.
+ * (across the table's whole ancestor chain — see resolveAncestors in
+ * @core/hierarchy) to learn each field's reference table, then one batched
+ * `sys_idIN…` query per referenced table. The chain matters because
+ * `sys_dictionary` (see getDictionary / buildDictionaryUrl) only returns
+ * fields declared DIRECTLY on the queried table — looking up refs for
+ * `incident` alone would miss `assigned_to`, `assignment_group`, `opened_by`
+ * and `cmdb_ci`, all of which are declared on `task`. Unresolvable tokens are
+ * simply absent from the result — the paste warning says "could not resolve"
+ * rather than guessing.
  */
 async function resolveClipLabels(
   host: string,
@@ -1037,7 +1008,22 @@ async function resolveClipLabels(
   const tokens = extractRefTokens(query)
   if (tokens.length === 0) return {}
 
-  const chain = await getTableAncestry(host, table)
+  // Adapter over queryRecords for resolveAncestors: it reads super_class as a
+  // RAW sys_id and looks the parent up by sys_id=, so the row must stay raw
+  // here (no display-value overlay, unlike spec-runner.ts's
+  // REFERENCE_LABEL_FIELDS) or the walk finds nothing past the first hop.
+  const hierarchyFetch: HierarchyFetch = async (t, q, fields, limit) => {
+    const res = await queryRecords(host, t, { query: q, fields, limit, displayValue: 'all' })
+    if (!res.ok) return []
+    return res.data.map((rec) => {
+      const out: Record<string, string> = {}
+      for (const [k, v] of Object.entries(rec)) out[k] = cellValue(v)
+      return out
+    })
+  }
+  // resolveAncestors excludes the table itself; the dictionary query below
+  // needs it included (nameIN<table,parents…>).
+  const chain = [table, ...(await resolveAncestors(table, hierarchyFetch))]
   const refByField: Record<string, string> = {}
   const dict = await queryRecords(host, 'sys_dictionary', {
     query: `nameIN${chain.join(',')}^elementISNOTEMPTY`,

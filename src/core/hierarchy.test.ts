@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveHierarchy, type HierarchyFetch } from './hierarchy'
+import { resolveAncestors, resolveHierarchy, type HierarchyFetch } from './hierarchy'
 
 /**
  * Fake sys_db_object. `rows` is keyed by table name; each row carries its own
@@ -79,5 +79,41 @@ describe('resolveHierarchy', () => {
     const h = await resolveHierarchy('base', fakeFetch(many))
     expect(h.children).toHaveLength(20)
     expect(h.childrenTruncated).toBe(5)
+  })
+})
+
+describe('resolveAncestors', () => {
+  it('walks ancestors nearest-first', async () => {
+    const ancestors = await resolveAncestors('incident', fakeFetch(CHAIN))
+    expect(ancestors).toEqual(['task', 'sys_metadata'])
+  })
+
+  it('returns no ancestors for a root table', async () => {
+    const ancestors = await resolveAncestors('sys_metadata', fakeFetch(CHAIN))
+    expect(ancestors).toEqual([])
+  })
+
+  it('terminates on a super_class cycle instead of looping forever', async () => {
+    const cyclic = {
+      a: { sys_id: 'id_a', super_class: 'id_b' },
+      b: { sys_id: 'id_b', super_class: 'id_a' },
+    }
+    const ancestors = await resolveAncestors('a', fakeFetch(cyclic))
+    expect(ancestors).toEqual(['b'])
+  })
+
+  it('returns no ancestors for a table absent from sys_db_object', async () => {
+    const ancestors = await resolveAncestors('nope', fakeFetch(CHAIN))
+    expect(ancestors).toEqual([])
+  })
+
+  it('issues no children query — the whole reason this export exists', async () => {
+    const queries: string[] = []
+    const spyFetch: HierarchyFetch = async (table, query, fields, limit) => {
+      queries.push(query)
+      return fakeFetch(CHAIN)(table, query, fields, limit)
+    }
+    await resolveAncestors('incident', spyFetch)
+    expect(queries.some((q) => q.startsWith('super_class='))).toBe(false)
   })
 })

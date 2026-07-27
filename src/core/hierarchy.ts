@@ -41,6 +41,33 @@ const CHILD_FETCH_LIMIT = 500
 const DB_OBJECT_FIELDS = ['sys_id', 'name', 'super_class']
 
 /**
+ * The table's ancestor chain, nearest first, excluding the table itself.
+ * Split out from resolveHierarchy because callers that only need inheritance
+ * (e.g. resolving which table declares a field) must not pay for the children query.
+ */
+export async function resolveAncestors(
+  table: string,
+  fetch: HierarchyFetch,
+): Promise<string[]> {
+  const [self] = await fetch('sys_db_object', `name=${table}`, DB_OBJECT_FIELDS, 1)
+  if (!self?.sys_id) return []
+
+  // Follow super_class upward. `seen` holds sys_ids already visited, so a
+  // cycle terminates instead of spinning to the hop cap every time.
+  const ancestors: string[] = []
+  const seen = new Set<string>([self.sys_id])
+  let parentId = self.super_class
+  for (let hop = 0; hop < MAX_ANCESTOR_HOPS && parentId && !seen.has(parentId); hop++) {
+    seen.add(parentId)
+    const [parent] = await fetch('sys_db_object', `sys_id=${parentId}`, DB_OBJECT_FIELDS, 1)
+    if (!parent?.name) break
+    ancestors.push(parent.name)
+    parentId = parent.super_class
+  }
+  return ancestors
+}
+
+/**
  * Resolves a table's ancestor chain (via super_class, nearest-first) and direct children.
  * Returns ancestors, children list (capped at MAX_CHILDREN), and the count of children dropped by the cap.
  */
@@ -53,18 +80,7 @@ export async function resolveHierarchy(
   const [self] = await fetch('sys_db_object', `name=${table}`, DB_OBJECT_FIELDS, 1)
   if (!self?.sys_id) return empty
 
-  // Ancestors: follow super_class upward. `seen` holds sys_ids already visited,
-  // so a cycle terminates instead of spinning to the hop cap every time.
-  const ancestors: string[] = []
-  const seen = new Set<string>([self.sys_id])
-  let parentId = self.super_class
-  for (let hop = 0; hop < MAX_ANCESTOR_HOPS && parentId && !seen.has(parentId); hop++) {
-    seen.add(parentId)
-    const [parent] = await fetch('sys_db_object', `sys_id=${parentId}`, DB_OBJECT_FIELDS, 1)
-    if (!parent?.name) break
-    ancestors.push(parent.name)
-    parentId = parent.super_class
-  }
+  const ancestors = await resolveAncestors(table, fetch)
 
   // Children: one level only.
   const kidRows = await fetch(
