@@ -33,15 +33,24 @@ export function evaluateGate(status: RoleStatus): GateVerdict {
     return { allowed: true, banner: 'none', message: '' }
   }
   if (status.state === 'not-admin') {
-    const roles = status.roles?.length ? status.roles.join(', ') : 'none'
+    // Report what was actually checked, not a guess about what the user "has".
+    // hasRole is a single yes/no probe for 'admin' — it is not an enumeration
+    // of roles, so an empty `roles` list means "not read", never "has none".
+    // Saying "Roles detected: none" would assert a false claim about the
+    // user's account; only report a role list when one was actually read.
+    const lines = [
+      `snJava requires the admin role on this instance.`,
+      `Signed in as: ${status.userName || 'unknown'}`,
+      `Checked for the "admin" role: not held.`,
+    ]
+    if (status.roles?.length) {
+      lines.push(`Roles read from the page: ${status.roles.join(', ')}`)
+    }
+    lines.push(`All features are disabled.`)
     return {
       allowed: false,
       banner: 'blocked',
-      message:
-        `snJava requires the admin role on this instance.\n` +
-        `Signed in as: ${status.userName || 'unknown'}\n` +
-        `Roles detected: ${roles}\n` +
-        `All features are disabled.`,
+      message: lines.join('\n'),
     }
   }
   return {

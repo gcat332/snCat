@@ -23,9 +23,15 @@ describe('evaluateGate', () => {
     expect(v.message).toContain('itil, catalog_admin')
   })
 
-  it('says so when a blocked user has no roles at all', () => {
+  it('states the admin check outcome regardless of whether roles were read', () => {
     const v = evaluateGate({ state: 'not-admin', userName: 'guest', roles: [] })
-    expect(v.message).toContain('none')
+    expect(v.message).toContain('guest')
+    expect(v.message).toContain('Checked for the "admin" role: not held.')
+  })
+
+  it('never claims "none" when roles could not be enumerated — that would be a false statement about the account', () => {
+    const v = evaluateGate({ state: 'not-admin', userName: 'guest', roles: [] })
+    expect(v.message).not.toMatch(/none/i)
   })
 
   it('fails OPEN on unknown, with a warning banner', () => {

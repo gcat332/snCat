@@ -22,6 +22,18 @@ declare global {
       getValue?: (f: string) => string
     }
     g_ck?: string
+    // NOTE on `roles`: this is NOT part of the documented client-side g_user
+    // (GlideUser) API. The real, stock API surface is `userID`, `userName`,
+    // `firstName`, `lastName`, plus the boolean-only `hasRole`/`hasRoles`/
+    // `hasRoleExactly` — there is no built-in way to read a full role list
+    // client-side. The "comma-separated role string" notion traces to a
+    // *server-side* API, `gs.getSession().getRoles()`, which is unrelated and
+    // unreachable from here. We still read `roles` defensively — some
+    // instances customize g_user (e.g. via a UI Script) to add it, so this is
+    // a free win when present — but on a stock instance it will be absent.
+    // Callers MUST treat an empty/missing `roles` as "not enumerated", never
+    // as "the user has no roles" (see admin-gate.ts's blocked-message logic,
+    // which deliberately never renders a "none" claim for this reason).
     g_user?: {
       hasRole?: (role: string) => boolean
       userName?: string
