@@ -86,14 +86,14 @@ Walks `sys_db_object.super_class` upward and one level of children downward to d
 | `npm run dev` | Vite dev server (HMR), port 5199 |
 | `npm run build` | Typecheck + production build to `dist/` |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Run Vitest unit tests (187) |
+| `npm test` | Run Vitest unit tests |
 | `npx vitest run src/core/lint.test.ts` | Run a single test file |
 
 ## Status
 
 Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See `handoff.md` for the milestone log.
 
-Unit tests cover **pure logic only** (187 tests, all in `src/core/`). Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
+Unit tests cover **pure logic only**, all in `src/core/`. Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
 
 > ⚠️ **Needs a real-browser smoke test:** session/`g_ck` auth · Layer 2 bgrun round-trip (`sys.scripts.do`) · Layer 3 create/delete on a sub-prod · Generate artifact creation + `[MF-AI]` prefix · javaHelp chip injection · F1 resolver table/field names per instance version.
 
