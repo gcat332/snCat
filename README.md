@@ -48,6 +48,19 @@ Open the side panel → **Settings** tab.
 - **LLM endpoint** — the AI features (Java review, Generate, AI spec overview) stay hidden until an **Endpoint URL + key** are set. Supported formats: `anthropic`, `openai`, and MFEC **AgentHub** (`dev-agenthub.mfec.co.th`). Script bodies are redacted before being sent. Without config, non-AI features work and AI features report `configured: false` instead of failing.
 - **Prod guard** — all writes (Tester Layer 3, Generate "create", XML paste) are **default-DENY**: allowed only on confirmed sub-prod hostnames (`dev`/`test`/`uat`/`sandbox`/`demo`/…), and an explicit production marker hard-blocks even if a sub-prod marker is also present. Adjust the sub-prod patterns here if your instance uses a non-standard hostname.
 
+### Requires the `admin` role
+
+snJava checks the effective user's roles via `g_user.hasRole('admin')` and
+disables every feature for a confirmed non-admin, showing one clear message
+instead of a wall of 403s. Impersonation is honoured — impersonating a non-admin
+blocks the panel.
+
+When the roles cannot be read (a Next Experience page where `g_user` is absent,
+say), snJava **fails open**: features stay enabled behind an amber
+"Role unverified" banner. That is deliberate — a detection gap must not brick the
+extension, and the check is a UX convenience, not an access control. The
+instance's own ACLs are the real authority either way.
+
 ## Tabs
 
 | Tab | Feature | What it does |
@@ -89,7 +102,7 @@ When the **Generate** tab creates a dev/admin-facing config record (Business Rul
 
 Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See `handoff.md` for the milestone log.
 
-Unit tests cover **pure logic only** (187 tests, all in `src/core/`). Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
+Unit tests cover **pure logic only**, all in `src/core/`. Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
 
 > ⚠️ **Needs a real-browser smoke test:** session/`g_ck` auth · Layer 2 bgrun round-trip (`sys.scripts.do`) · Layer 3 create/delete on a sub-prod · Generate artifact creation + `[MF-AI]` prefix · javaHelp chip injection · F1 resolver table/field names per instance version.
 
