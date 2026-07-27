@@ -24,21 +24,21 @@
 ### Task 1: Vendor the update-set export
 
 **Files:**
-- Create: `src/assets/vendor/add-to-update-set-v9.5.xml` (copy of the supplied file)
-- Create: `src/assets/vendor/README.md`
+- Create: `public/vendor/add-to-update-set-v9.5.xml` (copy of the supplied file)
+- Create: `public/vendor/README.md`
 - Modify: `src/manifest.config.ts` (`web_accessible_resources`, if the build needs it)
 
 - [ ] **Step 1: Copy the file in**
 
 ```bash
-mkdir -p src/assets/vendor
-cp ~/Downloads/Add_to_Update_Set_Global_v9.5.xml src/assets/vendor/add-to-update-set-v9.5.xml
+mkdir -p public/vendor
+cp ~/Downloads/Add_to_Update_Set_Global_v9.5.xml public/vendor/add-to-update-set-v9.5.xml
 ```
 
 - [ ] **Step 2: Write the attribution note**
 
 ```markdown
-<!-- src/assets/vendor/README.md -->
+<!-- public/vendor/README.md -->
 # Vendored third-party content
 
 ## `add-to-update-set-v9.5.xml`
@@ -73,18 +73,18 @@ the real Share utility is already there, snJava calls it and leaves it alone.
 Add a temporary check in the side panel DevTools console after the next build:
 
 ```js
-await (await fetch(chrome.runtime.getURL('assets/vendor/add-to-update-set-v9.5.xml'))).text()
+await (await fetch(chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml'))).text()
 ```
 
 Run: `npm run build`, reload the unpacked extension, then run the snippet.
 Expected: a ~298,000-character string starting with `<?xml version="1.0"`.
-If it 404s, add `assets/vendor/*.xml` to `web_accessible_resources` in
+If it 404s, the file is not being emitted by the build; check the `public/` mechanism in
 `src/manifest.config.ts` and rebuild.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/assets/vendor/ src/manifest.config.ts
+git add public/vendor/ src/manifest.config.ts
 git commit -m "chore: vendor Add to Update Set Utility v9.5 export with attribution"
 ```
 
@@ -257,7 +257,7 @@ Expected: FAIL — `Failed to resolve import "./updateset-xml"`.
  * than extending its parser.
  *
  * Used to install the vendored Add to Update Set Utility (see
- * src/assets/vendor/README.md) on an instance that lacks it.
+ * public/vendor/README.md) on an instance that lacks it.
  */
 import { extractFields, findRecordInners } from './xml'
 
@@ -322,7 +322,7 @@ import { join } from 'node:path'
 
 describe('the vendored v9.5 export', () => {
   const recs = parseUpdateSetXml(
-    readFileSync(join(__dirname, '../assets/vendor/add-to-update-set-v9.5.xml'), 'utf8'),
+    readFileSync(join(__dirname, '../../public/vendor/add-to-update-set-v9.5.xml'), 'utf8'),
   )
 
   it('parses all 21 records', () => {
@@ -842,7 +842,7 @@ async function hasAddToUpdateSetUtils(host: string): Promise<boolean> {
 let vendoredUtilityCache: import('@core/updateset-xml').UpdateRecord[] | null = null
 async function loadVendoredUtility() {
   if (vendoredUtilityCache) return vendoredUtilityCache
-  const url = chrome.runtime.getURL('assets/vendor/add-to-update-set-v9.5.xml')
+  const url = chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml')
   const text = await (await fetch(url)).text()
   vendoredUtilityCache = parseUpdateSetXml(text)
   return vendoredUtilityCache
@@ -1011,7 +1011,7 @@ Expected: both succeed.
    "Add to Update Set" UI Action appears on forms.
 5. **Check the 212 KB base64 round-trip explicitly** — open the Script Include and
    confirm the body is intact JavaScript, not truncated or mangled. Compare its
-   length against `src/assets/vendor/add-to-update-set-v9.5.xml`'s payload.
+   length against `public/vendor/add-to-update-set-v9.5.xml`'s payload.
 6. Click **Add to update set** again — the install must NOT re-run.
 
 - [ ] **Step 10: Manual smoke — list mode and the prod guard**
@@ -1044,7 +1044,7 @@ list filter — into the update set selected in the header, using the Add to Upd
 Set Utility's `addToUpdateSetUtils` Script Include. Prod-guarded like every other
 write. If the instance does not have the Script Include, snJava offers to install
 the vendored v9.5 export (21 records, global scope, see
-`src/assets/vendor/README.md`) and then continues; an existing
+`public/vendor/README.md`) and then continues; an existing
 `addToUpdateSetUtils` is never overwritten. Records are processed 50 per
 background run, and more than 200 requires a second confirmation.
 ```
