@@ -56,6 +56,13 @@ import { renderSpecDocxBlob } from '@core/render-docx'
 import { loadRootArtifact, tableRootArtifact, walkSpecGraph } from '@core/spec-runner'
 import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 import { namePrefixField, prefixArtifactName } from '@core/naming'
+import {
+  batchSysIds,
+  buildAddToUpdateSetScript,
+  parseAddResult,
+  BULK_CONFIRM_THRESHOLD,
+} from '@core/update-set-add'
+import { buildInstallScript, parseUpdateSetXml } from '@core/updateset-xml'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
@@ -395,6 +402,7 @@ const xmlRow = el('xml-row')
 const xmlSave = el<HTMLButtonElement>('xml-save')
 const xmlPaste = el<HTMLButtonElement>('xml-paste')
 const xmlView = el<HTMLButtonElement>('xml-view')
+const usAdd = el<HTMLButtonElement>('us-add')
 const xmlOut = el('xml-out')
 
 interface XmlClip {
@@ -496,6 +504,21 @@ async function refreshXmlControls() {
   xmlPaste.title = clip
     ? `Insert the ${clip.count} copied ${clip.table} record(s) from ${clip.host} as new records`
     : 'Copy a record first'
+
+  // Add to update set: a form record is always exactly one; a list needs a
+  // count so the button can say how many it would capture. countRecords is one
+  // lightweight aggregate call and only runs on list views.
+  usAdd.disabled = !(formHas || listHas)
+  usAdd.textContent = 'Add to update set'
+  if (listHas && current?.table) {
+    const live = await getListQueryFromPage(current.table)
+    const query = (live !== null ? live : currentListQuery()) || undefined
+    const res = await countRecords(current.host, current.table, query)
+    if (res.ok) {
+      usAdd.textContent = `Add to update set (${res.data.count})`
+      usAdd.disabled = res.data.count === 0
+    }
+  }
 }
 
 async function fetchRecordXml(): Promise<string | null> {
@@ -864,6 +887,200 @@ function renderXmlValues(filter: string) {
     meta.append(elText('span', 'info-sub', v.length > 80 ? v.slice(0, 80) + '…' : v))
     row.append(name, meta)
     list.append(row)
+  }
+}
+
+/* ---------- Add to current update set ---------- */
+
+/** Cap on records fetched for a list-mode add. See `truncated` below. */
+const TARGETS_FETCH_LIMIT = 10_000
+
+/** The sys_ids to act on: the open record, or every record in the list filter. */
+async function updateSetTargets(): Promise<{
+  table: string
+  sysIds: string[]
+  /** True when the list has at least as many matches as the fetch limit, so the
+   *  Table API page may have been cut short — the caller must refuse rather than
+   *  silently act on a partial list. */
+  truncated: boolean
+} | null> {
+  if (!current?.table) return null
+  const { host, table, sysId } = current
+  if (sysId) return { table, sysIds: [sysId], truncated: false }
+  if (!isListView()) return null
+
+  const live = await getListQueryFromPage(table)
+  const query = live !== null ? live : currentListQuery()
+  const res = await queryRecords(host, table, {
+    query,
+    fields: ['sys_id'],
+    limit: TARGETS_FETCH_LIMIT,
+  })
+  if (!res.ok) return null
+  const sysIds = res.data.map((r) => cellValue(r['sys_id'])).filter(Boolean)
+  return { table, sysIds, truncated: sysIds.length >= TARGETS_FETCH_LIMIT }
+}
+
+/** True when the instance already has the utility's Script Include. */
+async function hasAddToUpdateSetUtils(host: string): Promise<boolean> {
+  const res = await queryRecords(host, 'sys_script_include', {
+    query: 'name=addToUpdateSetUtils',
+    fields: ['sys_id'],
+    limit: 1,
+  })
+  return res.ok && res.data.length > 0
+}
+
+/** Read the vendored export and parse it. Cached for the panel's lifetime. */
+let vendoredUtilityCache: import('@core/updateset-xml').UpdateRecord[] | null = null
+async function loadVendoredUtility() {
+  if (vendoredUtilityCache) return vendoredUtilityCache
+  const url = chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml')
+  const text = await (await fetch(url)).text()
+  vendoredUtilityCache = parseUpdateSetXml(text)
+  return vendoredUtilityCache
+}
+
+/**
+ * Install the vendored Add to Update Set Utility. Global scope is forced: the
+ * Script Include is `global.addToUpdateSetUtils`, so installing it into whatever
+ * app the scope bar happens to name would produce an unreachable copy.
+ *
+ * Returns true when every record landed.
+ */
+async function installUpdateSetUtility(
+  host: string,
+  updateSet: string | undefined,
+): Promise<boolean> {
+  const records = await loadVendoredUtility()
+  const summary = `${records.length} records · ${[...new Set(records.map((r) => r.type))].join(', ')}`
+  const ok = await confirmDialog(
+    `addToUpdateSetUtils was not found on ${host}.\n\n` +
+      `Install Add to Update Set Utility v9.5?\n${summary}\n\n` +
+      `Records are created in the GLOBAL scope and captured by the selected update set. ` +
+      `This is a promotable change.`,
+  )
+  if (!ok) return false
+
+  // Script Include goes LAST. hasAddToUpdateSetUtils() — the completeness guard
+  // that decides whether this whole function is skipped next time — checks only
+  // for that one record. Installing it first would make the guard lie: if any
+  // later record then failed (network blip, timeout on this instance), a retry
+  // would see the Script Include already present and never re-attempt the rest,
+  // leaving the properties/UI Action/module permanently missing. Installing it
+  // last means "the Script Include exists" only becomes true once every other
+  // record already landed — and since each record's installer is an idempotent
+  // insert-or-update keyed by its original sys_id, a retry after a genuine
+  // partial failure safely re-applies everything with no duplication.
+  const installOrder = [...records].sort(
+    (a, b) => (a.type === 'Script Include' ? 1 : 0) - (b.type === 'Script Include' ? 1 : 0),
+  )
+
+  let done = 0
+  for (const rec of installOrder) {
+    usAdd.textContent = `Installing ${++done}/${records.length}…`
+    const res = await runBackground(host, buildInstallScript(rec), { scope: 'global', updateSet })
+    const out = res.ok ? extractBgOutput(res.data) : (res.error ?? '')
+    if (!res.ok || !out.includes('snJava: installed')) {
+      xmlOut.replaceChildren(
+        elText('div', 'error', `Install failed on ${rec.type} "${rec.targetName}": ${out.slice(0, 400)}`),
+      )
+      return false
+    }
+  }
+  showToast(`Installed Add to Update Set Utility (${records.length} records)`)
+  return true
+}
+
+async function addToUpdateSet() {
+  if (!current) return
+  const host = current.host
+
+  const targets = await updateSetTargets()
+  if (!targets || targets.sysIds.length === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'Open a record, or a list with matching records.'))
+    return
+  }
+  // The Table API page is capped at TARGETS_FETCH_LIMIT; a hit means the list may
+  // have more matches than were fetched. Refuse rather than silently add a
+  // partial list while implying the whole filter was captured — narrowing the
+  // filter (or paging) is on the user, not a guess this tool should make.
+  if (targets.truncated) {
+    xmlOut.replaceChildren(
+      elText(
+        'div',
+        'error',
+        `This list has ${TARGETS_FETCH_LIMIT.toLocaleString()}+ matching records — more than can be fetched in one pass. Narrow the filter and try again.`,
+      ),
+    )
+    return
+  }
+
+  // Pin the target before any dialog so a tab switch cannot retarget the write.
+  const tgt = await checkTarget()
+  if (!tgt) return
+
+  const n = targets.sysIds.length
+  const usText = tgt.usLabel ? `update set "${tgt.usLabel}"` : 'the current update set'
+  if (!(await confirmDialog(`Add ${n} record${n === 1 ? '' : 's'} from \`${targets.table}\` to ${usText} on ${host}?`))) {
+    return
+  }
+  if (n > BULK_CONFIRM_THRESHOLD) {
+    if (!(await confirmDialog(`That is ${n} records — more than ${BULK_CONFIRM_THRESHOLD}. Confirm once more to proceed.`))) {
+      return
+    }
+  }
+
+  usAdd.disabled = true
+  const originalLabel = usAdd.textContent
+  try {
+    if (!(await hasAddToUpdateSetUtils(host))) {
+      if (!(await installUpdateSetUtility(host, tgt.opts.updateSet))) return
+    }
+
+    const batches = batchSysIds(targets.sysIds)
+    let seen = 0
+    let missing = 0
+    let captured = 0
+    for (let i = 0; i < batches.length; i++) {
+      usAdd.textContent = `Adding ${i + 1}/${batches.length}…`
+      const script = buildAddToUpdateSetScript(targets.table, batches[i])
+      const res = await runBackground(host, script, tgt.opts)
+      if (!res.ok) {
+        xmlOut.replaceChildren(elText('div', 'error', res.error ?? 'Background run failed.'))
+        return
+      }
+      const out = extractBgOutput(res.data)
+      const parsed = parseAddResult(out)
+      if (!parsed) {
+        xmlOut.replaceChildren(elText('div', 'error', `Unexpected output: ${out.slice(0, 400)}`))
+        return
+      }
+      seen += parsed.seen
+      missing += parsed.missing
+      captured += parsed.captured
+    }
+
+    // Three separate numbers, deliberately not collapsed into one "added" figure.
+    // `captured` can exceed `seen` (one record pulls in related records) and can fall
+    // below it (an excluded table or scope mismatch captures nothing), so reporting a
+    // single total would be misleading in both directions.
+    const lines = [
+      `${captured} update record${captured === 1 ? '' : 's'} captured in ${usText}, from ${seen} record${seen === 1 ? '' : 's'}.`,
+    ]
+    if (captured > seen) {
+      lines.push('More were captured than selected — the utility also pulled in related records.')
+    } else if (captured < seen) {
+      lines.push(
+        'Fewer were captured than selected — some records are on tables the utility excludes, or in a different scope.',
+      )
+    }
+    if (missing > 0) lines.push(`${missing} record${missing === 1 ? '' : 's'} no longer exist and were skipped.`)
+    xmlOut.replaceChildren(...lines.map((l) => elText('div', 'empty', l)))
+    showToast(`Captured ${captured} in update set ✓`)
+  } finally {
+    usAdd.disabled = false
+    usAdd.textContent = originalLabel
   }
 }
 
@@ -3502,6 +3719,7 @@ el<HTMLButtonElement>('optimize-diff').addEventListener('click', () =>
 xmlSave.addEventListener('click', saveXml)
 xmlPaste.addEventListener('click', pasteXml)
 xmlView.addEventListener('click', viewXmlValues)
+usAdd.addEventListener('click', () => void addToUpdateSet())
 testerFormat.addEventListener('click', () => formatEditor(testerEd, testerFormat))
 testerCopy.addEventListener('click', () => copyText(testerEd.getValue()))
 aiSave.addEventListener('click', saveAiSettings)
