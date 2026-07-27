@@ -14,7 +14,7 @@ extension, so its provenance is recorded here as precisely as the export allows:
 | | |
 |---|---|
 | **Name / version** | Add to Update Set Utility, v9.5 |
-| **Share listing** | <https://developer.servicenow.com/app.do#!/share/contents/9824957_add_to_update_set_utility> — this URL is not guesswork: it is embedded in the export itself, in the `title` field of the `Add to Update Set Preferences` module record |
+| **Share listing** | <https://developer.servicenow.com/app.do#!/share/contents/9824957_add_to_update_set_utility> — this URL is not guesswork: it is embedded in the export itself, in the rich-text `title` field of the `System Property Category` record named `addToUpdateSetUtils` (line 5476 of the XML), as part of its "Please check Share for updates" link |
 | **Attributed to** | `ben.hollifield`, on the audit fields only — `sys_updated_by` on the Script Include and on 11 of the 21 records; `sys_created_by` on 4 of the 21. The remaining records say `admin`, an instance-local account name rather than a person. |
 | **Dates in the export** | Script Include created `2018-10-24`, last updated `2026-05-20`, `sys_mod_count` 379 |
 | **License** | **NOT RECORDED — see below.** |
