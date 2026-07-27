@@ -3674,6 +3674,9 @@ specSource.addEventListener('change', () => {
   specScopeWrap.hidden = !isScope
   // Table hierarchy is a table concept — meaningless for a scope.
   if (specHierarchyRow) specHierarchyRow.hidden = isScope
+  // Table hierarchy is meaningless for a scope — drop any hint from a previous
+  // record/table discovery, or its description outlives the control that made it.
+  if (isScope) renderHierarchyHint(null, '')
   updateEnabledState()
 })
 specHierarchy.addEventListener('change', () => {
