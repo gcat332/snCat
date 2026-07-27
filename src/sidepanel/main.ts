@@ -4,9 +4,9 @@
  * M2: Script Tester Layer 1 — static lints (LLM-free), with auto-load of the
  *     script from the current Business Rule / Client Script / Script Include.
  */
-import type { PageContext, RuntimeMessage } from '@core/types'
+import type { PageContext, RuntimeMessage, UiKind } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, pickLabel } from '@core/api'
+import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildPolarisTargetUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, listFormPath, pickLabel } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
   clipWarnings,
@@ -949,12 +949,23 @@ async function runCondition() {
   condOpen.disabled = false
 }
 
+/**
+ * List URL for the shell the user is currently in. On Next Experience we wrap the
+ * classic list in the Polaris nav shell, because navigating to a bare `_list.do`
+ * would throw the user out of the UI they are working in.
+ */
+function listUrlForCurrentShell(host: string, table: string, query: string, ui: UiKind): string {
+  return ui === 'polaris'
+    ? buildPolarisTargetUrl(host, listFormPath(table, query))
+    : buildListFormUrl(host, table, query)
+}
+
 /** Open the filtered list in ServiceNow (classic list view honors sysparm_query). */
 function openConditionList() {
   if (!current?.table) return
   const table = queryTable()
   const query = condQuery.value.trim()
-  void chrome.tabs.create({ url: buildListFormUrl(current.host, table, query) })
+  void chrome.tabs.create({ url: listUrlForCurrentShell(current.host, table, query, current.ui) })
 }
 
 /* --- Condition clip: carry a list filter to another instance --- */
@@ -1150,6 +1161,7 @@ async function pasteCondition() {
   const host = current.host
   const view = current.view
   const pageTable = current.table
+  const ui = current.ui
   const tabId = currentTabId
 
   const store = await chrome.storage.local.get('condClip')
@@ -1173,7 +1185,7 @@ async function pasteCondition() {
     if (!ok) return
   }
 
-  const url = buildListFormUrl(host, clip.table, clip.query)
+  const url = listUrlForCurrentShell(host, clip.table, clip.query, ui)
   if (tabId != null) {
     // Set immediately before navigating (not on cancel above) so the detect()
     // this navigation triggers recomputes — rather than erases — these

@@ -138,12 +138,26 @@ export function buildRecordFormUrl(host: string, table: string, sysId: string): 
   return `${origin(host)}/${encodeURIComponent(table)}.do?sys_id=${encodeURIComponent(sysId)}`
 }
 
+/** Relative classic list path + query, e.g. `incident_list.do?sysparm_query=active%3Dtrue`. */
+export function listFormPath(table: string, query: string): string {
+  const params = new URLSearchParams()
+  params.set('sysparm_query', query)
+  return `${encodeURIComponent(table)}_list.do?${params.toString()}`
+}
+
 /** Build the classic list FORM URL (a list view), e.g.
  *  incident_list.do?sysparm_query=sys_idINa,b,c. Used to open a filtered list. */
 export function buildListFormUrl(host: string, table: string, query: string): string {
-  const params = new URLSearchParams()
-  params.set('sysparm_query', query)
-  return `${origin(host)}/${encodeURIComponent(table)}_list.do?${params.toString()}`
+  return `${origin(host)}/${listFormPath(table, query)}`
+}
+
+/**
+ * Wrap a relative classic path+query in the Next Experience nav shell, so
+ * navigation stays inside the Polaris UI instead of dropping the user into
+ * classic. The inverse of extractPolarisClassicTarget in context.ts.
+ */
+export function buildPolarisTargetUrl(host: string, classicPathAndQuery: string): string {
+  return `${origin(host)}/now/nav/ui/classic/params/target/${encodeURIComponent(classicPathAndQuery)}`
 }
 
 /** Build an Aggregate (stats) API URL that returns a row count for a query. */

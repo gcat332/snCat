@@ -7,10 +7,13 @@ import {
   buildChoicesQuery,
   buildRecordFormUrl,
   buildListFormUrl,
+  listFormPath,
+  buildPolarisTargetUrl,
   cellValue,
   cellDisplay,
   pickLabel,
 } from './api'
+import { parseServiceNowContext } from './context'
 
 const HOST = 'mfecplcdemo10.service-now.com'
 
@@ -140,5 +143,53 @@ describe('form URLs (open in instance)', () => {
     const u = buildListFormUrl('dev.service-now.com', 'incident', 'sys_idINa,b,c')
     expect(u.startsWith('https://dev.service-now.com/incident_list.do?')).toBe(true)
     expect(u).toContain('sysparm_query=sys_idINa%2Cb%2Cc')
+  })
+})
+
+describe('listFormPath', () => {
+  it('returns the relative classic list path + query', () => {
+    expect(listFormPath('incident', 'active=true')).toBe(
+      'incident_list.do?sysparm_query=active%3Dtrue',
+    )
+  })
+})
+
+describe('buildPolarisTargetUrl', () => {
+  it('wraps the relative path in the Next Experience classic-target shell, percent-encoded', () => {
+    const relative = listFormPath('incident', 'active=true')
+    const u = buildPolarisTargetUrl('dev.service-now.com', relative)
+    expect(u.startsWith('https://dev.service-now.com/now/nav/ui/classic/params/target/')).toBe(
+      true,
+    )
+    expect(u).toContain('%3F')
+    const afterTarget = u.split('/params/target/')[1]
+    expect(afterTarget).not.toContain('?')
+  })
+})
+
+describe('buildPolarisTargetUrl round-trips through parseServiceNowContext', () => {
+  const HOST2 = 'dev.service-now.com'
+
+  it('recovers table, view, and ui from a wrapped list URL', () => {
+    const table = 'incident'
+    const query = 'active=true^assigned_to=6816f79cc0a8016401c5a33be04be441'
+    const wrapped = buildPolarisTargetUrl(HOST2, listFormPath(table, query))
+    const ctx = parseServiceNowContext(wrapped)
+    expect(ctx).toMatchObject({ table, view: 'list', ui: 'polaris' })
+  })
+
+  it('preserves query characters that must survive encoding (^ , =)', () => {
+    const table = 'incident'
+    const query = 'short_descriptionLIKEfoo,bar^priority=1^ORDERBYnumber'
+    const wrapped = buildPolarisTargetUrl(HOST2, listFormPath(table, query))
+    const ctx = parseServiceNowContext(wrapped)
+    expect(ctx?.table).toBe(table)
+    expect(ctx?.view).toBe('list')
+    expect(ctx?.ui).toBe('polaris')
+    // The parsed context carries the original wrapped URL; assert the decoded
+    // query survives round-trip by re-parsing the sysparm_query out of it.
+    const decodedInner = decodeURIComponent(wrapped.split('/params/target/')[1])
+    const innerQuery = new URLSearchParams(decodedInner.split('?')[1]).get('sysparm_query')
+    expect(innerQuery).toBe(query)
   })
 })
