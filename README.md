@@ -67,6 +67,35 @@ the query, lists every sys_id it depends on as a warning, and opens the matching
 list there. The query is pasted verbatim; sys_ids are never rewritten, because a
 name match on the target is not proof of the same record.
 
+### Add to update set
+
+Forces the open record — or every record in the current list filter — into the
+update set selected in the header, using the Add to Update Set Utility's
+`addToUpdateSetUtils` Script Include. Prod-guarded like every other write, and always
+run in the **global** scope (the utility's APIs are global-only). If the instance does
+not have the Script Include — detected by `api_name=global.addToUpdateSetUtils`, not
+by name, since scoped Script Includes of the same name legitimately exist — snJava
+offers to install the vendored v9.5 export (21 records, global scope, see
+`public/vendor/README.md`) and then continues; an existing `addToUpdateSetUtils` is
+never overwritten. Records are processed 50 per background run, at most 10,000 per
+add, and more than 200 requires a second confirmation.
+
+The run reports four numbers: **seen** (records handed to the utility without
+throwing), **missing** (sys_ids with no record), **errors** (records that threw and
+were skipped — the rest of the batch is still committed), and **captured** (actual
+`sys_update_xml` rows added to the selected update set). `captured` legitimately
+differs from `seen` in both directions — one record can pull in related records,
+raising it; re-adding a record already in the set REPLACES its existing row rather
+than adding one, lowering it — so they are kept separate rather than collapsed into a
+single figure, and the panel does not guess at the cause. When the utility refuses a
+record it records a reason, and snJava reads those reasons back out of the session and
+shows them verbatim instead of inventing an explanation.
+
+Two side effects come from the utility itself and are disclosed on the confirm
+dialog: when a record's scope differs from the update set's, it can **create** a
+`… - Batch Parent` update set and **rename** the selected set to `… - Batch Child`.
+snJava restores the session's original update set after every run.
+
 ### javaHelp chip
 
 On a ServiceNow form with a script field, snJava injects a small **javaHelp** chip next to the field label. Clicking it opens the side panel, loads the script into the Tester tab, and sets the Script kind — so you can add the problem and run **Java review** immediately.

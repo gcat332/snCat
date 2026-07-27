@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseUnloadXml, parseUnloadXmlAll, dedupeRecords, importableFields } from './xml'
+import { parseUnloadXml, parseUnloadXmlAll, dedupeRecords, importableFields, extractFields, findRecordInners, unescapeXml } from './xml'
 
 const XML = `<?xml version="1.0" encoding="UTF-8"?>
 <incident action="INSERT_OR_UPDATE">
@@ -208,5 +208,29 @@ describe('self-closing empty tags', () => {
     expect(parsed!.fields.close_notes).toBe('')
     // A normal paired tag mixed in is still parsed.
     expect(parsed!.fields.number).toBe('INC0009')
+  })
+})
+
+describe('exported XML helpers', () => {
+  it('unescapes entities including numeric ones', () => {
+    expect(unescapeXml('a &lt;b&gt; &amp;c &#65; &#x42;')).toBe('a <b> &c A B')
+  })
+
+  it('extracts fields, including self-closing empties', () => {
+    expect(extractFields('<name>x</name><suffix/><active>true</active>')).toEqual({
+      name: 'x',
+      suffix: '',
+      active: 'true',
+    })
+  })
+
+  it('takes CDATA bodies verbatim, even with a fake closing tag inside', () => {
+    const inner = '<script><![CDATA[var s = "</script>";]]></script><name>n</name>'
+    expect(extractFields(inner)).toEqual({ script: 'var s = "</script>";', name: 'n' })
+  })
+
+  it('splits record blocks by tag', () => {
+    const xml = '<unload><rec><a>1</a></rec><rec><a>2</a></rec></unload>'
+    expect(findRecordInners(xml, 'rec')).toEqual(['<a>1</a>', '<a>2</a>'])
   })
 })

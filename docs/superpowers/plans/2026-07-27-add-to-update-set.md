@@ -4,7 +4,7 @@
 
 **Goal:** From the Inspect tab, force the open record — or every record in the current list filter — into the selected update set, installing the Add to Update Set Utility first if the instance doesn't have it.
 
-**Architecture:** Two pure core modules. `update-set-add.ts` builds the background script that calls `new global.addToUpdateSetUtils().addToUpdateSet(gr)` per record and parses its output. `updateset-xml.ts` parses the bundled Share export (`<unload>` → `sys_update_xml` → CDATA payload → `<record_update>`) and builds a per-record install script. Both reuse the CDATA-aware regex helpers already in `xml.ts` so they stay Node-testable. Every write goes through the existing prod-guarded `runBackground`; field values are base64-encoded into the generated scripts because the Script Include body is 212 KB of JavaScript.
+**Architecture:** Two pure core modules. `update-set-add.ts` builds the background script that calls the utility's UI-free dispatcher `checkTable(gr, gr.getTableName())` per record — **not** `addToUpdateSet(gr)`, which is a UI wrapper depending on `gs.action` and `RP` and therefore throws in a background script — and measures what landed from the `sys_update_xml` delta rather than assuming success. `updateset-xml.ts` parses the bundled Share export (`<unload>` → `sys_update_xml` → CDATA payload → `<record_update>`) and builds a per-record install script. Both reuse the CDATA-aware regex helpers already in `xml.ts` so they stay Node-testable. Every write goes through the existing prod-guarded `runBackground`; field values are base64-encoded into the generated scripts because the Script Include body is 212 KB of JavaScript.
 
 **Tech Stack:** TypeScript, Vitest, Chrome MV3, ServiceNow `sys.scripts.do` background scripts.
 
@@ -24,21 +24,21 @@
 ### Task 1: Vendor the update-set export
 
 **Files:**
-- Create: `src/assets/vendor/add-to-update-set-v9.5.xml` (copy of the supplied file)
-- Create: `src/assets/vendor/README.md`
+- Create: `public/vendor/add-to-update-set-v9.5.xml` (copy of the supplied file)
+- Create: `public/vendor/README.md`
 - Modify: `src/manifest.config.ts` (`web_accessible_resources`, if the build needs it)
 
 - [ ] **Step 1: Copy the file in**
 
 ```bash
-mkdir -p src/assets/vendor
-cp ~/Downloads/Add_to_Update_Set_Global_v9.5.xml src/assets/vendor/add-to-update-set-v9.5.xml
+mkdir -p public/vendor
+cp ~/Downloads/Add_to_Update_Set_Global_v9.5.xml public/vendor/add-to-update-set-v9.5.xml
 ```
 
 - [ ] **Step 2: Write the attribution note**
 
 ```markdown
-<!-- src/assets/vendor/README.md -->
+<!-- public/vendor/README.md -->
 # Vendored third-party content
 
 ## `add-to-update-set-v9.5.xml`
@@ -47,11 +47,18 @@ The **Add to Update Set Utility**, version 9.5 — a community utility published
 ServiceNow Share. It is vendored verbatim, exactly as exported; nothing in this
 repo modifies it.
 
-snJava uses one part of it: the `addToUpdateSetUtils` Script Include, whose
-`addToUpdateSet(GlideRecord)` method forces an otherwise-untracked record into
-the session's current update set. The Inspect tab's "Add to update set" button
-calls that method, and offers to install this export when the instance does not
-already have the Script Include.
+snJava uses one part of it: the `addToUpdateSetUtils` Script Include, which forces
+an otherwise-untracked record into the session's current update set. The Inspect
+tab's "Add to update set" button calls it, and offers to install this export when
+the instance does not already have the Script Include.
+
+snJava calls `checkTable(record, tableName)` rather than the more obvious
+`addToUpdateSet(record)`. `addToUpdateSet` is a UI Action wrapper: it reads
+`gs.action.getGlideURI()` and `RP.getParameterValue(...)` to detect list context and
+uses the client session to swap update sets, none of which exist in a background
+script. `checkTable` is the dispatcher underneath it — it references none of those
+globals, invokes the same related-record handlers, and its default branch falls
+through to `saveRecord`, so ordinary records are still captured.
 
 All 21 records are installed, so an instance ends up equivalent to a manual
 update-set import: the Script Include, the "Add to Update Set" UI Action, the
@@ -66,18 +73,18 @@ the real Share utility is already there, snJava calls it and leaves it alone.
 Add a temporary check in the side panel DevTools console after the next build:
 
 ```js
-await (await fetch(chrome.runtime.getURL('assets/vendor/add-to-update-set-v9.5.xml'))).text()
+await (await fetch(chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml'))).text()
 ```
 
 Run: `npm run build`, reload the unpacked extension, then run the snippet.
 Expected: a ~298,000-character string starting with `<?xml version="1.0"`.
-If it 404s, add `assets/vendor/*.xml` to `web_accessible_resources` in
+If it 404s, the file is not being emitted by the build; check the `public/` mechanism in
 `src/manifest.config.ts` and rebuild.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/assets/vendor/ src/manifest.config.ts
+git add public/vendor/ src/manifest.config.ts
 git commit -m "chore: vendor Add to Update Set Utility v9.5 export with attribution"
 ```
 
@@ -250,7 +257,7 @@ Expected: FAIL — `Failed to resolve import "./updateset-xml"`.
  * than extending its parser.
  *
  * Used to install the vendored Add to Update Set Utility (see
- * src/assets/vendor/README.md) on an instance that lacks it.
+ * public/vendor/README.md) on an instance that lacks it.
  */
 import { extractFields, findRecordInners } from './xml'
 
@@ -315,7 +322,7 @@ import { join } from 'node:path'
 
 describe('the vendored v9.5 export', () => {
   const recs = parseUpdateSetXml(
-    readFileSync(join(__dirname, '../assets/vendor/add-to-update-set-v9.5.xml'), 'utf8'),
+    readFileSync(join(__dirname, '../../public/vendor/add-to-update-set-v9.5.xml'), 'utf8'),
   )
 
   it('parses all 21 records', () => {
@@ -543,8 +550,18 @@ describe('buildAddToUpdateSetScript', () => {
     const s = buildAddToUpdateSetScript('incident', [ID])
     expect(s).toContain("new GlideRecord('incident')")
     expect(s).toContain('new global.addToUpdateSetUtils()')
-    expect(s).toContain('addToUpdateSet(gr)')
+    expect(s).toContain('checkTable(gr, gr.getTableName())')
     expect(s).toContain(ID)
+  })
+
+  it('uses checkTable, never the UI-only addToUpdateSet wrapper', () => {
+    // addToUpdateSet depends on gs.action and RP, which do not exist in
+    // sys.scripts.do — calling it there throws per record while the run still
+    // looks successful. checkTable is the UI-free dispatcher.
+    const s = buildAddToUpdateSetScript('incident', [ID])
+    expect(s).not.toContain('addToUpdateSet(')
+    expect(s).not.toContain('gs.action')
+    expect(s).not.toContain('RP.')
   })
 
   it('does not emit the UI Action bindings, which do not exist here', () => {
@@ -558,6 +575,14 @@ describe('buildAddToUpdateSetScript', () => {
     expect(buildAddToUpdateSetScript('incident', [ID])).toContain('missing')
   })
 
+  it('measures capture from the sys_update_xml delta rather than assuming success', () => {
+    // Neither checkTable nor saveRecord reports success — both return bare
+    // undefined on refusal — so the script must count what actually landed.
+    const s = buildAddToUpdateSetScript('incident', [ID])
+    expect(s).toContain('sys_update_xml')
+    expect(s).toContain('captured')
+  })
+
   it('rejects a table name that is not a plain identifier', () => {
     expect(() => buildAddToUpdateSetScript("incident'; gs.print('x", [ID])).toThrow()
   })
@@ -569,9 +594,26 @@ describe('buildAddToUpdateSetScript', () => {
 
 describe('parseAddResult', () => {
   it('reads the counts from the background output', () => {
-    expect(parseAddResult('*** Script: snJava: added 37, missing 2')).toEqual({
-      added: 37,
+    expect(parseAddResult('*** Script: snJava: seen 37, missing 2, captured 41')).toEqual({
+      seen: 37,
       missing: 2,
+      captured: 41,
+    })
+  })
+
+  it('accepts captured exceeding seen — one record can pull in related records', () => {
+    expect(parseAddResult('snJava: seen 1, missing 0, captured 9')).toEqual({
+      seen: 1,
+      missing: 0,
+      captured: 9,
+    })
+  })
+
+  it('accepts captured below seen — an excluded table captures nothing', () => {
+    expect(parseAddResult('snJava: seen 5, missing 0, captured 0')).toEqual({
+      seen: 5,
+      missing: 0,
+      captured: 0,
     })
   })
 
@@ -614,6 +656,20 @@ Expected: FAIL — `Failed to resolve import "./update-set-add"`.
  * Neither `current` nor `action` exists in a background script, so this module
  * builds the equivalent — an explicit GlideRecord per sys_id — and drops the
  * redirect, which is UI Action plumbing with no meaning outside a form.
+ *
+ * IMPORTANT — we call `checkTable(gr, tableName)`, NOT `addToUpdateSet(gr)`.
+ * Verified against the vendored v9.5 source: `addToUpdateSet` is a UI WRAPPER whose
+ * only real work is delegated to `checkTable`. Around that it uses
+ * `gs.action.getGlideURI().getMap()` and `RP.getParameterValue('sysparm_checked_items')`
+ * — the file's only uses of `gs.action` and `RP` — plus `clientSession` for update-set
+ * switching and `gs.addInfoMessage`/`gs.flushMessages` for user feedback. None of that
+ * exists in `sys.scripts.do`, so calling it there throws per record.
+ *
+ * `checkTable` contains zero references to `gs.action`, `RP.` or `clientSession`. It is
+ * the dispatcher: a switch over table names invoking ~65 `_addXxx` related-record
+ * handlers (attachments, variables, workflows, catalog items, ACL and UI-policy
+ * dependencies, …), and its `default:` arm falls through to `_executeScopeScript()` and
+ * `saveRecord(gr)`, so an ordinary record such as an incident is still captured.
  */
 
 /** Records per background run, keeping each run inside the sys.scripts.do timeout. */
@@ -636,24 +692,49 @@ export function buildAddToUpdateSetScript(table: string, sysIds: string[]): stri
     if (!SYS_ID_RE.test(id)) throw new Error(`Refusing to run: invalid sys_id "${id}"`)
   }
 
+  // `checkTable` is the utility's UI-free dispatcher; see the module comment for why
+  // `addToUpdateSet` cannot be used here. Success is MEASURED by the delta in
+  // sys_update_xml rows, because neither checkTable nor saveRecord reports it: both
+  // return bare `undefined` on refusal (excluded table, invalid record, scope mismatch).
   return `var ids = ${JSON.stringify(sysIds)};
 var util = new global.addToUpdateSetUtils();
-var added = 0, missing = 0;
+var setId = new GlideUpdateSet().get() + '';
+
+function capturedCount(id) {
+  var agg = new GlideAggregate('sys_update_xml');
+  agg.addQuery('update_set', id);
+  agg.addAggregate('COUNT');
+  agg.query();
+  return agg.next() ? parseInt(agg.getAggregate('COUNT'), 10) : 0;
+}
+
+var before = capturedCount(setId);
+var seen = 0, missing = 0;
 for (var i = 0; i < ids.length; i++) {
   var gr = new GlideRecord(${JSON.stringify(table)});
   if (gr.get(ids[i])) {
-    util.addToUpdateSet(gr);
-    added++;
+    util.checkTable(gr, gr.getTableName());
+    seen++;
   } else {
     missing++;
   }
 }
-gs.print('snJava: added ' + added + ', missing ' + missing);`
+var captured = capturedCount(setId) - before;
+gs.print('snJava: seen ' + seen + ', missing ' + missing + ', captured ' + captured);`
 }
 
-export function parseAddResult(output: string): { added: number; missing: number } | null {
-  const m = output.match(/snJava: added (\d+), missing (\d+)/)
-  return m ? { added: Number(m[1]), missing: Number(m[2]) } : null
+/**
+ * `seen` is how many records existed and were handed to the utility; `captured` is how
+ * many sys_update_xml rows actually appeared. They differ legitimately — one record can
+ * pull in related records (captured > seen), and an excluded table or scope mismatch
+ * captures nothing (captured < seen) — so the UI must report both rather than conflating
+ * them into a single "added" number.
+ */
+export function parseAddResult(
+  output: string,
+): { seen: number; missing: number; captured: number } | null {
+  const m = output.match(/snJava: seen (\d+), missing (\d+), captured (\d+)/)
+  return m ? { seen: Number(m[1]), missing: Number(m[2]), captured: Number(m[3]) } : null
 }
 
 export function batchSysIds(sysIds: string[]): string[][] {
@@ -761,7 +842,7 @@ async function hasAddToUpdateSetUtils(host: string): Promise<boolean> {
 let vendoredUtilityCache: import('@core/updateset-xml').UpdateRecord[] | null = null
 async function loadVendoredUtility() {
   if (vendoredUtilityCache) return vendoredUtilityCache
-  const url = chrome.runtime.getURL('assets/vendor/add-to-update-set-v9.5.xml')
+  const url = chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml')
   const text = await (await fetch(url)).text()
   vendoredUtilityCache = parseUpdateSetXml(text)
   return vendoredUtilityCache
@@ -845,8 +926,9 @@ async function addToUpdateSet() {
     }
 
     const batches = batchSysIds(targets.sysIds)
-    let added = 0
+    let seen = 0
     let missing = 0
+    let captured = 0
     for (let i = 0; i < batches.length; i++) {
       usAdd.textContent = `Adding ${i + 1}/${batches.length}…`
       const script = buildAddToUpdateSetScript(targets.table, batches[i])
@@ -861,14 +943,28 @@ async function addToUpdateSet() {
         xmlOut.replaceChildren(elText('div', 'error', `Unexpected output: ${out.slice(0, 400)}`))
         return
       }
-      added += parsed.added
+      seen += parsed.seen
       missing += parsed.missing
+      captured += parsed.captured
     }
 
-    const lines = [`Added ${added} record${added === 1 ? '' : 's'} to ${usText}.`]
+    // Three separate numbers, deliberately not collapsed into one "added" figure.
+    // `captured` can exceed `seen` (one record pulls in related records) and can fall
+    // below it (an excluded table or scope mismatch captures nothing), so reporting a
+    // single total would be misleading in both directions.
+    const lines = [
+      `${captured} update record${captured === 1 ? '' : 's'} captured in ${usText}, from ${seen} record${seen === 1 ? '' : 's'}.`,
+    ]
+    if (captured > seen) {
+      lines.push('More were captured than selected — the utility also pulled in related records.')
+    } else if (captured < seen) {
+      lines.push(
+        'Fewer were captured than selected — some records are on tables the utility excludes, or in a different scope.',
+      )
+    }
     if (missing > 0) lines.push(`${missing} record${missing === 1 ? '' : 's'} no longer exist and were skipped.`)
     xmlOut.replaceChildren(...lines.map((l) => elText('div', 'empty', l)))
-    showToast(`Added ${added} to update set ✓`)
+    showToast(`Captured ${captured} in update set ✓`)
   } finally {
     usAdd.disabled = false
     usAdd.textContent = originalLabel
@@ -930,7 +1026,7 @@ Expected: both succeed.
    "Add to Update Set" UI Action appears on forms.
 5. **Check the 212 KB base64 round-trip explicitly** — open the Script Include and
    confirm the body is intact JavaScript, not truncated or mangled. Compare its
-   length against `src/assets/vendor/add-to-update-set-v9.5.xml`'s payload.
+   length against `public/vendor/add-to-update-set-v9.5.xml`'s payload.
 6. Click **Add to update set** again — the install must NOT re-run.
 
 - [ ] **Step 10: Manual smoke — list mode and the prod guard**
@@ -963,7 +1059,7 @@ list filter — into the update set selected in the header, using the Add to Upd
 Set Utility's `addToUpdateSetUtils` Script Include. Prod-guarded like every other
 write. If the instance does not have the Script Include, snJava offers to install
 the vendored v9.5 export (21 records, global scope, see
-`src/assets/vendor/README.md`) and then continues; an existing
+`public/vendor/README.md`) and then continues; an existing
 `addToUpdateSetUtils` is never overwritten. Records are processed 50 per
 background run, and more than 200 requires a second confirmation.
 ```

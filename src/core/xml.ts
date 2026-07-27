@@ -30,7 +30,7 @@ export const SYSTEM_FIELDS = new Set([
   'sys_package',
 ])
 
-function unescapeXml(s: string): string {
+export function unescapeXml(s: string): string {
   return s
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -53,7 +53,7 @@ function unescapeXml(s: string): string {
  * making a `</tag>`-looking substring inside CDATA unable to end the field
  * early. Non-CDATA bodies keep the original entity-unescape path.
  */
-function extractFields(inner: string): Record<string, string> {
+export function extractFields(inner: string): Record<string, string> {
   const fields: Record<string, string> = {}
   // Group 3 captures a trailing slash so self-closing tags (`<tag/>`, `<tag />`,
   // `<tag attr="x"/>`) are recognized; some serializers emit these for empty
@@ -102,7 +102,7 @@ function extractFields(inner: string): Record<string, string> {
  * CDATA delimiters are literal. Returns each block's inner text in document
  * order — field extraction is left to extractFields (itself CDATA-aware).
  */
-function findRecordInners(xml: string, table: string): string[] {
+export function findRecordInners(xml: string, table: string): string[] {
   const esc = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   // Group 1 captures a trailing slash so a self-closing `<table/>` (no body) is
   // recognized and skipped rather than treated as an unterminated block.

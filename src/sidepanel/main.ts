@@ -64,6 +64,13 @@ import {
 import { SCOPE_ARTIFACT_TABLES } from '@core/scope-spec'
 import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 import { namePrefixField, prefixArtifactName } from '@core/naming'
+import {
+  batchSysIds,
+  buildAddToUpdateSetScript,
+  parseAddResult,
+  BULK_CONFIRM_THRESHOLD,
+} from '@core/update-set-add'
+import { buildInstallScript, parseInstallResult, parseUpdateSetXml } from '@core/updateset-xml'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
@@ -403,6 +410,7 @@ const xmlRow = el('xml-row')
 const xmlSave = el<HTMLButtonElement>('xml-save')
 const xmlPaste = el<HTMLButtonElement>('xml-paste')
 const xmlView = el<HTMLButtonElement>('xml-view')
+const usAdd = el<HTMLButtonElement>('us-add')
 const xmlOut = el('xml-out')
 
 interface XmlClip {
@@ -504,6 +512,36 @@ async function refreshXmlControls() {
   xmlPaste.title = clip
     ? `Insert the ${clip.count} copied ${clip.table} record(s) from ${clip.host} as new records`
     : 'Copy a record first'
+
+  // Add to update set: a form record is always exactly one; a list needs a
+  // count so the button can say how many it would capture. countRecords is one
+  // lightweight aggregate call and only runs on list views.
+  //
+  // Skipped entirely while an add is running: this function fires on every
+  // page-context change, and re-enabling the button mid-run would wipe the
+  // "Adding 3/7…" label and invite a second click.
+  if (addInFlight) return
+  usAdd.disabled = !(formHas || listHas)
+  usAdd.textContent = 'Add to update set'
+  usAdd.title = ''
+  if (listHas && current?.table) {
+    const live = await getListQueryFromPage(current.table)
+    const query = (live !== null ? live : currentListQuery()) || undefined
+    const res = await countRecords(current.host, current.table, query)
+    if (res.ok) {
+      const count = res.data.count
+      usAdd.textContent = `Add to update set (${count})`
+      // The count comes from an unbounded aggregate, but the add itself can only
+      // fetch TARGETS_FETCH_LIMIT sys_ids and refuses beyond that. Disable here so
+      // the button never advertises a number it would then refuse to act on.
+      if (count > TARGETS_FETCH_LIMIT) {
+        usAdd.disabled = true
+        usAdd.title = `Too many records: the add handles at most ${TARGETS_FETCH_LIMIT.toLocaleString()} in one pass. Narrow the filter.`
+      } else {
+        usAdd.disabled = count === 0
+      }
+    }
+  }
 }
 
 async function fetchRecordXml(): Promise<string | null> {
@@ -872,6 +910,324 @@ function renderXmlValues(filter: string) {
     meta.append(elText('span', 'info-sub', v.length > 80 ? v.slice(0, 80) + '…' : v))
     row.append(name, meta)
     list.append(row)
+  }
+}
+
+/* ---------- Add to current update set ---------- */
+
+/** Most records a single list-mode add will act on. See `truncated` below. */
+const TARGETS_FETCH_LIMIT = 10_000
+
+/** The sys_ids to act on: the open record, or every record in the list filter. */
+async function updateSetTargets(): Promise<{
+  table: string
+  sysIds: string[]
+  /** True when the list has MORE matches than the limit, so acting would cover only
+   *  part of the filter — the caller must refuse rather than silently act on a
+   *  partial list. A list of exactly TARGETS_FETCH_LIMIT records is fully fetched
+   *  and is NOT truncated, which is why one extra row is requested: asking for the
+   *  limit and getting the limit back cannot distinguish "exactly full" from "cut
+   *  short", and refusing the boundary case is a silent cap. */
+  truncated: boolean
+} | null> {
+  if (!current?.table) return null
+  const { host, table, sysId } = current
+  if (sysId) return { table, sysIds: [sysId], truncated: false }
+  if (!isListView()) return null
+
+  const live = await getListQueryFromPage(table)
+  const query = live !== null ? live : currentListQuery()
+  const res = await queryRecords(host, table, {
+    query,
+    fields: ['sys_id'],
+    limit: TARGETS_FETCH_LIMIT + 1,
+  })
+  if (!res.ok) return null
+  const all = res.data.map((r) => cellValue(r['sys_id'])).filter(Boolean)
+  return {
+    table,
+    sysIds: all.slice(0, TARGETS_FETCH_LIMIT),
+    truncated: all.length > TARGETS_FETCH_LIMIT,
+  }
+}
+
+/**
+ * True when the instance already has the utility's Script Include.
+ *
+ * Keyed on `api_name`, not `name`. The utility's own extension mechanism,
+ * `_executeScopeScript`, queries `name=addToUpdateSetUtils^sys_scope!=global` and
+ * calls `checkTable` on every match — so an instance can legitimately carry SCOPED
+ * Script Includes named exactly `addToUpdateSetUtils` without having the global one
+ * at all. Matching on the bare name there would report "installed", skip the
+ * install, and leave `new global.addToUpdateSetUtils()` throwing with no
+ * explanation. The vendored record's `api_name` is `global.addToUpdateSetUtils`,
+ * which is what the generated script actually instantiates.
+ */
+async function hasAddToUpdateSetUtils(host: string): Promise<boolean> {
+  const res = await queryRecords(host, 'sys_script_include', {
+    query: 'api_name=global.addToUpdateSetUtils',
+    fields: ['sys_id'],
+    limit: 1,
+  })
+  return res.ok && res.data.length > 0
+}
+
+/** Read the vendored export and parse it. Cached for the panel's lifetime. */
+let vendoredUtilityCache: import('@core/updateset-xml').UpdateRecord[] | null = null
+async function loadVendoredUtility() {
+  if (vendoredUtilityCache) return vendoredUtilityCache
+  const url = chrome.runtime.getURL('vendor/add-to-update-set-v9.5.xml')
+  const text = await (await fetch(url)).text()
+  vendoredUtilityCache = parseUpdateSetXml(text)
+  return vendoredUtilityCache
+}
+
+/**
+ * Install the vendored Add to Update Set Utility. Global scope is forced: the
+ * Script Include is `global.addToUpdateSetUtils`, so installing it into whatever
+ * app the scope bar happens to name would produce an unreachable copy.
+ *
+ * Returns true when every record landed.
+ */
+async function installUpdateSetUtility(
+  host: string,
+  updateSet: string | undefined,
+): Promise<boolean> {
+  const records = await loadVendoredUtility()
+  const summary = `${records.length} records · ${[...new Set(records.map((r) => r.type))].join(', ')}`
+  const ok = await confirmDialog(
+    `addToUpdateSetUtils was not found on ${host}.\n\n` +
+      `Install Add to Update Set Utility v9.5?\n${summary}\n\n` +
+      `Records are created in the GLOBAL scope and captured by the selected update set. ` +
+      `This is a promotable change.`,
+  )
+  if (!ok) return false
+
+  // Script Include goes LAST. hasAddToUpdateSetUtils() — the completeness guard
+  // that decides whether this whole function is skipped next time — checks only
+  // for that one record. Installing it first would make the guard lie: if any
+  // later record then failed (network blip, timeout on this instance), a retry
+  // would see the Script Include already present and never re-attempt the rest,
+  // leaving the properties/UI Action/module permanently missing. Installing it
+  // last means "the Script Include exists" only becomes true once every other
+  // record already landed — and since each record's installer is an idempotent
+  // insert-or-update keyed by its original sys_id, a retry after a genuine
+  // partial failure safely re-applies everything with no duplication.
+  //
+  // Sorted on `table`, not on the `type` label. `type` is a human-readable string
+  // from the export ('Script Include'); `table` is what the payload actually writes
+  // to. A re-vendor that relabels the type would turn a `type`-keyed sort into a
+  // silent no-op — the ordering invariant would be gone with every test still
+  // green. `updateset-xml.test.ts` pins that exactly one record has this table.
+  const installOrder = [...records].sort(
+    (a, b) =>
+      (a.table === 'sys_script_include' ? 1 : 0) - (b.table === 'sys_script_include' ? 1 : 0),
+  )
+
+  let done = 0
+  for (const rec of installOrder) {
+    usAdd.textContent = `Installing ${++done}/${records.length}…`
+    const res = await runBackground(host, buildInstallScript(rec), { scope: 'global', updateSet })
+    const out = res.ok ? extractBgOutput(res.data) : (res.error ?? '')
+    // The marker substring alone is NOT proof of a write: insert()/update() return
+    // null on failure. parseInstallResult only reports 'installed' when a real
+    // 32-hex sys_id was printed, and the install must stop on anything else — the
+    // Script Include going in last is only a truthful completeness marker if every
+    // earlier record is verified to have landed.
+    const outcome = res.ok ? parseInstallResult(out) : ({ status: 'unrecognised' } as const)
+    if (outcome.status !== 'installed') {
+      const why =
+        outcome.status === 'failed'
+          ? 'the instance rejected the write (insert/update returned no sys_id)'
+          : 'no confirmed sys_id in the output'
+      xmlOut.replaceChildren(
+        elText(
+          'div',
+          'error',
+          `Install failed on ${rec.type} "${rec.targetName}" (${rec.table}): ${why}. ` +
+            `Records installed before this point remain; re-running the install safely re-applies them. ` +
+            `Output: ${out.slice(0, 400)}`,
+        ),
+      )
+      return false
+    }
+  }
+  showToast(`Installed Add to Update Set Utility (${records.length} records)`)
+  return true
+}
+
+/** Re-entrancy guard for the add: set SYNCHRONOUSLY at entry, before the record
+ *  query / checkTarget / confirm dialogs, so a double-click cannot launch a second
+ *  concurrent run over the same records. Also read by refreshXmlControls, which
+ *  would otherwise re-enable the button and wipe its progress label mid-run. */
+let addInFlight = false
+
+async function addToUpdateSet() {
+  if (addInFlight) return
+  addInFlight = true
+  usAdd.disabled = true
+  try {
+    await addToUpdateSetInner()
+  } finally {
+    addInFlight = false
+    void refreshXmlControls()
+  }
+}
+
+async function addToUpdateSetInner() {
+  if (!current) return
+  const host = current.host
+
+  const targets = await updateSetTargets()
+  if (!targets || targets.sysIds.length === 0) {
+    xmlOut.replaceChildren(elText('div', 'error', 'Open a record, or a list with matching records.'))
+    return
+  }
+  // The list has strictly MORE matches than one pass can handle (one extra row was
+  // requested to tell that apart from "exactly full"). Refuse rather than silently
+  // add a partial list while implying the whole filter was captured — narrowing the
+  // filter (or paging) is on the user, not a guess this tool should make.
+  if (targets.truncated) {
+    xmlOut.replaceChildren(
+      elText(
+        'div',
+        'error',
+        `This list has more than ${TARGETS_FETCH_LIMIT.toLocaleString()} matching records — more than can be fetched in one pass. Narrow the filter and try again.`,
+      ),
+    )
+    return
+  }
+
+  // Pin the target before any dialog so a tab switch cannot retarget the write.
+  const tgt = await checkTarget()
+  if (!tgt) return
+
+  const n = targets.sysIds.length
+  const usText = tgt.usLabel ? `update set "${tgt.usLabel}"` : 'the current update set'
+  // The scope-batching side effect is disclosed here because it is a write the user
+  // would not otherwise expect: the utility's _checkSetScope reacts to a record
+  // whose scope differs from the update set's by CREATING a "<name> - Batch Parent"
+  // set and RENAMING the selected set to "<name> - Batch Child". Authorising the
+  // add authorises that, so it has to be on the dialog.
+  if (
+    !(await confirmDialog(
+      `Add ${n} record${n === 1 ? '' : 's'} from \`${targets.table}\` to ${usText} on ${host}?\n\n` +
+        `Runs in the GLOBAL scope (the utility's APIs are global-only).\n\n` +
+        `If any record belongs to a different scope than the update set, the utility ` +
+        `may CREATE a new "… - Batch Parent" update set and RENAME the selected set ` +
+        `to "… - Batch Child". Your session's update set is restored afterwards.`,
+    ))
+  ) {
+    return
+  }
+  if (n > BULK_CONFIRM_THRESHOLD) {
+    if (!(await confirmDialog(`That is ${n} records — more than ${BULK_CONFIRM_THRESHOLD}. Confirm once more to proceed.`))) {
+      return
+    }
+  }
+
+  if (!(await hasAddToUpdateSetUtils(host))) {
+    if (!(await installUpdateSetUtility(host, tgt.opts.updateSet))) return
+  }
+
+  // Forced to the global scope, exactly as the install is. The generated script
+  // instantiates `global.addToUpdateSetUtils` and the utility itself uses
+  // GlideUpdateSet, GlideUpdateManager2, global.TableUtils and GlidePluginManager —
+  // all global-only. Run under a scoped application and the script's own first
+  // statement (`new GlideUpdateSet()`) fails. Forcing is preferred over refusing
+  // because this operation creates no application records for the scope bar to
+  // own: it only writes sys_update_xml rows on the utility's behalf. The selected
+  // update set is preserved; only the scope is overridden.
+  const addOpts = { ...tgt.opts, scope: 'global' }
+
+  const batches = batchSysIds(targets.sysIds)
+  let seen = 0
+  let missing = 0
+  let captured = 0
+  let errors = 0
+  /** Deduped: the same utility message usually recurs in every batch. */
+  const notes = new Set<string>()
+  const setsUsed = new Set<string>()
+  try {
+    for (let i = 0; i < batches.length; i++) {
+      usAdd.textContent = `Adding ${i + 1}/${batches.length}…`
+      const script = buildAddToUpdateSetScript(targets.table, batches[i])
+      const res = await runBackground(host, script, addOpts)
+      const done = `${i} of ${batches.length} batch${batches.length === 1 ? '' : 'es'} completed before this`
+      if (!res.ok) {
+        xmlOut.replaceChildren(
+          elText('div', 'error', `${res.error ?? 'Background run failed.'} (${done}.)`),
+        )
+        return
+      }
+      const out = extractBgOutput(res.data)
+      const parsed = parseAddResult(out)
+      if (parsed.status === 'refused') {
+        xmlOut.replaceChildren(elText('div', 'error', parsed.reason))
+        return
+      }
+      if (parsed.status === 'unrecognised') {
+        // Every earlier record in this batch is already committed — each saveRecord is
+        // its own DB write — so this must not read as "nothing happened".
+        xmlOut.replaceChildren(
+          elText(
+            'div',
+            'error',
+            `The add run produced no recognisable result, so how much of this batch of ` +
+              `${batches[i].length} landed is unknown (${done}). Output: ${out.slice(0, 400)}`,
+          ),
+        )
+        return
+      }
+      seen += parsed.seen
+      missing += parsed.missing
+      captured += parsed.captured
+      errors += parsed.errors
+      for (const s of parsed.sets) setsUsed.add(s)
+      // The utility's own words, not our guess. These come from the errorMessages /
+      // warningMessages session keys it writes when it refuses or downgrades a record.
+      if (parsed.firstError) notes.add(`First error thrown: ${parsed.firstError}`)
+      if (parsed.utilityErrors) notes.add(`Utility errors: ${parsed.utilityErrors}`)
+      if (parsed.utilityWarnings) notes.add(`Utility warnings: ${parsed.utilityWarnings}`)
+    }
+
+    // Separate numbers, deliberately not collapsed into one "added" figure.
+    // `captured` can exceed `seen` (one record pulls in related records) and can fall
+    // below it (a refusal captures nothing), so a single total would be misleading in
+    // both directions.
+    const lines = [
+      `${captured} update record${captured === 1 ? '' : 's'} captured in ${usText}, from ${seen} record${seen === 1 ? '' : 's'} handed to the utility.`,
+    ]
+    if (captured > seen) {
+      lines.push('More were captured than selected — the utility also pulled in related records.')
+    } else if (captured < seen) {
+      // No guess about WHY. The utility's real reasons are in `notes` when it recorded
+      // any; the most common cause of a zero delta is not an excluded table at all but
+      // GlideUpdateManager2.saveRecord REPLACING an already-captured sys_update_xml row
+      // instead of inserting one, which is a no-op on the count and a success in fact.
+      lines.push(
+        'Fewer were captured than handed over. A record already present in this update set is ' +
+          'replaced rather than added, which is a correct outcome that moves no count; a genuine ' +
+          'refusal is reported below when the utility recorded a reason.',
+      )
+    }
+    if (errors > 0) {
+      lines.push(
+        `${errors} record${errors === 1 ? '' : 's'} threw an error and were skipped; other records in the same batch were still committed.`,
+      )
+    }
+    if (missing > 0) lines.push(`${missing} record${missing === 1 ? '' : 's'} no longer exist and were skipped.`)
+    if (setsUsed.size > 1) {
+      lines.push(
+        `The utility wrote to ${setsUsed.size} update sets (scope batching): ${[...setsUsed].join(', ')}. ` +
+          `The count above only measures ${usText}, so rows in the others are not included in it.`,
+      )
+    }
+    lines.push(...notes)
+    xmlOut.replaceChildren(...lines.map((l) => elText('div', 'empty', l)))
+    showToast(`Captured ${captured} in update set ✓`)
+  } finally {
+    usAdd.textContent = 'Add to update set'
   }
 }
 
@@ -3689,6 +4045,7 @@ el<HTMLButtonElement>('optimize-diff').addEventListener('click', () =>
 xmlSave.addEventListener('click', saveXml)
 xmlPaste.addEventListener('click', pasteXml)
 xmlView.addEventListener('click', viewXmlValues)
+usAdd.addEventListener('click', () => void addToUpdateSet())
 testerFormat.addEventListener('click', () => formatEditor(testerEd, testerFormat))
 testerCopy.addEventListener('click', () => copyText(testerEd.getValue()))
 aiSave.addEventListener('click', saveAiSettings)
