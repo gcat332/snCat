@@ -293,6 +293,11 @@
             Open a Business Rule, Catalog Item, Script Include, or Transform Map,
             then generate a spec from it and its dependencies (depth 2).
           </p>
+          <label class="chk-item" id="spec-hierarchy-row">
+            <input type="checkbox" id="spec-hierarchy" />
+            <span class="chk-label">Include parent &amp; child tables</span>
+          </label>
+          <p class="hint" id="spec-hierarchy-hint" hidden></p>
           <div class="btn-row" style="margin-top: 0">
             <button class="btn" id="spec-walk" type="button" disabled>Discover artifacts</button>
             <span class="count-badge" id="spec-status" hidden></span>

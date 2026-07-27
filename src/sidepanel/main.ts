@@ -2529,6 +2529,8 @@ async function deleteTestRecord() {
 /* ---------- Design Spec Generator (M4 / F1) ---------- */
 
 const specWalk = el<HTMLButtonElement>('spec-walk')
+const specHierarchy = el<HTMLInputElement>('spec-hierarchy')
+const specHierarchyHint = el('spec-hierarchy-hint')
 const specStatus = el('spec-status')
 const specChecklist = el('spec-checklist')
 const specOutput = el('spec-output')
@@ -2613,13 +2615,19 @@ async function discoverArtifacts() {
   specChecklist.replaceChildren(elText('div', 'empty', 'Walking dependency graph…'))
 
   try {
-    const outcome = await walkSpecGraph(host, root, (n) => {
-      specChecklist.replaceChildren(elText('div', 'empty', `Discovering… ${n} artifacts`))
-    })
+    const outcome = await walkSpecGraph(
+      host,
+      root,
+      (n) => {
+        specChecklist.replaceChildren(elText('div', 'empty', `Discovering… ${n} artifacts`))
+      },
+      { includeHierarchy: specHierarchy.checked },
+    )
     specRoot = outcome.root
     specArtifacts = outcome.artifacts
     specPrimaryTable = outcome.primaryTable
     specSchema = outcome.schema
+    renderHierarchyHint(outcome.hierarchy, outcome.primaryTable)
     specExcluded.clear()
     // A fresh discovery invalidates any prior AI overview — it described a
     // different root/artifact set and must not silently attach to this one.
@@ -2630,6 +2638,35 @@ async function discoverArtifacts() {
   } finally {
     specWalk.disabled = false
   }
+}
+
+/**
+ * State the tables the spec actually covered. When the child cap dropped some,
+ * say so — a spec that silently omitted 27 child tables would read as complete.
+ */
+function renderHierarchyHint(
+  hierarchy: import('@core/hierarchy').TableHierarchy | null,
+  primaryTable: string,
+) {
+  if (!hierarchy) {
+    specHierarchyHint.hidden = true
+    specHierarchyHint.textContent = ''
+    return
+  }
+  const parts = [
+    primaryTable,
+    ...hierarchy.ancestors.map((t) => `↑ ${t}`),
+    ...hierarchy.children.map((t) => `↓ ${t}`),
+  ]
+  const total = 1 + hierarchy.ancestors.length + hierarchy.children.length
+  let text = `${total} table${total === 1 ? '' : 's'}: ${parts.join(' ')}`
+  if (hierarchy.childrenTruncated > 0) {
+    text += ` — ${hierarchy.childrenTruncated} more child table${
+      hierarchy.childrenTruncated === 1 ? '' : 's'
+    } not included (cap 20)`
+  }
+  specHierarchyHint.textContent = text
+  specHierarchyHint.hidden = false
 }
 
 function renderChecklist() {
@@ -3559,6 +3596,9 @@ l3Delete.addEventListener('click', deleteTestRecord)
 el<HTMLButtonElement>('l3-fill').addEventListener('click', l3FillFromRecord)
 initRunnerMode()
 specWalk.addEventListener('click', discoverArtifacts)
+specHierarchy.addEventListener('change', () => {
+  if (!specHierarchy.checked) renderHierarchyHint(null, '')
+})
 specHtmlBtn.addEventListener('click', exportHtml)
 specPdfBtn.addEventListener('click', exportPdf)
 specDocxBtn.addEventListener('click', exportDocx)
