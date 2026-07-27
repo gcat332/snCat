@@ -6,8 +6,13 @@
  */
 import type { PageContext, RuntimeMessage } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
-import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue } from '@core/api'
+import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, pickLabel } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
+import {
+  extractRefTokens,
+  groupTokensByRefTable,
+  type ConditionClip,
+} from '@core/condition-clip'
 import {
   countRecords,
   getDictionary,
@@ -853,6 +858,8 @@ const condRun = el<HTMLButtonElement>('cond-run')
 const condOpen = el<HTMLButtonElement>('cond-open')
 const condCount = el('cond-count')
 const condResults = el('cond-results')
+const condCopy = el<HTMLButtonElement>('cond-copy')
+const condPaste = el<HTMLButtonElement>('cond-paste')
 const schemaLoad = el<HTMLButtonElement>('schema-load')
 const schemaCount = el('schema-count')
 const schemaSearch = el<HTMLInputElement>('schema-search')
@@ -869,6 +876,7 @@ function updateEnabledState() {
   condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
   // Enabled on a form record (record spec) or a list view (whole-table spec).
   specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
+  void refreshCondClipButtons()
 }
 
 async function runCondition() {
@@ -904,6 +912,106 @@ function openConditionList() {
     `https://${current.host}/${current.table}_list.do` +
     (query ? `?sysparm_query=${encodeURIComponent(query)}` : '')
   void chrome.tabs.create({ url })
+}
+
+/* --- Condition clip: carry a list filter to another instance --- */
+
+/**
+ * The condition to copy, in priority order:
+ *   1. the live applied GlideList2 filter (the only source that reflects a
+ *      filter applied AFTER page load),
+ *   2. the URL's sysparm_query,
+ *   3. whatever is typed in the textarea.
+ */
+async function conditionToCopy(table: string): Promise<string> {
+  if (isListView()) {
+    const live = await getListQueryFromPage(table)
+    if (live !== null) return live
+    const fromUrl = currentListQuery()
+    if (fromUrl) return fromUrl
+  }
+  return condQuery.value.trim()
+}
+
+/**
+ * Resolve display values for the sys_ids in a query: one sys_dictionary read to
+ * learn each field's reference table, then one batched `sys_idIN…` query per
+ * referenced table. Unresolvable tokens are simply absent from the result —
+ * the paste warning says "could not resolve" rather than guessing.
+ */
+async function resolveClipLabels(
+  host: string,
+  table: string,
+  query: string,
+): Promise<Record<string, string>> {
+  const tokens = extractRefTokens(query)
+  if (tokens.length === 0) return {}
+
+  const dict = await getDictionary(host, table)
+  if (!dict.ok) return {}
+  const refByField: Record<string, string> = {}
+  for (const d of dict.data) {
+    const element = cellValue(d.element as unknown)
+    const reference = cellValue(d.reference as unknown)
+    if (element && reference) refByField[element] = reference
+  }
+
+  const labels: Record<string, string> = {}
+  for (const [refTable, ids] of groupTokensByRefTable(tokens, refByField)) {
+    // Ask for the common label columns and let pickLabel choose. Requesting
+    // only sys_id would be useless: with displayValue 'all', the display value
+    // OF the sys_id column is the sys_id itself, not the record's name. The
+    // Table API ignores sysparm_fields entries a table doesn't have.
+    const res = await queryRecords(host, refTable, {
+      query: `sys_idIN${ids.join(',')}`,
+      fields: ['sys_id', ...LABEL_FIELDS],
+      limit: ids.length,
+      displayValue: 'all',
+    })
+    if (!res.ok) continue
+    for (const rec of res.data) {
+      const id = cellValue(rec['sys_id'])
+      const display = pickLabel(rec)
+      if (id && display && display !== id) labels[id] = display
+    }
+  }
+  return labels
+}
+
+async function copyCondition() {
+  if (!current?.table) return
+  const { host, table } = current
+  condCopy.disabled = true
+  condCopy.textContent = 'Copying…'
+  try {
+    const query = await conditionToCopy(table)
+    const labels = await resolveClipLabels(host, table, query)
+    const clip: ConditionClip = {
+      host,
+      table,
+      query,
+      labels,
+      savedAt: new Date().toISOString(),
+    }
+    await chrome.storage.local.set({ condClip: clip })
+    condQuery.value = query
+    showToast(query ? `Copied condition (${table})` : `Copied empty condition (${table})`)
+  } finally {
+    condCopy.textContent = 'Copy condition'
+    await refreshCondClipButtons()
+  }
+}
+
+/** Enable Copy when a table is known; label Paste from the stored clip. */
+async function refreshCondClipButtons() {
+  condCopy.disabled = !current?.table
+  const store = await chrome.storage.local.get('condClip')
+  const clip = store.condClip as ConditionClip | undefined
+  condPaste.disabled = !clip
+  condPaste.textContent = clip ? `Paste (${clip.table})` : 'Paste'
+  condPaste.title = clip
+    ? `From ${clip.host} · ${new Date(clip.savedAt).toLocaleString()}`
+    : 'Nothing copied yet'
 }
 
 /* --- Table schema (search + reference + choices + copy) --- */
@@ -3138,6 +3246,7 @@ syncTimingVisibility()
 refreshBtn.addEventListener('click', detect)
 condRun.addEventListener('click', runCondition)
 condOpen.addEventListener('click', openConditionList)
+condCopy.addEventListener('click', () => void copyCondition())
 schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 schemaBack.addEventListener('click', schemaBackOne)
