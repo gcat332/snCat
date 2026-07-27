@@ -6,6 +6,7 @@
  */
 import type { PageContext, RuntimeMessage, UiKind } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
+import { evaluateGate, roleStatusFrom } from '@core/admin-gate'
 import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildPolarisTargetUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, listFormPath, pickLabel } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
@@ -186,6 +187,12 @@ function initTabs() {
     })
   }
 }
+
+/* ---------- admin gate banner ---------- */
+
+const gateBanner = el('gate-banner')
+const gateTitle = el('gate-title')
+const gateDetail = el('gate-detail')
 
 /* ---------- scope + update set bar ---------- */
 
@@ -905,6 +912,32 @@ function queryTable(): string {
   return condQueryTable || current?.table || ''
 }
 
+/**
+ * Apply the admin gate to the whole panel. UX only — the instance's ACLs remain
+ * the real authority (see admin-gate.ts). Sets a single data attribute so panel
+ * visibility is CSS's job, not a per-feature check sprinkled through this file.
+ */
+function applyGate() {
+  const status = current?.user
+    ? roleStatusFrom(current.user)
+    : { state: 'unknown' as const }
+  const verdict = evaluateGate(status)
+
+  if (verdict.banner === 'none') {
+    delete document.body.dataset.gate
+    gateBanner.hidden = true
+    gateTitle.textContent = ''
+    gateDetail.textContent = ''
+    return
+  }
+
+  document.body.dataset.gate = verdict.banner
+  gateBanner.hidden = false
+  const [first, ...rest] = verdict.message.split('\n')
+  gateTitle.textContent = verdict.banner === 'blocked' ? `⚠ ${first}` : `⚠ ${verdict.message}`
+  gateDetail.textContent = verdict.banner === 'blocked' ? rest.join('\n') : ''
+}
+
 function updateEnabledState() {
   const table = current?.table
   const hasTable = !!table
@@ -920,6 +953,7 @@ function updateEnabledState() {
   // Enabled on a form record (record spec) or a list view (whole-table spec).
   specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
   void refreshCondClipButtons()
+  applyGate()
 }
 
 async function runCondition() {
@@ -3402,6 +3436,7 @@ async function detect() {
   if (!tab?.id || !isServiceNow(tab.url)) {
     renderStatus('Open a ServiceNow page to detect context.')
     refreshClipWarningsAfterDetect()
+    applyGate()
     return
   }
   void restoreLlmJobs()
@@ -3433,6 +3468,7 @@ async function detect() {
   } else {
     renderStatus('No record detected on this page.')
   }
+  applyGate()
   refreshClipWarningsAfterDetect()
   updateEnabledState()
   // Host-pin safety: if the active tab moved to a different instance (or off
