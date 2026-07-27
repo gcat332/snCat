@@ -4,7 +4,7 @@
  * M2: Script Tester Layer 1 — static lints (LLM-free), with auto-load of the
  *     script from the current Business Rule / Client Script / Script Include.
  */
-import type { PageContext, RuntimeMessage, UiKind, UserSnapshot } from '@core/types'
+import type { PageContext, RuntimeMessage, UiKind } from '@core/types'
 import { parseServiceNowContext } from '@core/context'
 import { evaluateGate, roleStatusFrom } from '@core/admin-gate'
 import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildPolarisTargetUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, listFormPath, pickLabel } from '@core/api'
@@ -501,108 +501,6 @@ async function getListQueryFromPage(table: string): Promise<string | null> {
     }
   } catch {
     /* scripting blocked (e.g. non-SN frame) → fall back to URL */
-  }
-  return null
-}
-
-/**
- * Read the effective user's admin-role status from EVERY frame directly, via
- * chrome.scripting — the same fix as getListQueryFromPage above for the same
- * underlying problem: the answer is not reliably in frame 0. On Next
- * Experience the top frame is the Polaris shell, which has no `g_user` at
- * all; the classic form (and its `g_user`) lives in a nested iframe. The
- * previous design read `g_user` in the MAIN-world bridge and relayed it
- * through the isolated content script to a plain (frameId-less)
- * `chrome.tabs.sendMessage`, which broadcasts and is effectively answered by
- * frame 0 — so on Next Experience the gate could never see a role and never
- * blocked anyone. This reads all frames itself and is now the only reader;
- * the relay path has been removed.
- *
- * Returns null on any injection failure (no active tab, blocked
- * executeScript, an uninjectable frame) so the caller degrades to "unknown"
- * rather than throwing — same fail-open contract as admin-gate.ts.
- *
- * Cross-frame resolution: a `true` from ANY frame wins over a `false` from
- * any other frame, even one that answered first. All frames on one tab that
- * belong to the SAME instance share one session (impersonation included), so
- * they cannot legitimately disagree — a `false` alongside a `true` can only
- * come from a stale/half-initialised `g_user` in a frame that hasn't caught
- * up yet, or from an embedded frame belonging to a different host entirely
- * (e.g. a portal widget pulling in another ServiceNow instance, which
- * `*.service-now.com` host permissions do allow injecting into). Either way
- * this gate is UX only (see admin-gate.ts) — a wrong `true` at worst shows a
- * non-admin the full UI, which the instance's own ACLs still refuse; a wrong
- * `false` HARD-BLOCKS a genuine admin, which is exactly the outcome the
- * fail-open design exists to prevent. So ties break toward `true`, not
- * toward whichever frame happened to answer first.
- */
-async function getUserFromPage(): Promise<UserSnapshot | null> {
-  if (currentTabId == null) return null
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: currentTabId, allFrames: true },
-      world: 'MAIN',
-      func: () => {
-        // NOTE on `roles`: this is NOT part of the documented client-side
-        // g_user (GlideUser) API. The real, stock API surface is `userID`,
-        // `userName`, `firstName`, `lastName`, plus the boolean-only
-        // `hasRole`/`hasRoles`/`hasRoleExactly` — there is no built-in way to
-        // read a full role list client-side. The "comma-separated role
-        // string" notion traces to a *server-side* API,
-        // `gs.getSession().getRoles()`, which is unrelated and unreachable
-        // from here. We still read `roles` defensively — some instances
-        // customize g_user (e.g. via a UI Script) to add it, so this is a
-        // free win when present — but on a stock instance it will be absent.
-        // Callers MUST treat an empty/missing `roles` as "not enumerated",
-        // never as "the user has no roles" (see admin-gate.ts's
-        // blocked-message logic, which deliberately never renders a "none"
-        // claim for this reason).
-        //
-        // `hasRole`'s return is read as `unknown`, not `boolean`, on purpose:
-        // this is an uncontrolled page global. Stock GlideUser answers a real
-        // boolean, but a workspace shim, a not-yet-initialised GlideUser, or a
-        // customised UI Script can define `hasRole` and have it return
-        // `undefined`, and `!!undefined` would silently convert "did not
-        // answer" into "no" — hard-blocking a real admin, the exact outcome
-        // the fail-open design exists to prevent. Typing it `unknown`
-        // documents that hazard but does NOT enforce the fix: TypeScript
-        // permits unary `!` on `unknown`, so `!!gu.hasRole('admin')` still
-        // compiles clean under --strict. The only real protection is the
-        // explicit nullish check below — do not remove it on the assumption
-        // the type is catching this.
-        const gu = (
-          window as unknown as {
-            g_user?: { hasRole?: (role: string) => unknown; userName?: string; roles?: string }
-          }
-        ).g_user
-        if (!gu || typeof gu.hasRole !== 'function') {
-          return { hasAdmin: null, userName: gu?.userName ?? null, roles: gu?.roles ?? null }
-        }
-        try {
-          const answer = gu.hasRole('admin')
-          return {
-            hasAdmin: answer === undefined || answer === null ? null : !!answer,
-            userName: gu.userName ?? null,
-            roles: gu.roles ?? null,
-          }
-        } catch {
-          return { hasAdmin: null, userName: gu.userName ?? null, roles: gu.roles ?? null }
-        }
-      },
-    })
-    let trueResult: UserSnapshot | null = null
-    let falseResult: UserSnapshot | null = null
-    let namedResult: UserSnapshot | null = null
-    for (const r of results) {
-      const v = r.result as UserSnapshot | null
-      if (!v) continue
-      if (v.hasAdmin === true && !trueResult) trueResult = v
-      else if (v.hasAdmin === false && !falseResult) falseResult = v
-      else if (v.userName && !namedResult) namedResult = v
-    }
-    return trueResult ?? falseResult ?? namedResult ?? null
-  } catch {
-    /* scripting blocked (e.g. non-SN frame) → degrade to unknown */
   }
   return null
 }
@@ -4184,24 +4082,29 @@ async function detectInner(): Promise<boolean> {
       if (enriched.table && (!context?.table || (!context.sysId && enriched.sysId))) {
         context = enriched
       }
+      // The ROLE READING IS ORTHOGONAL to the identity race above — always take
+      // it. Do NOT fold this back into that condition.
+      //
+      // `parseServiceNowContext` is a pure URL parser and can never populate
+      // `.user`; `enriched` is the only object that ever carries the g_user
+      // snapshot. So adopting the whole enriched object only when it wins the
+      // identity race throws the role reading away on every page where the URL
+      // already resolved the record — i.e. `incident.do?sys_id=…` (table AND
+      // sysId), `incident_list.do` (table, no sysId either side) and, when the
+      // outer guard also demanded `res.context.table`, the home page. On all of
+      // those `current.user` stayed undefined, applyGate() fell through to its
+      // `unknown` branch, and the gate never engaged: no non-admin was ever
+      // blocked on the classic UI and every admin got a permanent "Role
+      // unverified" banner. Identity and roles are separate questions; decide
+      // them separately.
+      if (enriched.user && context) context = { ...context, user: enriched.user }
     }
   } catch {
     /* content script not present in this frame — URL parse stands. */
   }
 
-  // Roles are read independently of the identity resolution above, via
-  // getUserFromPage()'s own all-frames chrome.scripting call — not via the
-  // content-script relay, and not folded into the enrichment race. The relay
-  // path (content script → plain, frameId-less chrome.tabs.sendMessage) only
-  // ever heard from frame 0, which on Next Experience is the Polaris shell
-  // with no g_user at all; see getUserFromPage()'s docblock for the full
-  // history. (If `context` turns out null below, this reading is discarded
-  // along with it — same as before this fix — since `current` only carries a
-  // `.user` when there is a context to attach it to.)
-  const user = await getUserFromPage()
-
   if (context) {
-    current = user ? { ...context, user } : context
+    current = context
     renderContext(context)
   } else {
     renderStatus('No record detected on this page.')

@@ -2,15 +2,8 @@
  * Isolated content script. Resolves page context two ways and merges them:
  *   1. URL parsing (parseServiceNowContext) — works everywhere, primary source.
  *   2. g_form snapshot from the MAIN-world bridge — fills gaps on classic forms
- *      where the URL is ambiguous, and carries g_ck for later REST use.
- *
- * The admin gate's role reading does NOT go through here: it used to (see
- * git history for `resolveContext`'s old `user` field), but a plain
- * `chrome.tabs.sendMessage` from the side panel broadcasts to all frames and
- * is effectively answered by frame 0 — the Next Experience shell frame,
- * which has no `g_user`. The side panel now reads roles itself via
- * `chrome.scripting` across all frames (see `getUserFromPage` in
- * sidepanel/main.ts), independent of this file entirely.
+ *      where the URL is ambiguous, carries g_ck for later REST use, and supplies
+ *      the UserSnapshot for the admin gate.
  *
  * The side panel asks for context via chrome.runtime message; we answer with the
  * best current PageContext.
@@ -68,10 +61,13 @@ window.addEventListener('message', (event) => {
 
 function resolveContext(): PageContext | null {
   const fromUrl = parseServiceNowContext(location.href)
+  // The role reading comes from the MAIN world regardless of which source
+  // identified the record, so attach it to whichever context we return.
+  const user = lastGForm?.user
 
   // If the URL already identified a record, trust it (it's the most specific).
   if (fromUrl && fromUrl.table && (fromUrl.sysId || fromUrl.view !== 'form')) {
-    return fromUrl
+    return { ...fromUrl, user }
   }
 
   // Otherwise, let g_form fill in the identity if it has one.
@@ -84,10 +80,11 @@ function resolveContext(): PageContext | null {
       ui: fromUrl?.ui ?? 'unknown',
       url: location.href,
       source: 'g_form',
+      user,
     }
   }
 
-  return fromUrl ?? null
+  return fromUrl ? { ...fromUrl, user } : null
 }
 
 chrome.runtime.onMessage.addListener(

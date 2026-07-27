@@ -9,7 +9,7 @@
  * It has no chrome.* access, so it relays via window.postMessage; the isolated
  * content script (content/index.ts) bridges to the extension.
  */
-import type { GFormSnapshot } from '@core/types'
+import type { GFormSnapshot, UserSnapshot } from '@core/types'
 import type { ApiRequest, ApiResult } from '@core/api'
 import type { ProdGuardConfig } from '@core/prod-guard'
 import { executeApiRequest } from '@core/sn-rest'
@@ -22,6 +22,67 @@ declare global {
       getValue?: (f: string) => string
     }
     g_ck?: string
+    // NOTE on `roles`: this is NOT part of the documented client-side g_user
+    // (GlideUser) API. The real, stock API surface is `userID`, `userName`,
+    // `firstName`, `lastName`, plus the boolean-only `hasRole`/`hasRoles`/
+    // `hasRoleExactly` — there is no built-in way to read a full role list
+    // client-side. The "comma-separated role string" notion traces to a
+    // *server-side* API, `gs.getSession().getRoles()`, which is unrelated and
+    // unreachable from here. We still read `roles` defensively — some
+    // instances customize g_user (e.g. via a UI Script) to add it, so this is
+    // a free win when present — but on a stock instance it will be absent.
+    // Callers MUST treat an empty/missing `roles` as "not enumerated", never
+    // as "the user has no roles" (see admin-gate.ts's blocked-message logic,
+    // which deliberately never renders a "none" claim for this reason).
+    g_user?: {
+      // Return type is `unknown`, not `boolean`, on purpose: this is an
+      // uncontrolled page global. Stock GlideUser answers a real boolean, but a
+      // workspace shim, a not-yet-initialised GlideUser or a customised UI
+      // Script can define `hasRole` and have it return `undefined`, and
+      // `!!undefined` would silently convert "did not answer" into "no" —
+      // hard-blocking a real admin, the exact outcome the fail-open design
+      // exists to prevent.
+      //
+      // `unknown` documents that hazard but does NOT enforce the fix: TypeScript
+      // permits unary `!` on `unknown`, so `!!gu.hasRole('admin')` still
+      // compiles clean under --strict (verified). The only real protection is
+      // the explicit nullish check in userSnapshot() below — do not remove it
+      // on the assumption that the type is catching this.
+      hasRole?: (role: string) => unknown
+      userName?: string
+      roles?: string
+    }
+  }
+}
+
+/**
+ * Read the effective user's admin status. g_user.hasRole reflects IMPERSONATION,
+ * so impersonating a non-admin correctly reports false — that is wanted, not a
+ * bug. A missing or throwing g_user yields hasAdmin: null ("could not tell"),
+ * which the gate treats as allow-with-warning rather than deny.
+ *
+ * The nullish check on hasRole's RESULT is load-bearing, and try/catch does not
+ * cover it because nothing throws: a shimmed or half-initialised g_user can
+ * expose `hasRole` and answer `undefined`. Collapsing that to `false` with `!!`
+ * would report a confirmed non-admin and HARD-BLOCK a genuine admin — exactly
+ * the outcome the fail-open design exists to prevent. So: "did not answer"
+ * (undefined/null) → null → unknown → allow with a warning; any other value is
+ * an answer, and a truthy non-boolean still counts as yes.
+ */
+function userSnapshot(): UserSnapshot {
+  const gu = window.g_user
+  if (!gu || typeof gu.hasRole !== 'function') {
+    return { hasAdmin: null, userName: gu?.userName ?? null, roles: gu?.roles ?? null }
+  }
+  try {
+    const answer = gu.hasRole('admin')
+    return {
+      hasAdmin: answer === undefined || answer === null ? null : !!answer,
+      userName: gu.userName ?? null,
+      roles: gu.roles ?? null,
+    }
+  } catch {
+    return { hasAdmin: null, userName: gu.userName ?? null, roles: gu.roles ?? null }
   }
 }
 
@@ -40,6 +101,7 @@ function snapshot(): GFormSnapshot {
     table: table || null,
     sysId: sysId || null,
     gCk: typeof window.g_ck === 'string' ? window.g_ck : null,
+    user: userSnapshot(),
   }
 }
 
