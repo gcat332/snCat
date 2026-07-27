@@ -58,6 +58,16 @@ Open the side panel → **Settings** tab.
 | **Spec** | F1 | Discover related artifacts → include/exclude checklist → export HTML / PDF / Word. |
 | **Settings** | — | LLM endpoint + prod-guard configuration. |
 
+### Copy/paste condition (cross-instance)
+
+**Copy/paste condition (cross-instance).** On a list view, *Copy condition* grabs
+the filter that is actually applied — read from `GlideList2`, so a filter set
+after page load is captured too — together with display labels for any reference
+sys_ids in it. On another instance, *Paste* fills the query, lists every sys_id
+it depends on as a warning, and opens the matching list there. The query is
+pasted verbatim; sys_ids are never rewritten, because a name match on the target
+is not proof of the same record.
+
 ### javaHelp chip
 
 On a ServiceNow form with a script field, snJava injects a small **javaHelp** chip next to the field label. Clicking it opens the side panel, loads the script into the Tester tab, and sets the Script kind — so you can add the problem and run **Java review** immediately.
