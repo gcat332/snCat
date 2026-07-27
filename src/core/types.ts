@@ -47,8 +47,6 @@ export interface GFormSnapshot {
   sysId: string | null
   /** X-UserToken (g_ck) for authenticated REST endpoints, if present. */
   gCk: string | null
-  /** Effective user's roles, for the admin gate. */
-  user: UserSnapshot
 }
 
 /** Messages exchanged between content script / side panel / background. */
