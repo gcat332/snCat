@@ -275,6 +275,16 @@ body {
   color: #b4232a;
 }
 
+.warn {
+  color: #8a5a00;
+  background: #fff6e5;
+  border-left: 3px solid #e0a300;
+  padding: 6px 8px;
+  margin: 4px 0;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
 /* Condition Tester + schema */
 .field-label {
   display: block;

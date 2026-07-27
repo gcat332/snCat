@@ -9,6 +9,7 @@ import { parseServiceNowContext } from '@core/context'
 import { buildChoicesQuery, buildListFormUrl, buildListXmlUrl, buildRecordFormUrl, buildRecordXmlUrl, cellDisplay, cellValue, LABEL_FIELDS, pickLabel } from '@core/api'
 import type { ChoiceOption, DictionaryField } from '@core/api'
 import {
+  clipWarnings,
   extractRefTokens,
   groupTokensByRefTable,
   type ConditionClip,
@@ -860,6 +861,7 @@ const condCount = el('cond-count')
 const condResults = el('cond-results')
 const condCopy = el<HTMLButtonElement>('cond-copy')
 const condPaste = el<HTMLButtonElement>('cond-paste')
+const condWarnings = el('cond-warnings')
 const schemaLoad = el<HTMLButtonElement>('schema-load')
 const schemaCount = el('schema-count')
 const schemaSearch = el<HTMLInputElement>('schema-search')
@@ -881,6 +883,7 @@ function updateEnabledState() {
 
 async function runCondition() {
   if (!current?.table) return
+  renderClipWarnings([])
   const { host, table } = current
   const query = condQuery.value.trim()
 
@@ -1012,6 +1015,43 @@ async function refreshCondClipButtons() {
   condPaste.title = clip
     ? `From ${clip.host} · ${new Date(clip.savedAt).toLocaleString()}`
     : 'Nothing copied yet'
+}
+
+function renderClipWarnings(warnings: string[]) {
+  condWarnings.replaceChildren()
+  condWarnings.hidden = warnings.length === 0
+  if (warnings.length === 0) return
+  condWarnings.append(
+    elText('div', 'chk-group-title', 'Check before you trust these results'),
+  )
+  for (const w of warnings) condWarnings.append(elText('div', 'warn', w))
+}
+
+/**
+ * Paste the stored condition and open it on THIS instance. The query text is
+ * written verbatim — sys_ids are reported, never rewritten, because a name
+ * match on the target instance is not proof of the same record.
+ *
+ * The list opened is `clip.table`, not the current page's table: the point is
+ * to carry an `incident` filter across instances regardless of what page the
+ * user happens to be on.
+ */
+async function pasteCondition() {
+  if (!current) return
+  const store = await chrome.storage.local.get('condClip')
+  const clip = store.condClip as ConditionClip | undefined
+  if (!clip) return
+
+  condQuery.value = clip.query
+  renderClipWarnings(clipWarnings(clip, { host: current.host, table: current.table }))
+  condResults.replaceChildren()
+  condCount.hidden = true
+  condOpen.disabled = false
+
+  const url =
+    `https://${current.host}/${clip.table}_list.do` +
+    (clip.query ? `?sysparm_query=${encodeURIComponent(clip.query)}` : '')
+  void chrome.tabs.create({ url })
 }
 
 /* --- Table schema (search + reference + choices + copy) --- */
@@ -3247,6 +3287,8 @@ refreshBtn.addEventListener('click', detect)
 condRun.addEventListener('click', runCondition)
 condOpen.addEventListener('click', openConditionList)
 condCopy.addEventListener('click', () => void copyCondition())
+condPaste.addEventListener('click', () => void pasteCondition())
+condQuery.addEventListener('input', () => renderClipWarnings([]))
 schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 schemaBack.addEventListener('click', schemaBackOne)
