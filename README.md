@@ -67,6 +67,16 @@ the query, lists every sys_id it depends on as a warning, and opens the matching
 list there. The query is pasted verbatim; sys_ids are never rewritten, because a
 name match on the target is not proof of the same record.
 
+### Add to update set
+
+Forces the open record — or every record in the current list filter — into the
+update set selected in the header, using the Add to Update Set Utility's
+`addToUpdateSetUtils` Script Include. Prod-guarded like every other write. If the
+instance does not have the Script Include, snJava offers to install the vendored
+v9.5 export (21 records, global scope, see `public/vendor/README.md`) and then
+continues; an existing `addToUpdateSetUtils` is never overwritten. Records are
+processed 50 per background run, and more than 200 requires a second confirmation.
+
 ### javaHelp chip
 
 On a ServiceNow form with a script field, snJava injects a small **javaHelp** chip next to the field label. Clicking it opens the side panel, loads the script into the Tester tab, and sets the Script kind — so you can add the problem and run **Java review** immediately.
