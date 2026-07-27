@@ -50,3 +50,47 @@ export function extractRefTokens(query: string): RefToken[] {
   }
   return out
 }
+
+/**
+ * Human-readable cautions to show before pasting. A differing HOST is never a
+ * warning — carrying a filter to another instance is the whole feature. What
+ * matters is a table mismatch and every sys_id the query depends on.
+ */
+export function clipWarnings(
+  clip: ConditionClip,
+  current: { host: string; table?: string | null },
+): string[] {
+  const out: string[] = []
+  if (current.table && current.table !== clip.table) {
+    out.push(`Clip is for \`${clip.table}\`, this page is \`${current.table}\`.`)
+  }
+  for (const { field, sysId } of extractRefTokens(clip.query)) {
+    const label = clip.labels[sysId]
+    out.push(
+      label
+        ? `${field} = ${label} — sys_id may not exist on this instance.`
+        : `${field} = ${sysId.slice(0, 8)}… — could not resolve.`,
+    )
+  }
+  return out
+}
+
+/**
+ * Bucket tokens by the table their field references, so labels can be fetched
+ * with one batched `sys_idIN…` query per referenced table instead of one call
+ * per sys_id. `refByField` comes from the table's sys_dictionary.
+ */
+export function groupTokensByRefTable(
+  tokens: RefToken[],
+  refByField: Record<string, string>,
+): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const { field, sysId } of tokens) {
+    const refTable = refByField[field]
+    if (!refTable) continue
+    const ids = out.get(refTable) ?? []
+    if (!ids.includes(sysId)) ids.push(sysId)
+    out.set(refTable, ids)
+  }
+  return out
+}
