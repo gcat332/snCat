@@ -35,7 +35,13 @@ declare global {
     // as "the user has no roles" (see admin-gate.ts's blocked-message logic,
     // which deliberately never renders a "none" claim for this reason).
     g_user?: {
-      hasRole?: (role: string) => boolean
+      // Return type is `unknown`, not `boolean`, on purpose: this is an
+      // uncontrolled page global. Stock GlideUser answers a real boolean, but a
+      // workspace shim, a not-yet-initialised GlideUser or a customised UI
+      // Script can define `hasRole` and have it return `undefined`. Typing it
+      // `boolean` would let `!!` silently convert "did not answer" into "no"
+      // — see userSnapshot() below.
+      hasRole?: (role: string) => unknown
       userName?: string
       roles?: string
     }
@@ -47,6 +53,14 @@ declare global {
  * so impersonating a non-admin correctly reports false — that is wanted, not a
  * bug. A missing or throwing g_user yields hasAdmin: null ("could not tell"),
  * which the gate treats as allow-with-warning rather than deny.
+ *
+ * The nullish check on hasRole's RESULT is load-bearing, and try/catch does not
+ * cover it because nothing throws: a shimmed or half-initialised g_user can
+ * expose `hasRole` and answer `undefined`. Collapsing that to `false` with `!!`
+ * would report a confirmed non-admin and HARD-BLOCK a genuine admin — exactly
+ * the outcome the fail-open design exists to prevent. So: "did not answer"
+ * (undefined/null) → null → unknown → allow with a warning; any other value is
+ * an answer, and a truthy non-boolean still counts as yes.
  */
 function userSnapshot(): UserSnapshot {
   const gu = window.g_user
@@ -54,8 +68,9 @@ function userSnapshot(): UserSnapshot {
     return { hasAdmin: null, userName: gu?.userName ?? null, roles: gu?.roles ?? null }
   }
   try {
+    const answer = gu.hasRole('admin')
     return {
-      hasAdmin: !!gu.hasRole('admin'),
+      hasAdmin: answer === undefined || answer === null ? null : !!answer,
       userName: gu.userName ?? null,
       roles: gu.roles ?? null,
     }
