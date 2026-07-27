@@ -60,16 +60,21 @@ import { namePrefixField, prefixArtifactName } from '@core/naming'
 let current: PageContext | null = null
 let currentTabId: number | null = null
 /**
- * Set by pasteCondition() immediately before it navigates the current tab to
- * the pasted clip's list. detect() normally clears the clip-vs-page warnings
- * on every navigation (a stale table-mismatch claim shouldn't linger) — but a
- * paste-initiated navigation would trip that same clear the instant it fires,
+ * Clip whose warnings must survive the paste-initiated navigation, together with
+ * the tab that navigation targets. Scoped to a tab id because detect() also fires
+ * for unrelated tabs — an unscoped flag gets spent by whichever detect() runs
+ * first (e.g. the user switches to another tab while the pasted tab is still
+ * loading), rendering the warnings against a context they do not describe and
+ * leaving the pasted tab's own detect() with nothing to consume.
+ *
+ * detect() normally clears the clip-vs-page warnings on every navigation (a
+ * stale table-mismatch claim shouldn't linger) — but the paste-initiated
+ * navigation's OWN detect() would trip that same clear the instant it fires,
  * wiping the sys_id warnings pasteCondition() just rendered. This flag lets
- * detect() recompute (not erase) the warnings once against the page it just
- * landed on, then reset itself to null: one-shot, so the very next ordinary
- * tab switch clears warnings exactly as before.
+ * that one detect() call recompute (not erase) the warnings, then null itself:
+ * one-shot, so the next ordinary tab switch clears warnings exactly as before.
  */
-let pastedClipForWarnings: ConditionClip | null = null
+let pastedClipForWarnings: { clip: ConditionClip; tabId: number } | null = null
 // Tables we auto-filled from the active page. detect() keeps the Layer 3 target
 // and the picker filter following page navigation, but only while the field
 // still holds the value we last auto-filled — once the user types their own
@@ -1135,13 +1140,25 @@ function renderClipWarnings(warnings: string[]) {
  */
 async function pasteCondition() {
   if (!current) return
+  // Pin what this paste needs before any await. confirmDialog() below is a DOM
+  // overlay, not a blocking native dialog (window.confirm() is suppressed in
+  // side panels — see confirmDialog's own comment), so chrome.tabs.onActivated /
+  // onUpdated can fire detect() while it's open, and detect() reassigns
+  // `current` / `currentTabId` synchronously. Reading those fresh after an
+  // await could throw on a null `current` or silently navigate a tab the
+  // confirm never named. Never read `current` or `currentTabId` again below.
+  const host = current.host
+  const view = current.view
+  const pageTable = current.table
+  const tabId = currentTabId
+
   const store = await chrome.storage.local.get('condClip')
   const clip = store.condClip as ConditionClip | undefined
   if (!clip) return
 
   condQuery.value = clip.query
   condQueryTable = clip.table
-  renderClipWarnings(clipWarnings(clip, { host: current.host, table: current.table }))
+  renderClipWarnings(clipWarnings(clip, { host, table: pageTable }))
   condResults.replaceChildren()
   condCount.hidden = true
   condOpen.disabled = false
@@ -1149,20 +1166,35 @@ async function pasteCondition() {
 
   // Leaving a record form can lose unsaved edits — confirm first. A list (or
   // any other view) navigates straight away.
-  if (current.view === 'form') {
+  if (view === 'form') {
     const ok = await confirmDialog(
-      `Leave this record and open the \`${clip.table}\` list on ${current.host}? Unsaved changes on this form will be lost.`,
+      `Leave this record and open the \`${clip.table}\` list on ${host}? Unsaved changes on this form will be lost.`,
     )
     if (!ok) return
   }
 
-  // Set immediately before navigating (not on cancel above) so the detect()
-  // this navigation triggers recomputes — rather than erases — these warnings.
-  // See the pastedClipForWarnings declaration for the full one-shot story.
-  pastedClipForWarnings = clip
-  const url = buildListFormUrl(current.host, clip.table, clip.query)
-  if (currentTabId != null) void chrome.tabs.update(currentTabId, { url })
-  else void chrome.tabs.create({ url })
+  const url = buildListFormUrl(host, clip.table, clip.query)
+  if (tabId != null) {
+    // Set immediately before navigating (not on cancel above) so the detect()
+    // this navigation triggers recomputes — rather than erases — these
+    // warnings. Scoped to `tabId` (see the pastedClipForWarnings declaration)
+    // so a detect() for some unrelated tab can't spend the flag first.
+    pastedClipForWarnings = { clip, tabId }
+    void chrome.tabs.update(tabId, { url }).catch((e) => {
+      showToast(`Navigate failed: ${e instanceof Error ? e.message : String(e)}`)
+    })
+  } else {
+    // No tab id to navigate onto (the panel has no active tab) — open a new
+    // one instead, and scope the flag to whatever tab id that create resolves.
+    void chrome.tabs
+      .create({ url })
+      .then((tab) => {
+        if (tab.id != null) pastedClipForWarnings = { clip, tabId: tab.id }
+      })
+      .catch((e) => {
+        showToast(`Navigate failed: ${e instanceof Error ? e.message : String(e)}`)
+      })
+  }
 }
 
 /* --- Table schema (search + reference + choices + copy) --- */
@@ -3324,14 +3356,23 @@ chrome.storage.session.onChanged.addListener((changes) => {
  * A clip-vs-page warning from the previous tab becomes actively false once
  * the page changes (e.g. "this page is `sc_task`" after switching to
  * `incident`) — clear it rather than let a stale claim linger. Exception: if
- * pastedClipForWarnings is set, this navigation was paste-initiated, so
- * recompute the warnings against the page detect() just landed on instead of
- * wiping them — then drop the flag (one-shot; see its declaration).
+ * pastedClipForWarnings targets THIS tab (currentTabId, just resolved above),
+ * this detect() call is the paste-initiated navigation landing, so recompute
+ * the warnings against the page it just landed on instead of wiping them —
+ * then drop the flag (one-shot; see its declaration). That recompute covers
+ * the "no context yet" case too: if `current` is still null (e.g. no record
+ * detected), it renders no warnings, but the flag is still consumed since
+ * this WAS the pasted tab's own detect() run.
+ *
+ * A flag targeting a DIFFERENT tab — detect() firing for some unrelated tab
+ * while the paste navigation is still loading — is left untouched: warnings
+ * clear for this (unrelated) tab as usual, and the flag stays set so the
+ * pasted tab still gets its warnings when its own detect() lands.
  */
 function refreshClipWarningsAfterDetect() {
-  if (pastedClipForWarnings) {
+  if (pastedClipForWarnings && pastedClipForWarnings.tabId === currentTabId) {
     renderClipWarnings(
-      current ? clipWarnings(pastedClipForWarnings, { host: current.host, table: current.table }) : [],
+      current ? clipWarnings(pastedClipForWarnings.clip, { host: current.host, table: current.table }) : [],
     )
     pastedClipForWarnings = null
   } else {
