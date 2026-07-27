@@ -24,20 +24,6 @@ export interface PageContext {
   url: string
   /** How the identity was resolved — useful for debugging/telemetry. */
   source: 'url' | 'g_form'
-  /** Role reading from the page, when one was available. */
-  user?: UserSnapshot
-}
-
-/**
- * The effective user's role reading, taken from the page's g_user. `hasAdmin`
- * is null when g_user was unavailable — which is NOT the same as "not an admin"
- * (see admin-gate.ts). Reflects impersonation, because g_user does.
- */
-export interface UserSnapshot {
-  hasAdmin: boolean | null
-  userName: string | null
-  /** Comma-separated role list as g_user reports it, or null. */
-  roles: string | null
 }
 
 /** Message from the MAIN-world bridge → isolated content script. */
@@ -47,8 +33,6 @@ export interface GFormSnapshot {
   sysId: string | null
   /** X-UserToken (g_ck) for authenticated REST endpoints, if present. */
   gCk: string | null
-  /** Effective user's roles, for the admin gate. */
-  user: UserSnapshot
 }
 
 /** Messages exchanged between content script / side panel / background. */
