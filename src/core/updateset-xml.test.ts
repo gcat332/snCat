@@ -2,6 +2,59 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseUpdateSetXml } from './updateset-xml'
+import { buildInstallScript, toBase64Utf8, type UpdateRecord } from './updateset-xml'
+
+function rec(over: Partial<UpdateRecord> = {}): UpdateRecord {
+  return {
+    type: 'System Property',
+    targetName: 'p',
+    table: 'sys_properties',
+    sysId: 'b7dd13942f6bcc50c6c690bcf699b6bd',
+    fields: { name: 'p', value: 'true', sys_id: 'b7dd13942f6bcc50c6c690bcf699b6bd' },
+    ...over,
+  }
+}
+
+describe('toBase64Utf8', () => {
+  it('round-trips ASCII', () => {
+    expect(atob(toBase64Utf8('hello'))).toBe('hello')
+  })
+
+  it('encodes non-Latin1 characters without throwing', () => {
+    expect(() => toBase64Utf8('ทดสอบ — ü')).not.toThrow()
+    expect(toBase64Utf8('ทดสอบ')).not.toContain('undefined')
+  })
+})
+
+describe('buildInstallScript', () => {
+  it('targets the record’s table and preserves the sys_id', () => {
+    const s = buildInstallScript(rec())
+    expect(s).toContain("new GlideRecord('sys_properties')")
+    expect(s).toContain('b7dd13942f6bcc50c6c690bcf699b6bd')
+    expect(s).toContain('setNewGuidValue')
+  })
+
+  it('never embeds a raw field value — only base64', () => {
+    const s = buildInstallScript(
+      rec({ fields: { name: 'p', script: 'var s = "]]>\' + \\ tricky";' } }),
+    )
+    expect(s).not.toContain('tricky')
+    expect(s).toContain('GlideStringUtil.base64Decode')
+  })
+
+  it('omits system fields the platform owns', () => {
+    const s = buildInstallScript(
+      rec({ fields: { name: 'p', sys_created_on: 'x', sys_mod_count: '7', sys_updated_by: 'admin' } }),
+    )
+    expect(s).not.toContain('sys_created_on')
+    expect(s).not.toContain('sys_mod_count')
+    expect(s).not.toContain('sys_updated_by')
+  })
+
+  it('reports a machine-readable outcome line', () => {
+    expect(buildInstallScript(rec())).toContain('snJava: installed')
+  })
+})
 
 /** Two records: one CDATA payload, one entity-escaped payload. */
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?><unload unload_date="2026-05-20 13:30:54">
