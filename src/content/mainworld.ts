@@ -9,7 +9,7 @@
  * It has no chrome.* access, so it relays via window.postMessage; the isolated
  * content script (content/index.ts) bridges to the extension.
  */
-import type { GFormSnapshot } from '@core/types'
+import type { GFormSnapshot, UserSnapshot } from '@core/types'
 import type { ApiRequest, ApiResult } from '@core/api'
 import type { ProdGuardConfig } from '@core/prod-guard'
 import { executeApiRequest } from '@core/sn-rest'
@@ -22,6 +22,33 @@ declare global {
       getValue?: (f: string) => string
     }
     g_ck?: string
+    g_user?: {
+      hasRole?: (role: string) => boolean
+      userName?: string
+      roles?: string
+    }
+  }
+}
+
+/**
+ * Read the effective user's admin status. g_user.hasRole reflects IMPERSONATION,
+ * so impersonating a non-admin correctly reports false — that is wanted, not a
+ * bug. A missing or throwing g_user yields hasAdmin: null ("could not tell"),
+ * which the gate treats as allow-with-warning rather than deny.
+ */
+function userSnapshot(): UserSnapshot {
+  const gu = window.g_user
+  if (!gu || typeof gu.hasRole !== 'function') {
+    return { hasAdmin: null, userName: gu?.userName ?? null, roles: gu?.roles ?? null }
+  }
+  try {
+    return {
+      hasAdmin: !!gu.hasRole('admin'),
+      userName: gu.userName ?? null,
+      roles: gu.roles ?? null,
+    }
+  } catch {
+    return { hasAdmin: null, userName: gu.userName ?? null, roles: gu.roles ?? null }
   }
 }
 
@@ -40,6 +67,7 @@ function snapshot(): GFormSnapshot {
     table: table || null,
     sysId: sysId || null,
     gCk: typeof window.g_ck === 'string' ? window.g_ck : null,
+    user: userSnapshot(),
   }
 }
 
