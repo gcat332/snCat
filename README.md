@@ -75,6 +75,10 @@ On a ServiceNow form with a script field, snJava injects a small **javaHelp** ch
 
 When the **Generate** tab creates a dev/admin-facing config record (Business Rule, Client Script, Script Include, Fix Script, UI Policy, UI Action, notification, …), its display name is prefixed with `[MF-AI][<CODE>] `, where `<CODE>` is a short module code derived from the target table (`incident` → `INC`, `change_request` → `CHG`, …). **Not** applied to Field / Table / ACL (structural names), Choice (user-facing labels), or business data. See `src/core/naming.ts`.
 
+### Include parent & child tables
+
+Walks `sys_db_object.super_class` upward and one level of children downward to discover related artifacts from parent and child tables too. Inherited rows are marked `↑ task`, child rows `↓ incident_task` — ancestors matter most, since a Business Rule on `task` genuinely fires on every incident. Off by default because on a base table this multiplies the artifact count; children are capped at 20 and the hint states how many were dropped.
+
 ## Scripts
 
 | Command | What |
