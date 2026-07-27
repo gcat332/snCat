@@ -49,6 +49,7 @@ import {
 } from '@core/llm'
 import { createCodeEditor } from './editor'
 import type { ArtifactRef } from '@core/graph'
+import type { TableHierarchy } from '@core/hierarchy'
 import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
 import { formatSpecDoc } from '@core/format'
@@ -2603,6 +2604,7 @@ async function discoverArtifacts() {
   specWalk.disabled = true
   specOutput.hidden = true
   specStatus.hidden = true
+  renderHierarchyHint(null, '')
   specChecklist.replaceChildren(elText('div', 'empty', sysId ? 'Loading root record…' : 'Loading table…'))
 
   // Form → record spec (rooted at the record). List → whole-table ("module") spec.
@@ -2644,10 +2646,7 @@ async function discoverArtifacts() {
  * State the tables the spec actually covered. When the child cap dropped some,
  * say so — a spec that silently omitted 27 child tables would read as complete.
  */
-function renderHierarchyHint(
-  hierarchy: import('@core/hierarchy').TableHierarchy | null,
-  primaryTable: string,
-) {
+function renderHierarchyHint(hierarchy: TableHierarchy | null, primaryTable: string) {
   if (!hierarchy) {
     specHierarchyHint.hidden = true
     specHierarchyHint.textContent = ''
