@@ -59,6 +59,17 @@ import { namePrefixField, prefixArtifactName } from '@core/naming'
 
 let current: PageContext | null = null
 let currentTabId: number | null = null
+/**
+ * Set by pasteCondition() immediately before it navigates the current tab to
+ * the pasted clip's list. detect() normally clears the clip-vs-page warnings
+ * on every navigation (a stale table-mismatch claim shouldn't linger) — but a
+ * paste-initiated navigation would trip that same clear the instant it fires,
+ * wiping the sys_id warnings pasteCondition() just rendered. This flag lets
+ * detect() recompute (not erase) the warnings once against the page it just
+ * landed on, then reset itself to null: one-shot, so the very next ordinary
+ * tab switch clears warnings exactly as before.
+ */
+let pastedClipForWarnings: ConditionClip | null = null
 // Tables we auto-filled from the active page. detect() keeps the Layer 3 target
 // and the picker filter following page navigation, but only while the field
 // still holds the value we last auto-filled — once the user types their own
@@ -1092,9 +1103,9 @@ async function refreshCondClipButtons() {
   // Paste opens with `if (!current) return` (no ServiceNow tab detected), so
   // the button must not look live when there is no page to paste onto.
   condPaste.disabled = !clip || !current
-  condPaste.textContent = clip ? `Paste (${clip.table})` : 'Paste'
+  condPaste.textContent = 'Paste condition'
   condPaste.title = clip
-    ? `From ${clip.host} · ${new Date(clip.savedAt).toLocaleString()}`
+    ? `${clip.table} · from ${clip.host} · ${new Date(clip.savedAt).toLocaleString()}`
     : 'Nothing copied yet'
 }
 
@@ -1109,13 +1120,18 @@ function renderClipWarnings(warnings: string[]) {
 }
 
 /**
- * Paste the stored condition and open it on THIS instance. The query text is
- * written verbatim — sys_ids are reported, never rewritten, because a name
- * match on the target instance is not proof of the same record.
+ * Paste the stored condition and navigate THIS tab to it on THIS instance (falls
+ * back to opening a new tab if there's no tab id to navigate — see currentTabId).
+ * The query text is written verbatim — sys_ids are reported, never rewritten,
+ * because a name match on the target instance is not proof of the same record.
  *
  * The list opened is `clip.table`, not the current page's table: the point is
  * to carry an `incident` filter across instances regardless of what page the
  * user happens to be on.
+ *
+ * The textarea fill, condQueryTable assignment and warning render happen
+ * BEFORE the confirm below and are never undone — cancelling declines the
+ * navigation only, the clip is still pasted and visible.
  */
 async function pasteCondition() {
   if (!current) return
@@ -1131,7 +1147,22 @@ async function pasteCondition() {
   condOpen.disabled = false
   updateEnabledState()
 
-  void chrome.tabs.create({ url: buildListFormUrl(current.host, clip.table, clip.query) })
+  // Leaving a record form can lose unsaved edits — confirm first. A list (or
+  // any other view) navigates straight away.
+  if (current.view === 'form') {
+    const ok = await confirmDialog(
+      `Leave this record and open the \`${clip.table}\` list on ${current.host}? Unsaved changes on this form will be lost.`,
+    )
+    if (!ok) return
+  }
+
+  // Set immediately before navigating (not on cancel above) so the detect()
+  // this navigation triggers recomputes — rather than erases — these warnings.
+  // See the pastedClipForWarnings declaration for the full one-shot story.
+  pastedClipForWarnings = clip
+  const url = buildListFormUrl(current.host, clip.table, clip.query)
+  if (currentTabId != null) void chrome.tabs.update(currentTabId, { url })
+  else void chrome.tabs.create({ url })
 }
 
 /* --- Table schema (search + reference + choices + copy) --- */
@@ -3289,19 +3320,35 @@ chrome.storage.session.onChanged.addListener((changes) => {
 
 /* ---------- detect + wiring ---------- */
 
+/**
+ * A clip-vs-page warning from the previous tab becomes actively false once
+ * the page changes (e.g. "this page is `sc_task`" after switching to
+ * `incident`) — clear it rather than let a stale claim linger. Exception: if
+ * pastedClipForWarnings is set, this navigation was paste-initiated, so
+ * recompute the warnings against the page detect() just landed on instead of
+ * wiping them — then drop the flag (one-shot; see its declaration).
+ */
+function refreshClipWarningsAfterDetect() {
+  if (pastedClipForWarnings) {
+    renderClipWarnings(
+      current ? clipWarnings(pastedClipForWarnings, { host: current.host, table: current.table }) : [],
+    )
+    pastedClipForWarnings = null
+  } else {
+    renderClipWarnings([])
+  }
+}
+
 async function detect() {
   renderStatus('Detecting…')
   current = null
-  // A clip-vs-page warning from the previous tab becomes actively false once
-  // the page changes (e.g. "this page is `sc_task`" after switching to
-  // `incident`) — clear it rather than let a stale claim linger.
-  renderClipWarnings([])
   updateEnabledState()
 
   const tab = await getActiveTab()
   currentTabId = tab?.id ?? null
   if (!tab?.id || !isServiceNow(tab.url)) {
     renderStatus('Open a ServiceNow page to detect context.')
+    refreshClipWarningsAfterDetect()
     return
   }
   void restoreLlmJobs()
@@ -3333,6 +3380,7 @@ async function detect() {
   } else {
     renderStatus('No record detected on this page.')
   }
+  refreshClipWarningsAfterDetect()
   updateEnabledState()
   // Host-pin safety: if the active tab moved to a different instance (or off
   // ServiceNow), drop the guarded test record so its Delete can never fire
