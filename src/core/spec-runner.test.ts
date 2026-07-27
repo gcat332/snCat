@@ -194,3 +194,49 @@ describe('walkSpecGraph — per-walk fetch memoization (T-405 perf)', () => {
     expect(sysDbObjectCalls()).toBe(2)
   })
 })
+
+describe('walkSpecGraph with hierarchy', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getRecord.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+    getDictionary.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+    queryRecords.mockImplementation(async (_host: string, table: string, opts: { query?: string }) => {
+      if (table === 'sys_db_object' && opts?.query === 'name=incident') {
+        return { ok: true, data: [{ sys_id: 'id_inc', name: 'incident', super_class: 'id_task' }] }
+      }
+      if (table === 'sys_db_object' && opts?.query === 'sys_id=id_task') {
+        return { ok: true, data: [{ sys_id: 'id_task', name: 'task', super_class: '' }] }
+      }
+      if (table === 'sys_db_object' && opts?.query === 'super_class=id_inc') {
+        return { ok: true, data: [] }
+      }
+      if (table === 'sys_script' && opts?.query?.startsWith('collection=task')) {
+        return { ok: true, data: [{ sys_id: 'br_task_1', name: 'Task BR' }] }
+      }
+      return { ok: false, status: 404, error: 'none' }
+    })
+  })
+
+  it('leaves the outcome unchanged when the option is off', async () => {
+    const outcome = await walkSpecGraph('h', tableRootArtifact('incident'))
+    expect(outcome.hierarchy).toBeNull()
+    expect(outcome.artifacts.every((a) => !a.relation.includes('↑'))).toBe(true)
+  })
+
+  it('discovers ancestor artifacts and marks them when the option is on', async () => {
+    const outcome = await walkSpecGraph('h', tableRootArtifact('incident'), undefined, {
+      includeHierarchy: true,
+    })
+    expect(outcome.hierarchy?.ancestors).toEqual(['task'])
+    const inherited = outcome.artifacts.filter((a) => a.relation.includes('↑ task'))
+    expect(inherited.length).toBeGreaterThan(0)
+  })
+
+  it('does not duplicate an artifact that both walks discover', async () => {
+    const outcome = await walkSpecGraph('h', tableRootArtifact('incident'), undefined, {
+      includeHierarchy: true,
+    })
+    const ids = outcome.artifacts.map((a) => a.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+})
