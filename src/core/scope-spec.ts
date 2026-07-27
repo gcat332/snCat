@@ -68,7 +68,7 @@ export const SCOPE_ARTIFACT_TABLES: ScopeSweep[] = [
   },
   {
     table: 'sys_ui_action',
-    type: 'ui_policy_action',
+    type: 'ui_action',
     relation: 'UI Action',
     labelField: 'name',
     fields: ['sys_id', 'name', 'table', 'active', 'action_name', 'condition', 'script', 'client', 'form_button', 'list_button'],
@@ -100,7 +100,7 @@ export const SCOPE_ARTIFACT_TABLES: ScopeSweep[] = [
   },
   {
     table: 'sc_cat_item',
-    type: 'root',
+    type: 'catalog_item',
     relation: 'Catalog Item',
     labelField: 'name',
     fields: ['sys_id', 'name', 'short_description', 'active', 'category', 'workflow'],

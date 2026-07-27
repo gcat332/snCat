@@ -45,4 +45,16 @@ describe('scopeFetchSpecs', () => {
       expect(tables).toContain(t)
     }
   })
+
+  it('emits type "ui_action" for sys_ui_action', () => {
+    const uiActionSpec = specs.find((s) => s.table === 'sys_ui_action')
+    expect(uiActionSpec).toBeDefined()
+    expect(uiActionSpec!.type).toBe('ui_action')
+  })
+
+  it('emits type "catalog_item" for sc_cat_item', () => {
+    const catalogSpec = specs.find((s) => s.table === 'sc_cat_item')
+    expect(catalogSpec).toBeDefined()
+    expect(catalogSpec!.type).toBe('catalog_item')
+  })
 })
