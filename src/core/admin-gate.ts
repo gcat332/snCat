@@ -12,6 +12,7 @@
  * because a detection gap (Next Experience, a frame we cannot inject into) must
  * not brick the extension for someone who is in fact an admin.
  */
+import { instanceLabel } from './prod-guard'
 
 export type RoleState = 'admin' | 'not-admin' | 'unknown'
 
@@ -22,13 +23,26 @@ export interface RoleStatus {
 }
 
 export interface GateVerdict {
+  /**
+   * Advisory only — no caller enforces on this. The actual blocking is done by
+   * `banner === 'blocked'` matching a CSS selector (see the `applyGate()` call
+   * site in sidepanel/main.ts). Keep it consistent with `banner` anyway, so a
+   * future caller that DOES read it gets the same answer the CSS gives.
+   */
   allowed: boolean
   banner: 'none' | 'blocked' | 'unverified'
   /** Text for the banner; empty when there is no banner. */
   message: string
 }
 
-export function evaluateGate(status: RoleStatus): GateVerdict {
+/**
+ * `opts.host` is the instance hostname the reading came from. Naming it in the
+ * banner matters: while blocked, the scope bar and every panel are hidden, so a
+ * user with several instances open in different tabs has no other way to tell
+ * WHICH host refused them (spec §5's mock-up includes the `Instance:` line for
+ * exactly this reason).
+ */
+export function evaluateGate(status: RoleStatus, opts: { host?: string } = {}): GateVerdict {
   if (status.state === 'admin') {
     return { allowed: true, banner: 'none', message: '' }
   }
@@ -41,12 +55,17 @@ export function evaluateGate(status: RoleStatus): GateVerdict {
     const lines = [
       `snJava requires the admin role on this instance.`,
       `Signed in as: ${status.userName || 'unknown'}`,
-      `Checked for the "admin" role: not held.`,
     ]
+    if (opts.host) lines.push(`Instance: ${instanceLabel(opts.host)}`)
+    lines.push(`Checked for the "admin" role: not held.`)
     if (status.roles?.length) {
       lines.push(`Roles read from the page: ${status.roles.join(', ')}`)
     }
-    lines.push(`All features are disabled.`)
+    // "hidden", not "disabled": blocking is purely visual (a CSS attribute on
+    // <body>) and the panel's background REST reads keep running — see
+    // applyGate() in sidepanel/main.ts. Claiming the features are "disabled"
+    // would imply network quiescence this gate does not deliver.
+    lines.push(`All features are hidden.`)
     return {
       allowed: false,
       banner: 'blocked',

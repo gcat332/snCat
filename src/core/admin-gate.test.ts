@@ -34,6 +34,25 @@ describe('evaluateGate', () => {
     expect(v.message).not.toMatch(/none/i)
   })
 
+  it('names the instance that blocked the user, by its first DNS label', () => {
+    const v = evaluateGate(
+      { state: 'not-admin', userName: 'j.somchai' },
+      { host: 'mfecplcdemo10.service-now.com' },
+    )
+    expect(v.message).toContain('Instance: mfecplcdemo10')
+  })
+
+  it('omits the instance line when no host was supplied', () => {
+    const v = evaluateGate({ state: 'not-admin', userName: 'j.somchai' })
+    expect(v.message).not.toContain('Instance:')
+  })
+
+  it('says features are HIDDEN, not disabled — blocking is visual and background reads continue', () => {
+    const v = evaluateGate({ state: 'not-admin', userName: 'j.somchai' })
+    expect(v.message).toContain('All features are hidden.')
+    expect(v.message).not.toMatch(/disabled/i)
+  })
+
   it('fails OPEN on unknown, with a warning banner', () => {
     const v = evaluateGate({ state: 'unknown' })
     expect(v.allowed).toBe(true)

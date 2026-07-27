@@ -913,6 +913,21 @@ function queryTable(): string {
 }
 
 /**
+ * True while detect() is in flight, during which applyGate() is a no-op.
+ *
+ * detect() sets `current = null` and calls updateEnabledState() (→ applyGate())
+ * before awaiting getActiveTab() and a chrome.tabs.sendMessage round trip that
+ * the content script deliberately delays by 120 ms. With `current` null the gate
+ * evaluates to `unknown`, i.e. `data-gate='unverified'`, which STOPS MATCHING
+ * the blocked CSS — so an already-blocked user got the whole UI back for the
+ * duration of the round trip, on every tab switch and every page load
+ * (detect() is wired to chrome.tabs.onActivated / onUpdated). Suppressing the
+ * interim evaluation means the gate changes exactly once per detect(), when the
+ * answer is actually known.
+ */
+let detecting = false
+
+/**
  * Apply the admin gate to the whole panel. UX only — the instance's ACLs remain
  * the real authority (see admin-gate.ts). Sets a single data attribute so panel
  * visibility is CSS's job, not a per-feature check sprinkled through this file.
@@ -925,8 +940,20 @@ function queryTable(): string {
  * explicitly by the caller (detect() already knows via isServiceNow(tab.url))
  * rather than guessed from `current`, since `current` is null in both cases
  * and guessing would conflate them.
+ *
+ * BLOCKING IS VISUAL ONLY. All this does is set `data-gate`, which CSS keys off
+ * to hide containers. detect() carries on past a block — restoreLlmJobs(),
+ * consumeFixScriptRequest(), populateScopeBar(), refreshXmlControls(),
+ * renderUndoControls() and maybeAutoLoadScript() all still issue REST reads and
+ * render into hidden panels. That is acceptable because this is UX, not security
+ * (the instance's ACLs answer those reads), but the banner text must not imply
+ * network quiescence — hence "hidden", not "disabled", in admin-gate.ts.
+ *
+ * A no-op while `detecting`: see that flag's comment.
  */
 function applyGate(opts: { onServiceNow: boolean } = { onServiceNow: true }) {
+  if (detecting) return
+
   const clearBanner = () => {
     delete document.body.dataset.gate
     gateBanner.hidden = true
@@ -942,13 +969,21 @@ function applyGate(opts: { onServiceNow: boolean } = { onServiceNow: true }) {
   const status = current?.user
     ? roleStatusFrom(current.user)
     : { state: 'unknown' as const }
-  const verdict = evaluateGate(status)
+  // Host names the instance in the blocked banner — while blocked the scope bar
+  // and every panel are hidden, so it is the only clue as to which of several
+  // open instances refused the user.
+  const verdict = evaluateGate(status, { host: current?.host })
 
   if (verdict.banner === 'none') {
     clearBanner()
     return
   }
 
+  // LOAD-BEARING: `verdict.banner === 'blocked'` is the block. Nothing reads
+  // `verdict.allowed`; the hiding is done entirely by the CSS rules keyed on
+  // `body[data-gate='blocked']` in styles.css. So a fourth banner value added to
+  // GateVerdict would render a banner and silently leave the panel USABLE. If
+  // you add one, add the matching selector to styles.css in the same commit.
   document.body.dataset.gate = verdict.banner
   gateBanner.hidden = false
   const [first, ...rest] = verdict.message.split('\n')
@@ -3444,8 +3479,32 @@ function refreshClipWarningsAfterDetect() {
   }
 }
 
+/**
+ * Detect the active tab's context and re-apply the gate — exactly once, at the
+ * end, when the answer is known.
+ *
+ * The gate is held at its previous verdict for the whole of detectInner() (see
+ * `detecting`), so the interim `current = null` state cannot flash the full UI
+ * back at a blocked user. Whether we ended up on a ServiceNow page is the one
+ * thing applyGate() cannot infer from `current` (null means both "wrong tab" and
+ * "on an instance but the role read failed"), so detectInner() reports it back.
+ */
 async function detect() {
   renderStatus('Detecting…')
+  detecting = true
+  try {
+    const onServiceNow = await detectInner()
+    detecting = false
+    applyGate({ onServiceNow })
+  } finally {
+    // An unexpected throw must never leave the gate permanently suppressed —
+    // that would fail OPEN for the rest of the panel's life.
+    detecting = false
+  }
+}
+
+/** Returns whether the active tab turned out to be a ServiceNow page. */
+async function detectInner(): Promise<boolean> {
   current = null
   updateEnabledState()
 
@@ -3454,11 +3513,11 @@ async function detect() {
   if (!tab?.id || !isServiceNow(tab.url)) {
     renderStatus('Open a ServiceNow page to detect context.')
     refreshClipWarningsAfterDetect()
-    // No instance in play, so no roles to be "unverified" about — clear any
-    // gate banner left over from a previous (ServiceNow) tab instead of
-    // warning about a page that was never ServiceNow to begin with.
-    applyGate({ onServiceNow: false })
-    return
+    // No instance in play, so no roles to be "unverified" about — the caller's
+    // applyGate({ onServiceNow: false }) clears any gate banner left over from a
+    // previous (ServiceNow) tab instead of warning about a page that was never
+    // ServiceNow to begin with.
+    return false
   }
   void restoreLlmJobs()
   void consumeFixScriptRequest()
@@ -3474,10 +3533,28 @@ async function detect() {
     const res = (await chrome.tabs.sendMessage(tab.id, {
       kind: 'sncat:get-context',
     } satisfies RuntimeMessage)) as RuntimeMessage | undefined
-    if (res?.kind === 'sncat:context' && res.context?.table) {
+    if (res?.kind === 'sncat:context' && res.context) {
       const enriched = res.context
       // Prefer enrichment when the URL parse couldn't resolve the record.
-      if (!context?.table || (!context.sysId && enriched.sysId)) context = enriched
+      if (enriched.table && (!context?.table || (!context.sysId && enriched.sysId))) {
+        context = enriched
+      }
+      // The ROLE READING IS ORTHOGONAL to the identity race above — always take
+      // it. Do NOT fold this back into that condition.
+      //
+      // `parseServiceNowContext` is a pure URL parser and can never populate
+      // `.user`; `enriched` is the only object that ever carries the g_user
+      // snapshot. So adopting the whole enriched object only when it wins the
+      // identity race throws the role reading away on every page where the URL
+      // already resolved the record — i.e. `incident.do?sys_id=…` (table AND
+      // sysId), `incident_list.do` (table, no sysId either side) and, when the
+      // outer guard also demanded `res.context.table`, the home page. On all of
+      // those `current.user` stayed undefined, applyGate() fell through to its
+      // `unknown` branch, and the gate never engaged: no non-admin was ever
+      // blocked on the classic UI and every admin got a permanent "Role
+      // unverified" banner. Identity and roles are separate questions; decide
+      // them separately.
+      if (enriched.user && context) context = { ...context, user: enriched.user }
     }
   } catch {
     /* content script not present in this frame — URL parse stands. */
@@ -3489,7 +3566,8 @@ async function detect() {
   } else {
     renderStatus('No record detected on this page.')
   }
-  applyGate()
+  // No applyGate() here: it is suppressed while `detecting`, and detect() calls
+  // it once after this returns.
   refreshClipWarningsAfterDetect()
   updateEnabledState()
   // Host-pin safety: if the active tab moved to a different instance (or off
@@ -3520,6 +3598,7 @@ async function detect() {
   void refreshXmlControls()
   if (current?.host) void renderUndoControls(current.host)
   void maybeAutoLoadScript()
+  return true
 }
 
 initTabs()
@@ -3626,4 +3705,11 @@ chrome.tabs.onUpdated.addListener((_id, info, tab) => {
   if (info.status === 'complete' && tab.active) detect()
 })
 
+// Evaluate the gate before the first detect() so the very first paint is not an
+// unbannered full UI. Nothing has been read yet, so this necessarily lands on
+// `unknown` → the amber "Role unverified" banner, which is an honest statement of
+// the state at that instant; detect() replaces it a round trip later. Ordering
+// matters: detect() suppresses applyGate() for its own duration, so without this
+// call there is no gate state at all until detect() resolves.
+applyGate()
 detect()

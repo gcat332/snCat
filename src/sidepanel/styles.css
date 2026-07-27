@@ -1209,9 +1209,22 @@ body[data-gate='unverified'] .gate-banner {
   color: #8a5a00;
 }
 
-/* A blocked user sees the banner and nothing else. */
-body[data-gate='blocked'] .panel,
-body[data-gate='blocked'] .tabs,
-body[data-gate='blocked'] .scopebar {
+/* A blocked user sees the banner and nothing else.
+ *
+ * ALLOWLIST, not a denylist. Enumerating `.panel`/`.tabs`/`.scopebar` covered
+ * index.html's static markup but let anything appended at runtime escape the
+ * gate: main.ts appends a choice popover, confirmDialog/promptDialog overlays
+ * (with focusable buttons and inputs), a toast and a download anchor straight to
+ * <body>. Anything added to index.html later would escape too, which defeats the
+ * point of gating by container instead of by id. So: hide everything except the
+ * header (which holds only a logo and a title — no controls) and, inside
+ * .app-main, everything except the banner itself.
+ *
+ * Specificity: body + [data-gate] + two :not(<class>) = (0,3,1), which beats
+ * `.panel.is-active` (0,2,0) — keep it that way if you touch these selectors. */
+body[data-gate='blocked'] > *:not(.app-header):not(.app-main) {
+  display: none;
+}
+body[data-gate='blocked'] .app-main > *:not(.gate-banner) {
   display: none;
 }
