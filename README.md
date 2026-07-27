@@ -60,13 +60,12 @@ Open the side panel → **Settings** tab.
 
 ### Copy/paste condition (cross-instance)
 
-**Copy/paste condition (cross-instance).** On a list view, *Copy condition* grabs
-the filter that is actually applied — read from `GlideList2`, so a filter set
-after page load is captured too — together with display labels for any reference
-sys_ids in it. On another instance, *Paste* fills the query, lists every sys_id
-it depends on as a warning, and opens the matching list there. The query is
-pasted verbatim; sys_ids are never rewritten, because a name match on the target
-is not proof of the same record.
+On a list view, *Copy condition* grabs the filter that is actually applied — read
+from `GlideList2`, so a filter set after page load is captured too — together with
+display labels for any reference sys_ids in it. On another instance, *Paste* fills
+the query, lists every sys_id it depends on as a warning, and opens the matching
+list there. The query is pasted verbatim; sys_ids are never rewritten, because a
+name match on the target is not proof of the same record.
 
 ### javaHelp chip
 
