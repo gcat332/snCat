@@ -72,6 +72,21 @@ export function toBase64Utf8(s: string): string {
  * Fields the platform owns. Writing them is either rejected or misleading — the
  * install should look like what it is (a fresh insert by the current user), not
  * forge the original author and timestamps.
+ *
+ * NOTE — this is deliberately SHORTER than `xml.ts`'s `SYSTEM_FIELDS`, which also
+ * strips `sys_class_name`, `sys_scope`, `sys_package`, `sys_domain` and
+ * `sys_domain_path` because F3 copies arbitrary user records between instances,
+ * where those values routinely name a class or scope the target does not have.
+ * Here the input is not arbitrary: it is one pinned, vendored export, and every
+ * one of those values in it is a no-op or already correct —
+ *   - `sys_class_name` equals the record's own table in all 21 records,
+ *   - `sys_scope` and `sys_package` are `global` in all 21 (and this installer is
+ *     always run with `scope: 'global'`),
+ *   - the 3 records carrying `sys_domain`/`sys_domain_path` use `global` / `/`.
+ * Keeping them is what makes the installed records byte-comparable to a real
+ * update-set import of the same file. `updateset-xml.test.ts` pins each of those
+ * claims against the real file, so a re-vendor that breaks one fails the suite
+ * rather than silently producing broken inserts.
  */
 export const INSTALL_SKIP_FIELDS = new Set([
   'sys_id',
@@ -116,6 +131,42 @@ if (!existed) {
 for (var k in enc) {
   gr.setValue(k, GlideStringUtil.base64Decode(enc[k]));
 }
-var id = existed ? (gr.update(), ${JSON.stringify(rec.sysId)}) : gr.insert();
-gs.print('snJava: installed ' + ${JSON.stringify(rec.table)} + ' ' + id + (existed ? ' (updated)' : ' (inserted)'));`
+var id = existed ? gr.update() : gr.insert();
+if (!id) {
+  gs.print('snJava: FAILED ' + ${JSON.stringify(rec.table)});
+} else {
+  gs.print('snJava: installed ' + ${JSON.stringify(rec.table)} + ' ' + id + (existed ? ' (updated)' : ' (inserted)'));
+}`
+}
+
+/**
+ * Outcome of one `buildInstallScript` run, read back from the background output.
+ *
+ * The success marker MUST carry a real 32-hex sys_id, and this parser is the only
+ * thing allowed to declare success. Both `insert()` and `update()` return null on
+ * failure (ACL, data policy, engine error), so the script prints `FAILED` in that
+ * case and never the `installed` marker. That matters more than it looks: the
+ * Script Include is installed LAST precisely so that "the Script Include exists"
+ * is a truthful completeness marker for the whole 21-record set. A success gate
+ * that passed on a failed write (e.g. matching the marker substring alone, or
+ * printing a hardcoded sys_id regardless of the return value) would let record 7
+ * of 21 vanish silently, then install the Script Include anyway — after which the
+ * detection query returns true forever and the missing record is undetectable.
+ */
+export type InstallOutcome =
+  | { status: 'installed'; table: string; sysId: string; updated: boolean }
+  | { status: 'failed'; table: string }
+  | { status: 'unrecognised' }
+
+const INSTALLED_RE = /snJava: installed (\S+) ([0-9a-f]{32}) \((inserted|updated)\)/
+const INSTALL_FAILED_RE = /snJava: FAILED (\S+)/
+
+export function parseInstallResult(output: string): InstallOutcome {
+  const ok = output.match(INSTALLED_RE)
+  if (ok) {
+    return { status: 'installed', table: ok[1], sysId: ok[2], updated: ok[3] === 'updated' }
+  }
+  const bad = output.match(INSTALL_FAILED_RE)
+  if (bad) return { status: 'failed', table: bad[1] }
+  return { status: 'unrecognised' }
 }
