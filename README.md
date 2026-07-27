@@ -76,6 +76,12 @@ instance does not have the Script Include, snJava offers to install the vendored
 v9.5 export (21 records, global scope, see `public/vendor/README.md`) and then
 continues; an existing `addToUpdateSetUtils` is never overwritten. Records are
 processed 50 per background run, and more than 200 requires a second confirmation.
+The utility reports three numbers: **seen** (records handed to it), **missing**
+(sys_ids with no record), and **captured** (actual `sys_update_xml` rows created).
+`captured` legitimately differs from `seen` in both directions — one record can pull
+in related records, raising it; some tables are excluded by the utility or sit in
+another scope, lowering it — so they are kept separate rather than collapsed into a
+single figure.
 
 ### javaHelp chip
 
@@ -99,7 +105,7 @@ When the **Generate** tab creates a dev/admin-facing config record (Business Rul
 
 Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See `handoff.md` for the milestone log.
 
-Unit tests cover **pure logic only** (187 tests, all in `src/core/`). Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
+Unit tests cover **pure logic only**, all in `src/core/`. Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
 
 > ⚠️ **Needs a real-browser smoke test:** session/`g_ck` auth · Layer 2 bgrun round-trip (`sys.scripts.do`) · Layer 3 create/delete on a sub-prod · Generate artifact creation + `[MF-AI]` prefix · javaHelp chip injection · F1 resolver table/field names per instance version.
 
