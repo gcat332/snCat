@@ -81,3 +81,46 @@ describe('SUPPORTED_ROOT_TABLES', () => {
     expect(SUPPORTED_ROOT_TABLES.has('sc_cat_item')).toBe(true)
   })
 })
+
+function tableRef(name: string, origin?: 'self' | 'ancestor' | 'child'): ArtifactRef {
+  return {
+    id: makeId('sys_db_object', name),
+    table: 'sys_db_object',
+    sysId: name,
+    type: 'table',
+    label: name,
+    relation: '',
+    depth: 1,
+    fields: { name },
+    origin,
+  }
+}
+
+describe('resolveTable origin marking', () => {
+  it('leaves relations unmarked for the spec\'s own table', () => {
+    const specs = RESOLVERS.table!(tableRef('incident'))
+    const br = specs.find((s) => s.table === 'sys_script')!
+    expect(br.relation).toBe('Business Rule')
+  })
+
+  it('leaves relations unmarked when origin is explicitly self', () => {
+    const specs = RESOLVERS.table!(tableRef('incident', 'self'))
+    expect(specs.find((s) => s.table === 'sys_script')!.relation).toBe('Business Rule')
+  })
+
+  it('marks ancestor artifacts with an up arrow and the source table', () => {
+    const specs = RESOLVERS.table!(tableRef('task', 'ancestor'))
+    expect(specs.find((s) => s.table === 'sys_script')!.relation).toBe('Business Rule ↑ task')
+    expect(specs.find((s) => s.table === 'sys_ui_policy')!.relation).toBe('UI Policy ↑ task')
+  })
+
+  it('marks child artifacts with a down arrow and the source table', () => {
+    const specs = RESOLVERS.table!(tableRef('incident_task', 'child'))
+    expect(specs.find((s) => s.table === 'sys_security_acl')!.relation).toBe('ACL ↓ incident_task')
+  })
+
+  it('still queries the marked table, not the spec root', () => {
+    const specs = RESOLVERS.table!(tableRef('task', 'ancestor'))
+    expect(specs.find((s) => s.table === 'sys_script')!.query).toContain('collection=task')
+  })
+})

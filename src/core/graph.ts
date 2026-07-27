@@ -25,6 +25,13 @@ export type ArtifactType =
   | 'notification'
   | 'data_policy'
 
+/**
+ * Where an artifact's defining table sits relative to the spec's own table.
+ * 'ancestor' artifacts are inherited — they genuinely fire on the spec's
+ * records. 'child' artifacts do not, but a change here affects them.
+ */
+export type ArtifactOrigin = 'self' | 'ancestor' | 'child'
+
 export interface ArtifactRef {
   /** Stable dedupe key: `${table}:${sysId}`. */
   id: string
@@ -37,6 +44,8 @@ export interface ArtifactRef {
   depth: number
   /** Fetched field values (raw), populated when the artifact is loaded. */
   fields: Record<string, string>
+  /** Hierarchy provenance; absent or 'self' for the spec's own table. */
+  origin?: ArtifactOrigin
 }
 
 /** A resolver's declaration of related records to fetch. */
