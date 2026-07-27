@@ -38,9 +38,16 @@ declare global {
       // Return type is `unknown`, not `boolean`, on purpose: this is an
       // uncontrolled page global. Stock GlideUser answers a real boolean, but a
       // workspace shim, a not-yet-initialised GlideUser or a customised UI
-      // Script can define `hasRole` and have it return `undefined`. Typing it
-      // `boolean` would let `!!` silently convert "did not answer" into "no"
-      // — see userSnapshot() below.
+      // Script can define `hasRole` and have it return `undefined`, and
+      // `!!undefined` would silently convert "did not answer" into "no" —
+      // hard-blocking a real admin, the exact outcome the fail-open design
+      // exists to prevent.
+      //
+      // `unknown` documents that hazard but does NOT enforce the fix: TypeScript
+      // permits unary `!` on `unknown`, so `!!gu.hasRole('admin')` still
+      // compiles clean under --strict (verified). The only real protection is
+      // the explicit nullish check in userSnapshot() below — do not remove it
+      // on the assumption that the type is catching this.
       hasRole?: (role: string) => unknown
       userName?: string
       roles?: string
