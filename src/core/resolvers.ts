@@ -142,9 +142,8 @@ const resolveCatalogItem: Resolver = (a) => {
  * Unmarked (own-table) artifacts keep the exact wording they had before, so
  * discovery output is unchanged when the hierarchy option is off.
  */
-function markRelation(a: ArtifactRef, base: string): string {
+function markRelation(a: ArtifactRef, base: string, name: string): string {
   if (!a.origin || a.origin === 'self') return base
-  const name = a.fields['name'] || a.label
   return `${base} ${a.origin === 'ancestor' ? '↑' : '↓'} ${name}`
 }
 
@@ -157,7 +156,7 @@ const resolveTable: Resolver = (a) => {
       table: 'sys_script',
       query: `collection=${name}^ORDERBYwhen^ORDERBYorder`,
       type: 'business_rule',
-      relation: markRelation(a, 'Business Rule'),
+      relation: markRelation(a, 'Business Rule', name),
       labelField: 'name',
       fields: [
         'sys_id', 'name', 'when', 'order', 'active', 'condition', 'filter_condition', 'script', 'collection',
@@ -169,7 +168,7 @@ const resolveTable: Resolver = (a) => {
       table: 'sys_script_client',
       query: `table=${name}^ORDERBYtype`,
       type: 'client_script',
-      relation: markRelation(a, 'Client Script'),
+      relation: markRelation(a, 'Client Script', name),
       labelField: 'name',
       fields: ['sys_id', 'name', 'type', 'field', 'active', 'global', 'isolate_script', 'description', 'script'],
       limit: 500,
@@ -178,7 +177,7 @@ const resolveTable: Resolver = (a) => {
       table: 'sys_ui_policy',
       query: `table=${name}^ORDERBYorder`,
       type: 'ui_policy',
-      relation: markRelation(a, 'UI Policy'),
+      relation: markRelation(a, 'UI Policy', name),
       labelField: 'short_description',
       fields: ['sys_id', 'short_description', 'active', 'conditions', 'on_load', 'reverse_if_false', 'global', 'order'],
       limit: 500,
@@ -190,7 +189,7 @@ const resolveTable: Resolver = (a) => {
       // catch sibling tables like `incident_sla`/`incident_task` (T-102).
       query: `name=${name}^ORnameSTARTSWITH${name}.`,
       type: 'acl',
-      relation: markRelation(a, 'ACL'),
+      relation: markRelation(a, 'ACL', name),
       labelField: 'name',
       fields: ['sys_id', 'name', 'operation', 'active', 'admin_overrides', 'condition', 'script', 'description'],
       limit: 1000,
@@ -199,7 +198,7 @@ const resolveTable: Resolver = (a) => {
       table: 'sysevent_email_action',
       query: `collection=${name}`,
       type: 'notification',
-      relation: markRelation(a, 'Notification'),
+      relation: markRelation(a, 'Notification', name),
       labelField: 'name',
       fields: ['sys_id', 'name', 'active', 'event_name', 'action_insert', 'action_update'],
       limit: 200,
@@ -208,7 +207,7 @@ const resolveTable: Resolver = (a) => {
       table: 'sys_data_policy2',
       query: `model_table=${name}`,
       type: 'data_policy',
-      relation: markRelation(a, 'Data Policy'),
+      relation: markRelation(a, 'Data Policy', name),
       labelField: 'short_description',
       fields: ['sys_id', 'short_description', 'active', 'enforce_ui', 'apply_import_set', 'reverse_if_false'],
       limit: 200,

@@ -402,6 +402,13 @@ export interface NarrativeInput {
   table: string
   rootLabel: string
   artifacts: { name: string; type: string; script?: string }[]
+  /**
+   * Set when the document being narrated is a whole-application scope spec
+   * rather than a table/module. `table` in that case is the synthetic
+   * 'sys_scope' root constant, not a real table — without `scope`, the prompt
+   * would tell the model its subject is "a table called sys_scope".
+   */
+  scope?: { label: string; prefix: string }
 }
 
 /** Prompt for a concise, plain-prose Design Spec overview. Scripts are redacted. */
@@ -417,7 +424,8 @@ export function buildSpecNarrativePrompt(input: NarrativeInput): { system: strin
   const system =
     'You are a ServiceNow solution architect writing the overview of a Design Spec. ' +
     'Reply with 2-3 short paragraphs of plain prose only — no markdown, no headings, no code, no JSON. ' +
-    'Summarize what this table/module does and the high-level logic of its customizations for a technical reader.'
+    'Summarize what this table/module (or, for an application scope, this application) does and the ' +
+    'high-level logic of its customizations for a technical reader.'
   let budget = NARRATIVE_TOTAL_SCRIPT_CHARS
   const lines = input.artifacts.map((a) => {
     if (!a.script) return `  - ${a.type}: ${a.name}`
@@ -427,9 +435,10 @@ export function buildSpecNarrativePrompt(input: NarrativeInput): { system: strin
     budget -= red.length
     return `  - ${a.type}: ${a.name}\n    script (secrets redacted, truncated):\n${red}`
   })
-  const user =
-    `Table/module: ${input.rootLabel} (${input.table})\n` +
-    `Discovered customizations:\n${lines.join('\n')}\n\nWrite the overview.`
+  const subject = input.scope
+    ? `Application: ${input.scope.label} (${input.scope.prefix})\n`
+    : `Table/module: ${input.rootLabel} (${input.table})\n`
+  const user = `${subject}Discovered customizations:\n${lines.join('\n')}\n\nWrite the overview.`
   return { system, user }
 }
 

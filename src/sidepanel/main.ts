@@ -61,6 +61,7 @@ import {
   tableRootArtifact,
   walkSpecGraph,
 } from '@core/spec-runner'
+import { SCOPE_ARTIFACT_TABLES } from '@core/scope-spec'
 import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 import { namePrefixField, prefixArtifactName } from '@core/naming'
 
@@ -1023,8 +1024,11 @@ async function resolveClipLabels(
   // RAW sys_id and looks the parent up by sys_id=, so the row must stay raw
   // here (no display-value overlay, unlike spec-runner.ts's
   // REFERENCE_LABEL_FIELDS) or the walk finds nothing past the first hop.
+  // displayValue:false (not 'all') — every value below is read via cellValue,
+  // which only ever uses the raw side, so requesting display values too would
+  // double the payload for nothing.
   const hierarchyFetch: HierarchyFetch = async (t, q, fields, limit) => {
-    const res = await queryRecords(host, t, { query: q, fields, limit, displayValue: 'all' })
+    const res = await queryRecords(host, t, { query: q, fields, limit, displayValue: false })
     if (!res.ok) return []
     return res.data.map((rec) => {
       const out: Record<string, string> = {}
@@ -2530,6 +2534,10 @@ const specWalk = el<HTMLButtonElement>('spec-walk')
 const specSource = el<HTMLSelectElement>('spec-source')
 const specScopeWrap = el('spec-scope-wrap')
 const specScope = el<HTMLInputElement>('spec-scope')
+/** Surfaces per-table sweep problems (finding 2) — mirrors renderHierarchyHint's
+ *  pattern but is a separate element since the two concepts (hierarchy coverage
+ *  vs. scope-sweep failures/truncation) are unrelated and never shown together. */
+const specScopeHint = el('spec-scope-hint')
 /**
  * The parent/child checkbox row, added by the table-hierarchy plan. Looked up
  * with getElementById rather than el() because the two plans are independent —
@@ -2635,7 +2643,18 @@ async function discoverArtifacts() {
     // Table hierarchy is a table concept — meaningless for a scope, and a hint
     // left over from a prior record/table discovery would misdescribe this one.
     renderHierarchyHint(null, '')
+    renderScopeHint([], [])
     const label = specScope.value.trim()
+    if (label.toLowerCase() === 'global') {
+      specChecklist.replaceChildren(
+        elText(
+          'div',
+          'error',
+          'A whole-instance sweep of Global is not what application-scope mode is for — pick a specific application.',
+        ),
+      )
+      return
+    }
     const scopeSysId = scopeByName.get(label)
     if (!scopeSysId) {
       specChecklist.replaceChildren(
@@ -2648,16 +2667,33 @@ async function discoverArtifacts() {
     specStatus.hidden = true
     specChecklist.replaceChildren(elText('div', 'empty', `Sweeping ${label}…`))
     try {
-      const artifacts = await sweepScopeSpec(host, scopeSysId, (n) => {
+      // The name check above catches the common case (typing "Global") cheaply,
+      // with no I/O. This catches the renamed-record case: whatever name the
+      // scope's sys_scope record was given, its `scope` column is authoritative
+      // — "global" there means the base-instance application regardless of
+      // display name — so the sweep must still be refused (finding 3).
+      const prefix = await scopePrefixFor(host, scopeSysId, label)
+      if (prefix.toLowerCase() === 'global') {
+        specChecklist.replaceChildren(
+          elText(
+            'div',
+            'error',
+            `"${label}" resolves to the Global application — a whole-instance sweep is not what application-scope mode is for.`,
+          ),
+        )
+        return
+      }
+      const { artifacts, failed, truncated } = await sweepScopeSpec(host, scopeSysId, (n) => {
         specChecklist.replaceChildren(elText('div', 'empty', `Sweeping… ${n} artifacts`))
       })
       specRoot = scopeRootArtifact(label)
       specArtifacts = artifacts
       specPrimaryTable = ''
       specSchema = []
-      specScopeInfo = { label, prefix: await scopePrefixFor(host, scopeSysId, label) }
+      specScopeInfo = { label, prefix }
       specExcluded.clear()
       specAiOverview = null
+      renderScopeHint(failed, truncated)
       renderChecklist()
     } catch (err) {
       specChecklist.replaceChildren(elText('div', 'error', (err as Error).message))
@@ -2668,6 +2704,7 @@ async function discoverArtifacts() {
   }
 
   specScopeInfo = null
+  renderScopeHint([], [])
   if (!current.table) return
   const { table, sysId } = current
 
@@ -2738,6 +2775,34 @@ function renderHierarchyHint(hierarchy: TableHierarchy | null, primaryTable: str
   specHierarchyHint.hidden = false
 }
 
+/**
+ * State which swept tables did NOT come back clean — a failed query or a
+ * result that hit its row limit must never read as "nothing to report" (the
+ * Global Constraint finding 2 fixes for scope mode, matching how
+ * renderHierarchyHint already never lets a truncated child list pass silently).
+ */
+function renderScopeHint(failed: string[], truncated: string[]) {
+  if (!failed.length && !truncated.length) {
+    specScopeHint.hidden = true
+    specScopeHint.textContent = ''
+    return
+  }
+  const parts: string[] = []
+  if (failed.length) {
+    parts.push(`${failed.length} table${failed.length === 1 ? '' : 's'} could not be read: ${failed.join(', ')}`)
+  }
+  if (truncated.length) {
+    const withLimits = truncated.map((t) => {
+      const limit = SCOPE_ARTIFACT_TABLES.find((s) => s.table === t)?.limit
+      return limit ? `${t} (${limit})` : t
+    })
+    const verb = truncated.length === 1 ? 'hit its row limit' : 'hit their row limit'
+    parts.push(`${truncated.length} table${truncated.length === 1 ? '' : 's'} ${verb}: ${withLimits.join(', ')}`)
+  }
+  specScopeHint.textContent = parts.join(' — ')
+  specScopeHint.hidden = false
+}
+
 function renderChecklist() {
   specChecklist.replaceChildren()
   specStatus.hidden = false
@@ -2745,7 +2810,13 @@ function renderChecklist() {
 
   if (specArtifacts.length === 0) {
     specChecklist.append(
-      elText('div', 'empty', 'No related artifacts found within depth 2. You can still export the root spec.'),
+      elText(
+        'div',
+        'empty',
+        specScopeInfo
+          ? `No artifacts are scoped to "${specScopeInfo.label}". You can still export the (empty) application spec.`
+          : 'No related artifacts found within depth 2. You can still export the root spec.',
+      ),
     )
   }
 
@@ -2908,13 +2979,18 @@ function hostOf(endpoint: string): string {
 async function specAiNarrative() {
   if (!specRoot) return
   const included = includedSpecArtifacts()
+  // In scope mode specRoot.table is the synthetic 'sys_scope' constant, not a
+  // real table — naming the subject after it (as the record/table path does)
+  // would tell both the user and the model the document is about "a table
+  // called sys_scope". Name it after the application instead (finding 4).
+  const subjectLabel = specScopeInfo ? `application "${specScopeInfo.label}"` : `"${specRoot.table}"`
 
   if (!narrativeDontAskAgain) {
     const cfg = await loadLlmConfig()
     const host = cfg ? hostOf(cfg.endpoint) : 'the configured endpoint'
     const n = included.length
     const proceed = await confirmDialog(
-      `Send a summary of "${specRoot.table}" (${n} artifact${n === 1 ? '' : 's'}) to ${host} to draft an AI overview?\n\n` +
+      `Send a summary of ${subjectLabel} (${n} artifact${n === 1 ? '' : 's'}) to ${host} to draft an AI overview?\n\n` +
         `Script bodies are redacted (secrets/URLs stripped) before sending. You won't be asked again this session.`,
     )
     if (!proceed) return
@@ -2927,6 +3003,7 @@ async function specAiNarrative() {
     table: specRoot.table,
     rootLabel: specRoot.label,
     artifacts: included.map((a) => ({ name: a.label, type: a.type, script: a.fields.script })),
+    scope: specScopeInfo ?? undefined,
   }
 
   specAiBtn.disabled = true
@@ -3677,6 +3754,9 @@ specSource.addEventListener('change', () => {
   // Table hierarchy is meaningless for a scope — drop any hint from a previous
   // record/table discovery, or its description outlives the control that made it.
   if (isScope) renderHierarchyHint(null, '')
+  // Symmetric: a scope-sweep hint (failed/truncated tables) describes the LAST
+  // scope sweep, not a record/table discovery — clear it switching either way.
+  renderScopeHint([], [])
   updateEnabledState()
 })
 specHierarchy.addEventListener('change', () => {

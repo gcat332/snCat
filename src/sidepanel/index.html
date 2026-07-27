@@ -291,7 +291,9 @@
           <h2 class="card-title">Design Spec Generator</h2>
           <p class="hint" id="spec-hint">
             Open a Business Rule, Catalog Item, Script Include, or Transform Map,
-            then generate a spec from it and its dependencies (depth 2).
+            then generate a spec from it and its dependencies (depth 2) — or set
+            Source below to Application scope to sweep every artifact in one
+            application instead.
           </p>
           <label class="field-label" for="spec-source">Source</label>
           <select id="spec-source" class="select">
@@ -302,6 +304,7 @@
             <label class="field-label" for="spec-scope">Application</label>
             <input id="spec-scope" class="query-input" list="scope-list"
               placeholder="type to search scopes…" />
+            <p class="hint" id="spec-scope-hint" hidden></p>
           </div>
           <label class="chk-item" id="spec-hierarchy-row">
             <input type="checkbox" id="spec-hierarchy" />

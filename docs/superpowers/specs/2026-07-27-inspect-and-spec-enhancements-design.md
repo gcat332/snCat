@@ -163,17 +163,26 @@ origin?: 'self' | 'ancestor' | 'child'   // default 'self'
 ```
 
 `resolveTable` suffixes its emitted `relation` accordingly — `Business Rule ↑ task`
-for an ancestor, `Business Rule ↓ incident_task` for a child. The checklist and
-spec sections already group by `relation` (`main.ts:2351`), so the grouping falls
-out for free:
+for an ancestor, `Business Rule ↓ incident_task` for a child.
+
+**Correction (post-implementation):** the checklist and spec sections do **not**
+group by relation. Both group by artifact **type** — the checklist via
+`ARTIFACT_GROUP`/`renderChecklist` in `main.ts`, the exported document via
+`byType()` in `spec.ts` — exactly as they did before this feature. An inherited
+or child artifact lands in the SAME type group as the table's own (e.g. all
+Business Rules together), and the `↑`/`↓` provenance marker only ever appears
+inside that row's own relation label, not as a sub-grouping:
 
 ```
-Business Rules
-  incident (3)
-  ↑ task (7)           inherited
-  ↑ sys_metadata (1)   inherited
-  ↓ incident_task (2)  child
+Business Rules (11)
+  Notify caller             Business Rule
+  Auto-close resolved       Business Rule ↑ task
+  Auto-close child incident Business Rule ↓ incident_task
 ```
+
+No grouping-by-relation was implemented, and none should be — the earlier
+illustration in this section describing a `Business Rules / incident (3) /
+↑ task (7)` sub-grouping does not ship and was wrong.
 
 After discovery, a hint line under the button states the resolved chain:
 `3 tables: incident ↑ task ↑ sys_metadata`.

@@ -90,7 +90,15 @@ export function composeSpec(input: ComposeInput): SpecDocument {
   // A "table spec" documents the whole table/module; a "record spec" documents a
   // single customization record (BR, Script Include, Catalog Item, Transform Map).
   const isTableSpec = !TYPE_LABEL[rootTable]
-  const table = primaryTable ?? rootTable
+  // In scope mode there is no primary table: rootTable is the synthetic
+  // 'sys_scope' root and primaryTable is deliberately '' (not undefined), so
+  // `primaryTable ?? rootTable` would silently fall through to 'sys_scope'
+  // ('??' doesn't catch empty string). Every consumer of `table` below is
+  // scope-gated already (dataModelSection only prints it inside an
+  // `if (schema.length)` guard, which is empty for scope; apiSpecSection is
+  // omitted entirely for scope — see the sections array below), so make the
+  // "no primary table in scope mode" fact explicit rather than accidental.
+  const table = input.scope ? '' : (primaryTable ?? rootTable)
   const tableDisplay = titleCase(table)
 
   const title = input.scope ? input.scope.label : isTableSpec ? tableDisplay : rootLabel || rootKind
@@ -324,6 +332,27 @@ function dataModelSection(
     })
   }
 
+  // Catalog Items (scope-sweep only today — a record/table walk never discovers
+  // OTHER catalog items, only the root's own variables/UI policies/etc via
+  // resolveCatalogItem). Listed here, alongside the other structural/data-model
+  // inventory (tables, variables), rather than in Logic: a catalog item's own
+  // page-layout/behavior is what Logic already documents when it IS the root;
+  // this is just the inventory of which catalog items exist in the application.
+  const catalogItems = byType(artifacts, 'catalog_item')
+  if (catalogItems.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `Catalog Items (${catalogItems.length})` })
+    blocks.push({
+      kind: 'table',
+      columns: ['Catalog Item', 'Category', 'Active', 'Workflow'],
+      rows: catalogItems.map((c) => [
+        c.label || c.fields['name'] || '',
+        c.fields['category'] ?? '',
+        c.fields['active'] ?? '',
+        c.fields['workflow'] ?? '',
+      ]),
+    })
+  }
+
   if (!blocks.length) {
     blocks.push(
       scope
@@ -449,6 +478,29 @@ function logicSection(rootFields: Record<string, string>, artifacts: ArtifactRef
           rows: mine.map((x) => [x.fields['field'] ?? '', x.fields['mandatory'] ?? '', x.fields['visible'] ?? '', x.fields['disabled'] ?? '']),
         })
       }
+    }
+  }
+
+  // UI Actions — distinct from UI Policy actions above (those are field
+  // behaviors driven by a UI Policy; these are buttons/links/menu items with
+  // their own condition + client/server script).
+  const uiActionRecords = byType(artifacts, 'ui_action')
+  if (uiActionRecords.length) {
+    blocks.push({ kind: 'subheading', level: 2, text: `UI Actions (${uiActionRecords.length})` })
+    for (const ua of uiActionRecords) {
+      blocks.push({ kind: 'subheading', level: 3, text: ua.label })
+      blocks.push(
+        detailBlock([
+          ['Table', ua.fields['table']],
+          ['Action name', ua.fields['action_name']],
+          ['Client', ua.fields['client']],
+          ['Form button', ua.fields['form_button']],
+          ['List button', ua.fields['list_button']],
+          ['Active', ua.fields['active']],
+        ]),
+      )
+      if (ua.fields['condition']) blocks.push({ kind: 'code', caption: 'Condition', code: ua.fields['condition'], lang: 'text' })
+      if (ua.fields['script']) blocks.push({ kind: 'code', caption: 'Script', code: ua.fields['script'], lang: 'javascript' })
     }
   }
 

@@ -271,26 +271,50 @@ export function scopeRootArtifact(label: string): ArtifactRef {
 }
 
 /**
+ * Result of a scope sweep. `failed` and `truncated` exist so a per-table
+ * problem is surfaced to the user rather than read back as absence — a 403 on
+ * `sys_security_acl` must not read as "no ACLs in this application", and a
+ * table that hit its row limit must not silently drop the remainder (the same
+ * Global Constraint hierarchy.ts already applies via `childrenTruncated`).
+ */
+export interface ScopeSweepOutcome {
+  artifacts: ArtifactRef[]
+  /** Table names whose query was not ok (permission error, absent table, etc). */
+  failed: string[]
+  /** Table names whose result hit the sweep's configured row limit. */
+  truncated: string[]
+}
+
+/**
  * Flat sweep of every artifact table for one application scope. Depth 0 — no
  * graph walk. A table that fails (absent on this instance, blocked by ACL)
- * contributes nothing rather than aborting the sweep, matching how fetchPage
- * treats a failed FetchSpec in the graph walk.
+ * contributes no artifacts rather than aborting the sweep, matching how
+ * fetchPage treats a failed FetchSpec in the graph walk — but unlike that
+ * silent-continue, the failure is recorded in `failed` so the caller can tell
+ * the user, instead of the document reading the gap as "nothing to report".
  */
 export async function sweepScopeSpec(
   host: string,
   scopeSysId: string,
   onProgress?: (n: number) => void,
-): Promise<ArtifactRef[]> {
+): Promise<ScopeSweepOutcome> {
   const out: ArtifactRef[] = []
+  const failed: string[] = []
+  const truncated: string[] = []
   const seen = new Set<string>()
   for (const spec of scopeFetchSpecs(scopeSysId)) {
+    const limit = spec.limit ?? 200
     const res = await queryRecords(host, spec.table, {
       query: spec.query,
       fields: spec.fields,
-      limit: spec.limit ?? 200,
+      limit,
       displayValue: 'all',
     })
-    if (!res.ok) continue
+    if (!res.ok) {
+      failed.push(spec.table)
+      continue
+    }
+    if (res.data.length >= limit) truncated.push(spec.table)
     for (const rec of res.data) {
       const artifact = toArtifact(spec, rec, 1)
       if (seen.has(artifact.id)) continue
@@ -299,5 +323,5 @@ export async function sweepScopeSpec(
     }
     onProgress?.(out.length)
   }
-  return out
+  return { artifacts: out, failed, truncated }
 }

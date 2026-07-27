@@ -44,12 +44,19 @@ const DB_OBJECT_FIELDS = ['sys_id', 'name', 'super_class']
  * The table's ancestor chain, nearest first, excluding the table itself.
  * Split out from resolveHierarchy because callers that only need inheritance
  * (e.g. resolving which table declares a field) must not pay for the children query.
+ *
+ * `knownSelf` lets a caller that already fetched the table's own sys_db_object
+ * row (resolveHierarchy does, for the children query) pass it in instead of
+ * paying for a second identical `name=<table>` round-trip. Callers with no such
+ * row (the standalone use in main.ts's condition-clip label resolution) omit it
+ * and get the original single-fetch behaviour.
  */
 export async function resolveAncestors(
   table: string,
   fetch: HierarchyFetch,
+  knownSelf?: Record<string, string>,
 ): Promise<string[]> {
-  const [self] = await fetch('sys_db_object', `name=${table}`, DB_OBJECT_FIELDS, 1)
+  const self = knownSelf ?? (await fetch('sys_db_object', `name=${table}`, DB_OBJECT_FIELDS, 1))[0]
   if (!self?.sys_id) return []
 
   // Follow super_class upward. `seen` holds sys_ids already visited, so a
@@ -80,7 +87,7 @@ export async function resolveHierarchy(
   const [self] = await fetch('sys_db_object', `name=${table}`, DB_OBJECT_FIELDS, 1)
   if (!self?.sys_id) return empty
 
-  const ancestors = await resolveAncestors(table, fetch)
+  const ancestors = await resolveAncestors(table, fetch, self)
 
   // Children: one level only.
   const kidRows = await fetch(

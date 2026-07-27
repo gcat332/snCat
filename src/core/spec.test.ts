@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { composeSpec, type SpecBlock } from './spec'
 import { makeId, type ArtifactRef } from './graph'
+import { SCOPE_ARTIFACT_TABLES } from './scope-spec'
 
 function a(type: ArtifactRef['type'], fields: Record<string, string>, label = 'X'): ArtifactRef {
   return { id: makeId(type, fields.sys_id ?? 'x'), table: type, sysId: fields.sys_id ?? 'x', type, label, relation: '', depth: 1, fields }
@@ -236,4 +237,28 @@ describe('composeSpec in scope mode', () => {
       'Primary table: incident. No additional data-model artifacts were discovered within the depth limit.',
     )
   })
+})
+
+// Guards the class of bug in FINDING 1: a sweep table declared in scope-spec.ts
+// whose artifact type has no renderer anywhere in composeSpec. Every table
+// scope-spec.ts sweeps must show up somewhere in the composed document, or a
+// scope spec silently omits a whole artifact type while still claiming (via
+// the checklist and the "Artifacts documented" meta count) to have covered it.
+describe('composeSpec renders every scope-swept artifact type', () => {
+  for (const sweep of SCOPE_ARTIFACT_TABLES) {
+    it(`renders a distinguishing value for type "${sweep.type}" (${sweep.table})`, () => {
+      const marker = `MARKER_${sweep.type.toUpperCase()}`
+      const fields: Record<string, string> = { sys_id: 'x1', [sweep.labelField]: marker }
+      const artifact = a(sweep.type, fields, marker)
+      const doc = composeSpec({
+        instance: 'x',
+        rootTable: 'sys_scope',
+        rootLabel: 'App',
+        rootFields: {},
+        artifacts: [artifact],
+        scope: { label: 'App', prefix: 'x_app' },
+      })
+      expect(JSON.stringify(doc.sections)).toContain(marker)
+    })
+  }
 })

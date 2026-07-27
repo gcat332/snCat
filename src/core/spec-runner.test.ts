@@ -350,7 +350,7 @@ describe('sweepScopeSpec', () => {
   })
 
   it('returns artifacts from every table that had rows', async () => {
-    const artifacts = await sweepScopeSpec('h', 'scope_sys_id')
+    const { artifacts } = await sweepScopeSpec('h', 'scope_sys_id')
     expect(artifacts.map((a) => a.type)).toContain('business_rule')
   })
 
@@ -358,13 +358,50 @@ describe('sweepScopeSpec', () => {
     const seen: number[] = []
     await sweepScopeSpec('h', 'scope_sys_id', (n) => seen.push(n))
     expect(seen.length).toBeGreaterThan(0)
-    expect(seen[seen.length - 1]).toBe((await sweepScopeSpec('h', 'scope_sys_id')).length)
+    const { artifacts } = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(seen[seen.length - 1]).toBe(artifacts.length)
   })
 
   it('survives a table that errors, rather than aborting the sweep', async () => {
     // The mock returns { ok: false } for sys_security_acl.
-    const artifacts = await sweepScopeSpec('h', 'scope_sys_id')
+    const { artifacts } = await sweepScopeSpec('h', 'scope_sys_id')
     expect(artifacts.every((a) => a.type !== 'acl')).toBe(true)
     expect(artifacts.length).toBeGreaterThan(0)
+  })
+
+  it('reports a failed table in `failed`, not as silent absence', async () => {
+    // sys_security_acl is mocked to return { ok: false, status: 403 } above —
+    // the Security section must not read that as "no ACLs exist".
+    const { failed } = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(failed).toContain('sys_security_acl')
+  })
+
+  it('does not report a table that returned ok as failed', async () => {
+    const { failed } = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(failed).not.toContain('sys_script')
+  })
+
+  it('reports a table that hit its row limit in `truncated`', async () => {
+    queryRecords.mockImplementation(async (_host: string, table: string, opts: { query?: string; limit?: number }) => {
+      if (table === 'sys_security_acl') return { ok: false, status: 403, error: 'forbidden' }
+      if (table === 'sys_script' && opts?.query?.startsWith('sys_scope=')) {
+        // Exactly at the configured limit — the sweep can't distinguish "exactly
+        // this many rows" from "there are more", so it must report truncation
+        // either way rather than assume the boundary case is complete.
+        const n = opts.limit ?? 500
+        return {
+          ok: true,
+          data: Array.from({ length: n }, (_, i) => ({ sys_id: `br${i}`, name: `BR ${i}`, collection: 'incident' })),
+        }
+      }
+      return { ok: true, data: [] }
+    })
+    const { truncated } = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(truncated).toContain('sys_script')
+  })
+
+  it('does not report a table under its row limit as truncated', async () => {
+    const { truncated } = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(truncated).not.toContain('sys_script')
   })
 })

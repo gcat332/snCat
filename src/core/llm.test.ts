@@ -215,6 +215,17 @@ describe('buildSpecNarrativePrompt', () => {
     expect(p.user).toContain('REDACTED')
     expect(p.system.toLowerCase()).toContain('prose')
   })
+
+  it('names the application, not the synthetic sys_scope root table, in scope mode', () => {
+    const p = buildSpecNarrativePrompt({
+      table: 'sys_scope',
+      rootLabel: 'MFEC Onboarding',
+      artifacts: [{ name: 'Notify BR', type: 'Business Rule' }],
+      scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' },
+    })
+    expect(p.user).toContain('Application: MFEC Onboarding (x_mfec_onb)')
+    expect(p.user).not.toContain('sys_scope')
+  })
 })
 
 describe('agentHubErrorMessage', () => {
