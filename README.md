@@ -79,6 +79,10 @@ When the **Generate** tab creates a dev/admin-facing config record (Business Rul
 
 Walks `sys_db_object.super_class` upward and one level of children downward to discover related artifacts from parent and child tables too. Inherited rows are marked `↑ task`, child rows `↓ incident_task` — ancestors matter most, since a Business Rule on `task` genuinely fires on every incident. Off by default because on a base table this multiplies the artifact count; children are capped at 20 and the hint states how many were dropped.
 
+### Application scope
+
+Instead of one record or table, sweep every artifact whose `sys_scope` is the selected app — tables, Business Rules, Client Scripts, Script Includes, UI Policies, UI Actions, ACLs, notifications, data policies, catalog items and transform maps. A flat sweep, no dependency walk, so it answers "what is in this app" and does **not** pull in artifacts the app depends on that live outside the scope. The Table API section is omitted, since an application spans many tables.
+
 ## Scripts
 
 | Command | What |
