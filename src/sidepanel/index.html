@@ -293,6 +293,16 @@
             Open a Business Rule, Catalog Item, Script Include, or Transform Map,
             then generate a spec from it and its dependencies (depth 2).
           </p>
+          <label class="field-label" for="spec-source">Source</label>
+          <select id="spec-source" class="select">
+            <option value="record">Current record / table</option>
+            <option value="scope">Application scope</option>
+          </select>
+          <div id="spec-scope-wrap" hidden>
+            <label class="field-label" for="spec-scope">Application</label>
+            <input id="spec-scope" class="query-input" list="scope-list"
+              placeholder="type to search scopes…" />
+          </div>
           <label class="chk-item" id="spec-hierarchy-row">
             <input type="checkbox" id="spec-hierarchy" />
             <span class="chk-label">Include parent &amp; child tables</span>

@@ -54,7 +54,13 @@ import { composeSpec, type SpecDocument } from '@core/spec'
 import { renderSpecHtml } from '@core/render-html'
 import { formatSpecDoc } from '@core/format'
 import { renderSpecDocxBlob } from '@core/render-docx'
-import { loadRootArtifact, tableRootArtifact, walkSpecGraph } from '@core/spec-runner'
+import {
+  loadRootArtifact,
+  scopeRootArtifact,
+  sweepScopeSpec,
+  tableRootArtifact,
+  walkSpecGraph,
+} from '@core/spec-runner'
 import { isAuthError, authExpiredMessage } from '@core/auth-msg'
 import { namePrefixField, prefixArtifactName } from '@core/naming'
 
@@ -918,8 +924,13 @@ function updateEnabledState() {
     : condQueryTable && condQueryTable !== table
       ? `Table: ${condQueryTable} (clip) · page: ${table}`
       : `Table: ${table}`
-  // Enabled on a form record (record spec) or a list view (whole-table spec).
-  specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
+  // Enabled on a form record (record spec) or a list view (whole-table spec);
+  // in scope mode, any host with a scope bar is enough (the app itself is
+  // resolved from the typed name, not the current record).
+  specWalk.disabled =
+    specSource.value === 'scope'
+      ? !current?.host
+      : !(current?.table && (current.sysId || current.view === 'list'))
   void refreshCondClipButtons()
 }
 
@@ -2516,6 +2527,15 @@ async function deleteTestRecord() {
 /* ---------- Design Spec Generator (M4 / F1) ---------- */
 
 const specWalk = el<HTMLButtonElement>('spec-walk')
+const specSource = el<HTMLSelectElement>('spec-source')
+const specScopeWrap = el('spec-scope-wrap')
+const specScope = el<HTMLInputElement>('spec-scope')
+/**
+ * The parent/child checkbox row, added by the table-hierarchy plan. Looked up
+ * with getElementById rather than el() because the two plans are independent —
+ * this one must work whether or not that row exists yet.
+ */
+const specHierarchyRow = document.getElementById('spec-hierarchy-row')
 const specHierarchy = el<HTMLInputElement>('spec-hierarchy')
 const specHierarchyHint = el('spec-hierarchy-hint')
 const specStatus = el('spec-status')
@@ -2533,6 +2553,8 @@ let specRoot: ArtifactRef | null = null
 let specArtifacts: ArtifactRef[] = []
 let specPrimaryTable = ''
 let specSchema: import('@core/spec').SpecSchemaField[] = []
+/** Set while the current discovery is a scope sweep; drives buildSpecDoc. */
+let specScopeInfo: { label: string; prefix: string } | null = null
 const specExcluded = new Set<string>()
 /** AI-drafted overview text for the current spec, or null until generated (or re-discovered). */
 let specAiOverview: string | null = null
@@ -2585,9 +2607,69 @@ async function getLogoDataUri(): Promise<string | undefined> {
   return logoDataUriCache
 }
 
+/**
+ * The application's technical scope prefix (e.g. "x_155000_myapp"), read from
+ * the sys_scope record itself rather than guessed from the swept artifacts.
+ * Only the sys_db_object sweep row even carries a sys_scope field (every other
+ * artifact table's FetchSpec omits it — see scope-spec.ts), and where it IS
+ * present it's the raw reference value, i.e. the scope record's own sys_id
+ * (a 32-char hex string), never an "x_…" prefix — so a scan for /^x_/ across
+ * artifacts can never actually succeed. The `scope` column on the sys_scope
+ * record itself is the one authoritative source, and it's a single extra
+ * fetch keyed on the sys_id we already resolved.
+ */
+async function scopePrefixFor(host: string, scopeSysId: string, fallback: string): Promise<string> {
+  const res = await getRecord(host, 'sys_scope', scopeSysId, ['scope'])
+  if (res.ok) {
+    const prefix = cellValue(res.data['scope'])
+    if (prefix) return prefix
+  }
+  return fallback
+}
+
 async function discoverArtifacts() {
-  if (!current?.table) return
-  const { host, table, sysId } = current
+  if (!current) return
+  const { host } = current
+
+  if (specSource.value === 'scope') {
+    // Table hierarchy is a table concept — meaningless for a scope, and a hint
+    // left over from a prior record/table discovery would misdescribe this one.
+    renderHierarchyHint(null, '')
+    const label = specScope.value.trim()
+    const scopeSysId = scopeByName.get(label)
+    if (!scopeSysId) {
+      specChecklist.replaceChildren(
+        elText('div', 'error', `Unknown application "${label}" — pick one from the list.`),
+      )
+      return
+    }
+    specWalk.disabled = true
+    specOutput.hidden = true
+    specStatus.hidden = true
+    specChecklist.replaceChildren(elText('div', 'empty', `Sweeping ${label}…`))
+    try {
+      const artifacts = await sweepScopeSpec(host, scopeSysId, (n) => {
+        specChecklist.replaceChildren(elText('div', 'empty', `Sweeping… ${n} artifacts`))
+      })
+      specRoot = scopeRootArtifact(label)
+      specArtifacts = artifacts
+      specPrimaryTable = ''
+      specSchema = []
+      specScopeInfo = { label, prefix: await scopePrefixFor(host, scopeSysId, label) }
+      specExcluded.clear()
+      specAiOverview = null
+      renderChecklist()
+    } catch (err) {
+      specChecklist.replaceChildren(elText('div', 'error', (err as Error).message))
+    } finally {
+      specWalk.disabled = false
+    }
+    return
+  }
+
+  specScopeInfo = null
+  if (!current.table) return
+  const { table, sysId } = current
 
   specWalk.disabled = true
   specOutput.hidden = true
@@ -2733,6 +2815,7 @@ function buildSpecDoc(): SpecDocument | null {
     primaryTable: specPrimaryTable,
     schema: specSchema,
     aiOverview: specAiOverview ?? undefined,
+    scope: specScopeInfo ?? undefined,
   })
 }
 
@@ -2740,7 +2823,10 @@ function safeName(): string {
   // {instance}_{module}_specification_document — instance short name + table.
   const clean = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 40)
   const instance = clean((current?.host ?? '').split('.')[0] || 'instance')
-  const module = clean(specPrimaryTable || specRoot?.table || 'design')
+  // Scope mode has no primary table (specRoot.table is the constant 'sys_scope'
+  // synthetic root) — name the file after the application instead, or every
+  // scope export would collide on "..._sys_scope_specification_document".
+  const module = clean(specScopeInfo?.label || specPrimaryTable || specRoot?.table || 'design')
   return `${instance}_${module}_specification_document`
 }
 
@@ -3583,6 +3669,13 @@ l3Delete.addEventListener('click', deleteTestRecord)
 el<HTMLButtonElement>('l3-fill').addEventListener('click', l3FillFromRecord)
 initRunnerMode()
 specWalk.addEventListener('click', discoverArtifacts)
+specSource.addEventListener('change', () => {
+  const isScope = specSource.value === 'scope'
+  specScopeWrap.hidden = !isScope
+  // Table hierarchy is a table concept — meaningless for a scope.
+  if (specHierarchyRow) specHierarchyRow.hidden = isScope
+  updateEnabledState()
+})
 specHierarchy.addEventListener('change', () => {
   if (!specHierarchy.checked) renderHierarchyHint(null, '')
 })
