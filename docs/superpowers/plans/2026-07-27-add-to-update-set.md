@@ -4,7 +4,7 @@
 
 **Goal:** From the Inspect tab, force the open record — or every record in the current list filter — into the selected update set, installing the Add to Update Set Utility first if the instance doesn't have it.
 
-**Architecture:** Two pure core modules. `update-set-add.ts` builds the background script that calls `new global.addToUpdateSetUtils().addToUpdateSet(gr)` per record and parses its output. `updateset-xml.ts` parses the bundled Share export (`<unload>` → `sys_update_xml` → CDATA payload → `<record_update>`) and builds a per-record install script. Both reuse the CDATA-aware regex helpers already in `xml.ts` so they stay Node-testable. Every write goes through the existing prod-guarded `runBackground`; field values are base64-encoded into the generated scripts because the Script Include body is 212 KB of JavaScript.
+**Architecture:** Two pure core modules. `update-set-add.ts` builds the background script that calls the utility's UI-free dispatcher `checkTable(gr, gr.getTableName())` per record — **not** `addToUpdateSet(gr)`, which is a UI wrapper depending on `gs.action` and `RP` and therefore throws in a background script — and measures what landed from the `sys_update_xml` delta rather than assuming success. `updateset-xml.ts` parses the bundled Share export (`<unload>` → `sys_update_xml` → CDATA payload → `<record_update>`) and builds a per-record install script. Both reuse the CDATA-aware regex helpers already in `xml.ts` so they stay Node-testable. Every write goes through the existing prod-guarded `runBackground`; field values are base64-encoded into the generated scripts because the Script Include body is 212 KB of JavaScript.
 
 **Tech Stack:** TypeScript, Vitest, Chrome MV3, ServiceNow `sys.scripts.do` background scripts.
 
@@ -47,11 +47,18 @@ The **Add to Update Set Utility**, version 9.5 — a community utility published
 ServiceNow Share. It is vendored verbatim, exactly as exported; nothing in this
 repo modifies it.
 
-snJava uses one part of it: the `addToUpdateSetUtils` Script Include, whose
-`addToUpdateSet(GlideRecord)` method forces an otherwise-untracked record into
-the session's current update set. The Inspect tab's "Add to update set" button
-calls that method, and offers to install this export when the instance does not
-already have the Script Include.
+snJava uses one part of it: the `addToUpdateSetUtils` Script Include, which forces
+an otherwise-untracked record into the session's current update set. The Inspect
+tab's "Add to update set" button calls it, and offers to install this export when
+the instance does not already have the Script Include.
+
+snJava calls `checkTable(record, tableName)` rather than the more obvious
+`addToUpdateSet(record)`. `addToUpdateSet` is a UI Action wrapper: it reads
+`gs.action.getGlideURI()` and `RP.getParameterValue(...)` to detect list context and
+uses the client session to swap update sets, none of which exist in a background
+script. `checkTable` is the dispatcher underneath it — it references none of those
+globals, invokes the same related-record handlers, and its default branch falls
+through to `saveRecord`, so ordinary records are still captured.
 
 All 21 records are installed, so an instance ends up equivalent to a manual
 update-set import: the Script Include, the "Add to Update Set" UI Action, the
@@ -543,8 +550,18 @@ describe('buildAddToUpdateSetScript', () => {
     const s = buildAddToUpdateSetScript('incident', [ID])
     expect(s).toContain("new GlideRecord('incident')")
     expect(s).toContain('new global.addToUpdateSetUtils()')
-    expect(s).toContain('addToUpdateSet(gr)')
+    expect(s).toContain('checkTable(gr, gr.getTableName())')
     expect(s).toContain(ID)
+  })
+
+  it('uses checkTable, never the UI-only addToUpdateSet wrapper', () => {
+    // addToUpdateSet depends on gs.action and RP, which do not exist in
+    // sys.scripts.do — calling it there throws per record while the run still
+    // looks successful. checkTable is the UI-free dispatcher.
+    const s = buildAddToUpdateSetScript('incident', [ID])
+    expect(s).not.toContain('addToUpdateSet(')
+    expect(s).not.toContain('gs.action')
+    expect(s).not.toContain('RP.')
   })
 
   it('does not emit the UI Action bindings, which do not exist here', () => {
@@ -558,6 +575,14 @@ describe('buildAddToUpdateSetScript', () => {
     expect(buildAddToUpdateSetScript('incident', [ID])).toContain('missing')
   })
 
+  it('measures capture from the sys_update_xml delta rather than assuming success', () => {
+    // Neither checkTable nor saveRecord reports success — both return bare
+    // undefined on refusal — so the script must count what actually landed.
+    const s = buildAddToUpdateSetScript('incident', [ID])
+    expect(s).toContain('sys_update_xml')
+    expect(s).toContain('captured')
+  })
+
   it('rejects a table name that is not a plain identifier', () => {
     expect(() => buildAddToUpdateSetScript("incident'; gs.print('x", [ID])).toThrow()
   })
@@ -569,9 +594,26 @@ describe('buildAddToUpdateSetScript', () => {
 
 describe('parseAddResult', () => {
   it('reads the counts from the background output', () => {
-    expect(parseAddResult('*** Script: snJava: added 37, missing 2')).toEqual({
-      added: 37,
+    expect(parseAddResult('*** Script: snJava: seen 37, missing 2, captured 41')).toEqual({
+      seen: 37,
       missing: 2,
+      captured: 41,
+    })
+  })
+
+  it('accepts captured exceeding seen — one record can pull in related records', () => {
+    expect(parseAddResult('snJava: seen 1, missing 0, captured 9')).toEqual({
+      seen: 1,
+      missing: 0,
+      captured: 9,
+    })
+  })
+
+  it('accepts captured below seen — an excluded table captures nothing', () => {
+    expect(parseAddResult('snJava: seen 5, missing 0, captured 0')).toEqual({
+      seen: 5,
+      missing: 0,
+      captured: 0,
     })
   })
 
@@ -614,6 +656,20 @@ Expected: FAIL — `Failed to resolve import "./update-set-add"`.
  * Neither `current` nor `action` exists in a background script, so this module
  * builds the equivalent — an explicit GlideRecord per sys_id — and drops the
  * redirect, which is UI Action plumbing with no meaning outside a form.
+ *
+ * IMPORTANT — we call `checkTable(gr, tableName)`, NOT `addToUpdateSet(gr)`.
+ * Verified against the vendored v9.5 source: `addToUpdateSet` is a UI WRAPPER whose
+ * only real work is delegated to `checkTable`. Around that it uses
+ * `gs.action.getGlideURI().getMap()` and `RP.getParameterValue('sysparm_checked_items')`
+ * — the file's only uses of `gs.action` and `RP` — plus `clientSession` for update-set
+ * switching and `gs.addInfoMessage`/`gs.flushMessages` for user feedback. None of that
+ * exists in `sys.scripts.do`, so calling it there throws per record.
+ *
+ * `checkTable` contains zero references to `gs.action`, `RP.` or `clientSession`. It is
+ * the dispatcher: a switch over table names invoking ~65 `_addXxx` related-record
+ * handlers (attachments, variables, workflows, catalog items, ACL and UI-policy
+ * dependencies, …), and its `default:` arm falls through to `_executeScopeScript()` and
+ * `saveRecord(gr)`, so an ordinary record such as an incident is still captured.
  */
 
 /** Records per background run, keeping each run inside the sys.scripts.do timeout. */
@@ -636,24 +692,49 @@ export function buildAddToUpdateSetScript(table: string, sysIds: string[]): stri
     if (!SYS_ID_RE.test(id)) throw new Error(`Refusing to run: invalid sys_id "${id}"`)
   }
 
+  // `checkTable` is the utility's UI-free dispatcher; see the module comment for why
+  // `addToUpdateSet` cannot be used here. Success is MEASURED by the delta in
+  // sys_update_xml rows, because neither checkTable nor saveRecord reports it: both
+  // return bare `undefined` on refusal (excluded table, invalid record, scope mismatch).
   return `var ids = ${JSON.stringify(sysIds)};
 var util = new global.addToUpdateSetUtils();
-var added = 0, missing = 0;
+var setId = new GlideUpdateSet().get() + '';
+
+function capturedCount(id) {
+  var agg = new GlideAggregate('sys_update_xml');
+  agg.addQuery('update_set', id);
+  agg.addAggregate('COUNT');
+  agg.query();
+  return agg.next() ? parseInt(agg.getAggregate('COUNT'), 10) : 0;
+}
+
+var before = capturedCount(setId);
+var seen = 0, missing = 0;
 for (var i = 0; i < ids.length; i++) {
   var gr = new GlideRecord(${JSON.stringify(table)});
   if (gr.get(ids[i])) {
-    util.addToUpdateSet(gr);
-    added++;
+    util.checkTable(gr, gr.getTableName());
+    seen++;
   } else {
     missing++;
   }
 }
-gs.print('snJava: added ' + added + ', missing ' + missing);`
+var captured = capturedCount(setId) - before;
+gs.print('snJava: seen ' + seen + ', missing ' + missing + ', captured ' + captured);`
 }
 
-export function parseAddResult(output: string): { added: number; missing: number } | null {
-  const m = output.match(/snJava: added (\d+), missing (\d+)/)
-  return m ? { added: Number(m[1]), missing: Number(m[2]) } : null
+/**
+ * `seen` is how many records existed and were handed to the utility; `captured` is how
+ * many sys_update_xml rows actually appeared. They differ legitimately — one record can
+ * pull in related records (captured > seen), and an excluded table or scope mismatch
+ * captures nothing (captured < seen) — so the UI must report both rather than conflating
+ * them into a single "added" number.
+ */
+export function parseAddResult(
+  output: string,
+): { seen: number; missing: number; captured: number } | null {
+  const m = output.match(/snJava: seen (\d+), missing (\d+), captured (\d+)/)
+  return m ? { seen: Number(m[1]), missing: Number(m[2]), captured: Number(m[3]) } : null
 }
 
 export function batchSysIds(sysIds: string[]): string[][] {
