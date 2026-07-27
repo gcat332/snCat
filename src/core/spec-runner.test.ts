@@ -213,6 +213,17 @@ describe('walkSpecGraph with hierarchy', () => {
       if (table === 'sys_script' && opts?.query?.startsWith('collection=task')) {
         return { ok: true, data: [{ sys_id: 'br_task_1', name: 'Task BR' }] }
       }
+      // A client script reachable from BOTH the main walk (table=incident) and the
+      // ancestor seed walk (table=task), sharing the same sys_id — so the ancestor
+      // walk genuinely rediscovers something the main walk already found. This is
+      // what makes the "does not duplicate" test load-bearing (Fix 3): with the
+      // `!byId.has(a.id)` check removed, this row would be pushed twice.
+      if (table === 'sys_script_client' && opts?.query?.startsWith('table=incident')) {
+        return { ok: true, data: [{ sys_id: 'shared_cs', name: 'Shared CS', type: 'onLoad' }] }
+      }
+      if (table === 'sys_script_client' && opts?.query?.startsWith('table=task')) {
+        return { ok: true, data: [{ sys_id: 'shared_cs', name: 'Shared CS', type: 'onLoad' }] }
+      }
       return { ok: false, status: 404, error: 'none' }
     })
   })
@@ -238,5 +249,80 @@ describe('walkSpecGraph with hierarchy', () => {
     })
     const ids = outcome.artifacts.map((a) => a.id)
     expect(new Set(ids).size).toBe(ids.length)
+    // The shared client script must appear exactly once, keeping the version the
+    // main walk found first (not re-tagged with the ancestor's '↑ task' marker).
+    const shared = outcome.artifacts.filter((a) => a.id === makeId('sys_script_client', 'shared_cs'))
+    expect(shared).toHaveLength(1)
+  })
+
+  it('does not surface the synthetic seed-table root as its own artifact', async () => {
+    const outcome = await walkSpecGraph('h', tableRootArtifact('incident'), undefined, {
+      includeHierarchy: true,
+    })
+    // The seed root (table: 'sys_db_object', sysId: '') only exists to carry
+    // `origin` into resolveTable — it was never a real fetched record and must
+    // not appear as a near-blank 'table' row in the spec (Fix 1).
+    const stub = outcome.artifacts.find((a) => a.table === 'sys_db_object' && a.sysId === '')
+    expect(stub).toBeUndefined()
+  })
+
+  it('reports a monotonically non-decreasing progress count across the seed walks', async () => {
+    const seq: number[] = []
+    await walkSpecGraph('h', tableRootArtifact('incident'), (n) => seq.push(n), {
+      includeHierarchy: true,
+    })
+    for (let i = 1; i < seq.length; i++) {
+      expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1])
+    }
+  })
+
+  it('stays non-decreasing even when an earlier seed rediscovers MULTIPLE duplicates before a later seed finds one new artifact', async () => {
+    // Adversarial case for the progress-peak clamp: the ancestor ('task') seed
+    // rediscovers TWO artifacts the main walk already found (zero real merges),
+    // then the child ('incident_task') seed finds exactly ONE genuinely new
+    // artifact. Without clamping to the running peak, the naive `base + n - 1`
+    // for the child seed comes out LOWER than what the ancestor seed already
+    // reported (its raw discovery count outran what actually got merged) — a
+    // real backward jump. This is proven by temporarily removing the
+    // `Math.max(progressPeak, …)` clamp in spec-runner.ts and re-running this
+    // test: it fails with the sequence [2, 3, 4, 5, 4].
+    queryRecords.mockImplementation(async (_host: string, table: string, opts: { query?: string }) => {
+      if (table === 'sys_db_object' && opts?.query === 'name=incident') {
+        return { ok: true, data: [{ sys_id: 'id_inc', name: 'incident', super_class: 'id_task' }] }
+      }
+      if (table === 'sys_db_object' && opts?.query === 'sys_id=id_task') {
+        return { ok: true, data: [{ sys_id: 'id_task', name: 'task', super_class: '' }] }
+      }
+      if (table === 'sys_db_object' && opts?.query === 'super_class=id_inc') {
+        return { ok: true, data: [{ sys_id: 'id_it', name: 'incident_task', super_class: 'id_inc' }] }
+      }
+      // Main walk (incident): two artifacts the ancestor walk will rediscover.
+      if (table === 'sys_script' && opts?.query?.startsWith('collection=incident^')) {
+        return { ok: true, data: [{ sys_id: 'dupA', name: 'DupA BR' }] }
+      }
+      if (table === 'sys_script_client' && opts?.query?.startsWith('table=incident^')) {
+        return { ok: true, data: [{ sys_id: 'dupB', name: 'DupB CS', type: 'onLoad' }] }
+      }
+      // Ancestor walk (task): rediscovers BOTH as pure duplicates (same sys_ids).
+      if (table === 'sys_script' && opts?.query?.startsWith('collection=task')) {
+        return { ok: true, data: [{ sys_id: 'dupA', name: 'DupA BR' }] }
+      }
+      if (table === 'sys_script_client' && opts?.query?.startsWith('table=task')) {
+        return { ok: true, data: [{ sys_id: 'dupB', name: 'DupB CS', type: 'onLoad' }] }
+      }
+      // Child walk (incident_task): exactly one genuinely new artifact.
+      if (table === 'sys_script' && opts?.query?.startsWith('collection=incident_task')) {
+        return { ok: true, data: [{ sys_id: 'newC', name: 'New Child BR' }] }
+      }
+      return { ok: false, status: 404, error: 'none' }
+    })
+
+    const seq: number[] = []
+    await walkSpecGraph('h', tableRootArtifact('incident'), (n) => seq.push(n), {
+      includeHierarchy: true,
+    })
+    for (let i = 1; i < seq.length; i++) {
+      expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1])
+    }
   })
 })
