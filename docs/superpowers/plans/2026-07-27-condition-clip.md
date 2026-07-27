@@ -654,3 +654,29 @@ git commit -m "docs: describe cross-instance condition copy/paste"
 - [ ] Reference label resolution for a multi-value `IN` clause
 - [ ] Cross-instance paste: query identical, warnings shown, list opens on the new host
 - [ ] Table-mismatch warning when pasting an `incident` clip on an `sc_task` list
+
+---
+
+## Known follow-ups (post-merge)
+
+Recorded from the task reviews and the final whole-branch review. All were
+triaged as non-blocking; the feature is merged and smoke-tested.
+
+- **`currentListQuery()` cannot read a Polaris-wrapped URL.** It regexes
+  `current.url` for a literal `sysparm_query=`, which never appears in a
+  `/now/nav/ui/classic/params/target/…` URL (doubly percent-encoded). The primary
+  source, `getListQueryFromPage()`'s live `GlideList2` read, is unaffected — so this
+  only degrades the *fallback* on Next Experience pages. Latent and pre-existing.
+- **`getTableAncestry()` shadows the module-level `current`** with a local
+  `let current = table` string. Harmless today; a footgun if someone later
+  references `current.host` inside that loop. Rename to `currentTable`.
+- **`condRun` / `condOpen` / `schemaLoad` gate on the page's table, not
+  `queryTable()`.** A pasted clip is therefore unusable on a page with no
+  resolvable table (e.g. the Polaris home). Pre-existing behaviour.
+- **A redirect chain on the pasted tab can spend the warning one-shot early.** Two
+  `'complete'` events for one navigation would clear the warnings on the second.
+- **`api.test.ts`'s round-trip test title overclaims** — it proves table/view/ui
+  survive, not the query (`PageContext` has no query field). A sibling test covers
+  query fidelity by other means.
+- **`pickLabel`'s `'(record)'` placeholder** could in principle be stored as a clip
+  label; the `display !== id` guard makes it effectively unreachable.
