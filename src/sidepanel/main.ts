@@ -870,6 +870,13 @@ const schemaNav = el('schema-nav')
 const schemaBack = el<HTMLButtonElement>('schema-back')
 const schemaPath = el('schema-path')
 
+/**
+ * The table the textarea's query belongs to. Usually the current page's table,
+ * but a pasted clip carries a query for ITS table — which may differ from the
+ * page the user is on. "Open list ↗" must follow the query, not the page.
+ */
+let condQueryTable = ''
+
 function updateEnabledState() {
   const hasTable = !!current?.table
   condRun.disabled = !hasTable
@@ -878,6 +885,7 @@ function updateEnabledState() {
   condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
   // Enabled on a form record (record spec) or a list view (whole-table spec).
   specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
+  if (!condQueryTable) condQueryTable = current?.table ?? ''
   void refreshCondClipButtons()
 }
 
@@ -910,9 +918,10 @@ async function runCondition() {
 /** Open the filtered list in ServiceNow (classic list view honors sysparm_query). */
 function openConditionList() {
   if (!current?.table) return
+  const table = condQueryTable || current.table
   const query = condQuery.value.trim()
   const url =
-    `https://${current.host}/${current.table}_list.do` +
+    `https://${current.host}/${table}_list.do` +
     (query ? `?sysparm_query=${encodeURIComponent(query)}` : '')
   void chrome.tabs.create({ url })
 }
@@ -998,6 +1007,7 @@ async function copyCondition() {
     }
     await chrome.storage.local.set({ condClip: clip })
     condQuery.value = query
+    condQueryTable = table
     showToast(query ? `Copied condition (${table})` : `Copied empty condition (${table})`)
   } finally {
     condCopy.textContent = 'Copy condition'
@@ -1043,6 +1053,7 @@ async function pasteCondition() {
   if (!clip) return
 
   condQuery.value = clip.query
+  condQueryTable = clip.table
   renderClipWarnings(clipWarnings(clip, { host: current.host, table: current.table }))
   condResults.replaceChildren()
   condCount.hidden = true
@@ -3288,7 +3299,10 @@ condRun.addEventListener('click', runCondition)
 condOpen.addEventListener('click', openConditionList)
 condCopy.addEventListener('click', () => void copyCondition())
 condPaste.addEventListener('click', () => void pasteCondition())
-condQuery.addEventListener('input', () => renderClipWarnings([]))
+condQuery.addEventListener('input', () => {
+  condQueryTable = current?.table ?? ''
+  renderClipWarnings([])
+})
 schemaLoad.addEventListener('click', loadSchema)
 schemaSearch.addEventListener('input', () => renderSchema(schemaSearch.value))
 schemaBack.addEventListener('click', schemaBackOne)
