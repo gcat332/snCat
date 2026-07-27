@@ -29,11 +29,21 @@ export interface TableHierarchy {
 const MAX_ANCESTOR_HOPS = 10
 /** Children beyond this are dropped; the count is reported to the user. */
 export const MAX_CHILDREN = 20
-/** Upper bound on the children fetch, so childrenTruncated is accurate. */
+/**
+ * Upper bound on the children fetch. `childrenTruncated` is exact for any table
+ * with at most this many direct subclasses, which covers every real ServiceNow
+ * schema (`task`, among the most-extended base tables, has on the order of 30).
+ * Beyond this bound the fetch itself truncates, so the reported dropped count
+ * would be an under-count rather than a wrong-shaped answer.
+ */
 const CHILD_FETCH_LIMIT = 500
 
 const DB_OBJECT_FIELDS = ['sys_id', 'name', 'super_class']
 
+/**
+ * Resolves a table's ancestor chain (via super_class, nearest-first) and direct children.
+ * Returns ancestors, children list (capped at MAX_CHILDREN), and the count of children dropped by the cap.
+ */
 export async function resolveHierarchy(
   table: string,
   fetch: HierarchyFetch,
