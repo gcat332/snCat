@@ -126,8 +126,8 @@ export function composeSpec(input: ComposeInput): SpecDocument {
     meta,
     aiOverview: input.aiOverview,
     sections: [
-      overviewSection(rootKind, isTableSpec ? tableDisplay : rootLabel, instance, rootFields, isTableSpec),
-      dataModelSection(table, rootFields, artifacts, schema),
+      overviewSection(rootKind, isTableSpec ? tableDisplay : rootLabel, instance, rootFields, isTableSpec, input.scope),
+      dataModelSection(table, rootFields, artifacts, schema, input.scope),
       logicSection(rootFields, artifacts, isTableSpec ? '' : `${rootKind}: ${rootLabel || rootKind}`),
       integrationSection(artifacts),
       securitySection(artifacts),
@@ -229,12 +229,16 @@ function overviewSection(
   instance: string,
   f: Record<string, string>,
   isTableSpec: boolean,
+  scope?: { label: string; prefix: string },
 ): SpecSection {
   const rows: { key: string; value: string }[] = []
   const add = (k: string, v?: string) => {
     if (v) rows.push({ key: k, value: v })
   }
-  if (isTableSpec) {
+  if (scope) {
+    add('Application', scope.label)
+    add('Scope', scope.prefix)
+  } else if (isTableSpec) {
     add('Table', label)
     add('Application', f['sys_scope'])
   } else {
@@ -247,9 +251,11 @@ function overviewSection(
     add('Short description', f['short_description'])
   }
 
-  const intro = isTableSpec
-    ? `This Design Specification documents the "${label}" table on ${instance} — its data model (fields), business rules, client scripts, UI policies, notifications, and security (ACLs / data policies).`
-    : `This Design Specification documents the ${kind} "${label}" on ${instance}, together with the related configuration it depends on (scripts, policies, and security).`
+  const intro = scope
+    ? `This Design Specification documents the "${scope.label}" application (${scope.prefix}) on ${instance} — every configuration record scoped to it: tables, business rules, client scripts, script includes, UI policies, UI actions, ACLs, notifications, data policies, catalog items and transform maps. It is a flat inventory of the application's contents rather than a dependency walk, so configuration this application depends on that lives outside its scope is not included.`
+    : isTableSpec
+      ? `This Design Specification documents the "${label}" table on ${instance} — its data model (fields), business rules, client scripts, UI policies, notifications, and security (ACLs / data policies).`
+      : `This Design Specification documents the ${kind} "${label}" on ${instance}, together with the related configuration it depends on (scripts, policies, and security).`
 
   return {
     heading: 'Overview',
@@ -265,6 +271,7 @@ function dataModelSection(
   rootFields: Record<string, string>,
   artifacts: ArtifactRef[],
   schema?: SpecSchemaField[],
+  scope?: { label: string; prefix: string },
 ): SpecSection {
   const blocks: SpecBlock[] = []
 
@@ -319,7 +326,9 @@ function dataModelSection(
 
   if (!blocks.length) {
     blocks.push(
-      emptyNote(`Primary table: ${rootFields['collection'] || primaryTable}. No additional data-model artifacts were discovered within the depth limit.`),
+      scope
+        ? emptyNote('No tables are defined in this application.')
+        : emptyNote(`Primary table: ${rootFields['collection'] || primaryTable}. No additional data-model artifacts were discovered within the depth limit.`),
     )
   }
   return { heading: 'Data Model', blocks }

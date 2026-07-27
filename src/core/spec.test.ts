@@ -168,4 +168,72 @@ describe('composeSpec in scope mode', () => {
     const doc = composeSpec({ ...base, rootTable: 'incident', primaryTable: 'incident' })
     expect(doc.sections.map((s) => s.heading)).toContain('REST API (Table API)')
   })
+
+  it('describes the application in the Overview intro, not an empty table name', () => {
+    const doc = composeSpec({
+      ...base,
+      primaryTable: '',
+      schema: [],
+      scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' },
+    })
+    const overview = doc.sections.find((s) => s.heading === 'Overview')!
+    const intro = overview.blocks.find(
+      (b): b is Extract<SpecBlock, { kind: 'paragraph' }> => b.kind === 'paragraph',
+    )!
+    expect(intro.text).toContain('MFEC Onboarding')
+    expect(intro.text).toContain('x_mfec_onb')
+    expect(intro.text).not.toContain('""')
+  })
+
+  it('gives the Overview section real content instead of the no-metadata fallback', () => {
+    const doc = composeSpec({
+      ...base,
+      primaryTable: '',
+      schema: [],
+      scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' },
+    })
+    const overview = doc.sections.find((s) => s.heading === 'Overview')!
+    const kv = overview.blocks.find((b): b is Extract<SpecBlock, { kind: 'keyvalue' }> => b.kind === 'keyvalue')
+    expect(kv).toBeTruthy()
+    expect(kv!.rows).toContainEqual({ key: 'Application', value: 'MFEC Onboarding' })
+    const notes = overview.blocks.filter(
+      (b): b is Extract<SpecBlock, { kind: 'paragraph' }> => b.kind === 'paragraph',
+    )
+    expect(notes.some((b) => b.text === 'No overview metadata available.')).toBe(false)
+  })
+
+  it('does not mention a depth limit in an empty Data Model section', () => {
+    const doc = composeSpec({
+      ...base,
+      primaryTable: '',
+      schema: [],
+      scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' },
+    })
+    const dm = doc.sections.find((s) => s.heading === 'Data Model')!
+    expect(JSON.stringify(dm.blocks)).not.toContain('depth limit')
+  })
+
+  it('leaves the table-spec Overview intro and Data Model fallback unchanged', () => {
+    const doc = composeSpec({
+      instance: 'x.service-now.com',
+      rootTable: 'incident',
+      rootLabel: 'Incident',
+      rootFields: {},
+      artifacts: [],
+    })
+    const overview = doc.sections.find((s) => s.heading === 'Overview')!
+    const intro = overview.blocks.find(
+      (b): b is Extract<SpecBlock, { kind: 'paragraph' }> => b.kind === 'paragraph',
+    )!
+    expect(intro.text).toBe(
+      'This Design Specification documents the "Incident" table on x.service-now.com — its data model (fields), business rules, client scripts, UI policies, notifications, and security (ACLs / data policies).',
+    )
+    const dm = doc.sections.find((s) => s.heading === 'Data Model')!
+    const note = dm.blocks.find(
+      (b): b is Extract<SpecBlock, { kind: 'paragraph' }> => b.kind === 'paragraph',
+    )!
+    expect(note.text).toBe(
+      'Primary table: incident. No additional data-model artifacts were discovered within the depth limit.',
+    )
+  })
 })
