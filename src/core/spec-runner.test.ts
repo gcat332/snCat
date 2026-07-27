@@ -15,7 +15,7 @@ const { getDictionary, queryRecords, getRecord } = vi.hoisted(() => ({
 
 vi.mock('./api-client', () => ({ getDictionary, queryRecords, getRecord }))
 
-import { walkSpecGraph, tableRootArtifact } from './spec-runner'
+import { walkSpecGraph, tableRootArtifact, sweepScopeSpec } from './spec-runner'
 import { makeId, type ArtifactRef } from './graph'
 
 function rootArt(table: string, fields: Record<string, string>): ArtifactRef {
@@ -324,5 +324,47 @@ describe('walkSpecGraph with hierarchy', () => {
     for (let i = 1; i < seq.length; i++) {
       expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1])
     }
+  })
+})
+
+describe('sweepScopeSpec', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getRecord.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+    getDictionary.mockResolvedValue({ ok: false, status: 404, error: 'none' })
+    queryRecords.mockImplementation(async (_host: string, table: string, opts: { query?: string }) => {
+      if (table === 'sys_security_acl') {
+        return { ok: false, status: 403, error: 'forbidden' }
+      }
+      if (table === 'sys_script' && opts?.query?.startsWith('sys_scope=')) {
+        return {
+          ok: true,
+          data: [
+            { sys_id: 'br1', name: 'BR One', collection: 'incident' },
+            { sys_id: 'br2', name: 'BR Two', collection: 'problem' },
+          ],
+        }
+      }
+      return { ok: true, data: [] }
+    })
+  })
+
+  it('returns artifacts from every table that had rows', async () => {
+    const artifacts = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(artifacts.map((a) => a.type)).toContain('business_rule')
+  })
+
+  it('reports cumulative progress as tables complete', async () => {
+    const seen: number[] = []
+    await sweepScopeSpec('h', 'scope_sys_id', (n) => seen.push(n))
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen[seen.length - 1]).toBe((await sweepScopeSpec('h', 'scope_sys_id')).length)
+  })
+
+  it('survives a table that errors, rather than aborting the sweep', async () => {
+    // The mock returns { ok: false } for sys_security_acl.
+    const artifacts = await sweepScopeSpec('h', 'scope_sys_id')
+    expect(artifacts.every((a) => a.type !== 'acl')).toBe(true)
+    expect(artifacts.length).toBeGreaterThan(0)
   })
 })

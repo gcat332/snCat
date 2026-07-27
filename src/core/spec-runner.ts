@@ -10,6 +10,7 @@ import { makeId, walkGraph, type ArtifactRef, type FetchSpec } from './graph'
 import { resolveHierarchy, type HierarchyFetch, type TableHierarchy } from './hierarchy'
 import type { ArtifactOrigin } from './graph'
 import { RESOLVERS } from './resolvers'
+import { scopeFetchSpecs } from './scope-spec'
 import type { SpecSchemaField } from './spec'
 
 /** Flatten a Table API row (raw or {value} cells) into a string map. */
@@ -248,4 +249,55 @@ export async function walkSpecGraph(
   }
 
   return { root, artifacts: all.filter((a) => a.id !== root.id), primaryTable, schema, hierarchy }
+}
+
+/**
+ * Synthetic root for an application spec. There is no single record or table at
+ * the centre of a scope, but composeSpec and the checklist both want a root, so
+ * this stands in. `composeSpec` is given `scope` separately and uses that for
+ * the title/meta — this root only carries the label.
+ */
+export function scopeRootArtifact(label: string): ArtifactRef {
+  return {
+    id: makeId('sys_scope', 'scope'),
+    table: 'sys_scope',
+    sysId: '',
+    type: 'root',
+    label,
+    relation: 'root',
+    depth: 0,
+    fields: { name: label },
+  }
+}
+
+/**
+ * Flat sweep of every artifact table for one application scope. Depth 0 — no
+ * graph walk. A table that fails (absent on this instance, blocked by ACL)
+ * contributes nothing rather than aborting the sweep, matching how fetchPage
+ * treats a failed FetchSpec in the graph walk.
+ */
+export async function sweepScopeSpec(
+  host: string,
+  scopeSysId: string,
+  onProgress?: (n: number) => void,
+): Promise<ArtifactRef[]> {
+  const out: ArtifactRef[] = []
+  const seen = new Set<string>()
+  for (const spec of scopeFetchSpecs(scopeSysId)) {
+    const res = await queryRecords(host, spec.table, {
+      query: spec.query,
+      fields: spec.fields,
+      limit: spec.limit ?? 200,
+      displayValue: 'all',
+    })
+    if (!res.ok) continue
+    for (const rec of res.data) {
+      const artifact = toArtifact(spec, rec, 1)
+      if (seen.has(artifact.id)) continue
+      seen.add(artifact.id)
+      out.push(artifact)
+    }
+    onProgress?.(out.length)
+  }
+  return out
 }
