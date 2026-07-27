@@ -31,6 +31,16 @@ const CLAUSE_SPLIT = /\^(?:OR|NQ)?/
 /** A bare 32-char lowercase hex token — negative lookbehind/lookahead for hex
  *  chars keeps it from matching inside a longer hex run (e.g. a 40-char hash). */
 const SYS_ID_RE = /(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/g
+/**
+ * Field name at the start of a clause (dot-walk allowed, e.g. `assigned_to.department`).
+ * Case-sensitivity here is DELIBERATE, not an oversight — with `/i` this would:
+ *   1. swallow an `IN` operator into the field name (`assignment_groupIN…` → field
+ *      `assignment_groupin` instead of `assignment_group`), and
+ *   2. make `^ORDERBYnumber` parse as a field: CLAUSE_SPLIT already consumes the
+ *      `^OR`, leaving `DERBYnumber`, which the lowercase-only class then rejects
+ *      (case-insensitive it would happily match as a "field" with no sys_id).
+ * Do not add `/i` to "fix" a missed uppercase field — it breaks both of the above.
+ */
 const FIELD_RE = /^([a-z0-9_.]+)/
 
 export function extractRefTokens(query: string): RefToken[] {

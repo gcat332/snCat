@@ -877,22 +877,40 @@ const schemaPath = el('schema-path')
  */
 let condQueryTable = ''
 
+/**
+ * Single source of truth for which table the textarea's query targets: a
+ * pasted/copied clip's table wins over the current page's table (that's the
+ * whole point of carrying a filter across instances). runCondition(),
+ * openConditionList() and the condHint text all read this instead of
+ * `current.table` directly, so a fourth consumer can't reintroduce the drift
+ * where "Run"/"Open" acted on one table while the hint displayed another.
+ */
+function queryTable(): string {
+  return condQueryTable || current?.table || ''
+}
+
 function updateEnabledState() {
-  const hasTable = !!current?.table
+  const table = current?.table
+  const hasTable = !!table
   condRun.disabled = !hasTable
   condOpen.disabled = !hasTable
   schemaLoad.disabled = !hasTable
-  condHint.textContent = hasTable && current ? `Table: ${current.table}` : 'Detect a table first.'
+  if (!condQueryTable) condQueryTable = table ?? ''
+  condHint.textContent = !table
+    ? 'Detect a table first.'
+    : condQueryTable && condQueryTable !== table
+      ? `Table: ${condQueryTable} (clip) · page: ${table}`
+      : `Table: ${table}`
   // Enabled on a form record (record spec) or a list view (whole-table spec).
   specWalk.disabled = !(current?.table && (current.sysId || current.view === 'list'))
-  if (!condQueryTable) condQueryTable = current?.table ?? ''
   void refreshCondClipButtons()
 }
 
 async function runCondition() {
   if (!current?.table) return
   renderClipWarnings([])
-  const { host, table } = current
+  const { host } = current
+  const table = queryTable()
   const query = condQuery.value.trim()
 
   condRun.disabled = true
@@ -918,12 +936,9 @@ async function runCondition() {
 /** Open the filtered list in ServiceNow (classic list view honors sysparm_query). */
 function openConditionList() {
   if (!current?.table) return
-  const table = condQueryTable || current.table
+  const table = queryTable()
   const query = condQuery.value.trim()
-  const url =
-    `https://${current.host}/${table}_list.do` +
-    (query ? `?sysparm_query=${encodeURIComponent(query)}` : '')
-  void chrome.tabs.create({ url })
+  void chrome.tabs.create({ url: buildListFormUrl(current.host, table, query) })
 }
 
 /* --- Condition clip: carry a list filter to another instance --- */
@@ -946,8 +961,43 @@ async function conditionToCopy(table: string): Promise<string> {
 }
 
 /**
- * Resolve display values for the sys_ids in a query: one sys_dictionary read to
- * learn each field's reference table, then one batched `sys_idIN…` query per
+ * Walk a table's `super_class` chain up to its root, returning
+ * [table, parent, grandparent, …]. `sys_dictionary` (see getDictionary /
+ * buildDictionaryUrl) only returns fields declared DIRECTLY on the queried
+ * table — so looking up refs for `incident` alone would miss `assigned_to`,
+ * `assignment_group`, `opened_by` and `cmdb_ci`, all of which are declared on
+ * `task`. resolveClipLabels() needs the full ancestor chain to catch those.
+ * `super_class`'s DISPLAY value is the parent table's name (same pattern as
+ * resolvers.ts's `resolveBusinessRule` and spec-runner.ts's
+ * REFERENCE_LABEL_FIELDS). Capped at 10 hops with a visited set so a
+ * malformed or cyclic hierarchy can't spin forever. A failed or empty lookup
+ * just stops the walk — the caller still has what was found so far.
+ */
+async function getTableAncestry(host: string, table: string): Promise<string[]> {
+  const chain: string[] = [table]
+  const visited = new Set<string>([table])
+  let current = table
+  for (let i = 0; i < 10; i++) {
+    const res = await queryRecords(host, 'sys_db_object', {
+      query: `name=${current}`,
+      fields: ['sys_id', 'name', 'super_class'],
+      limit: 1,
+      displayValue: 'all',
+    })
+    if (!res.ok || !res.data[0]) break
+    const parent = cellDisplay(res.data[0]['super_class'])
+    if (!parent || visited.has(parent)) break
+    visited.add(parent)
+    chain.push(parent)
+    current = parent
+  }
+  return chain
+}
+
+/**
+ * Resolve display values for the sys_ids in a query: one sys_dictionary read
+ * (across the table's whole ancestor chain — see getTableAncestry) to learn
+ * each field's reference table, then one batched `sys_idIN…` query per
  * referenced table. Unresolvable tokens are simply absent from the result —
  * the paste warning says "could not resolve" rather than guessing.
  */
@@ -959,13 +1009,26 @@ async function resolveClipLabels(
   const tokens = extractRefTokens(query)
   if (tokens.length === 0) return {}
 
-  const dict = await getDictionary(host, table)
-  if (!dict.ok) return {}
+  const chain = await getTableAncestry(host, table)
   const refByField: Record<string, string> = {}
-  for (const d of dict.data) {
-    const element = cellValue(d.element as unknown)
-    const reference = cellValue(d.reference as unknown)
-    if (element && reference) refByField[element] = reference
+  const dict = await queryRecords(host, 'sys_dictionary', {
+    query: `nameIN${chain.join(',')}^elementISNOTEMPTY`,
+    fields: ['element', 'reference', 'name'],
+    limit: 1000,
+    displayValue: 'all',
+  })
+  if (dict.ok) {
+    // Process nearest-table-first so a field redeclared on a child (e.g. a
+    // custom override) wins over the same field name inherited from a parent;
+    // `nameIN` does not guarantee result order matches the chain's order.
+    for (const wantedTable of chain) {
+      for (const d of dict.data) {
+        if (cellValue(d.name as unknown) !== wantedTable) continue
+        const element = cellValue(d.element as unknown)
+        const reference = cellValue(d.reference as unknown)
+        if (element && reference && !(element in refByField)) refByField[element] = reference
+      }
+    }
   }
 
   const labels: Record<string, string> = {}
@@ -1005,10 +1068,16 @@ async function copyCondition() {
       labels,
       savedAt: new Date().toISOString(),
     }
+    // condClip can exceed the local-storage quota on a very large query, and a
+    // chrome.scripting rejection (e.g. isListView()/getListQueryFromPage() in
+    // conditionToCopy) can also throw — every other action in this panel
+    // surfaces failure, so this must too rather than resetting silently.
     await chrome.storage.local.set({ condClip: clip })
     condQuery.value = query
     condQueryTable = table
     showToast(query ? `Copied condition (${table})` : `Copied empty condition (${table})`)
+  } catch (e) {
+    showToast(`Copy failed: ${e instanceof Error ? e.message : String(e)}`)
   } finally {
     condCopy.textContent = 'Copy condition'
     await refreshCondClipButtons()
@@ -1020,7 +1089,9 @@ async function refreshCondClipButtons() {
   condCopy.disabled = !current?.table
   const store = await chrome.storage.local.get('condClip')
   const clip = store.condClip as ConditionClip | undefined
-  condPaste.disabled = !clip
+  // Paste opens with `if (!current) return` (no ServiceNow tab detected), so
+  // the button must not look live when there is no page to paste onto.
+  condPaste.disabled = !clip || !current
   condPaste.textContent = clip ? `Paste (${clip.table})` : 'Paste'
   condPaste.title = clip
     ? `From ${clip.host} · ${new Date(clip.savedAt).toLocaleString()}`
@@ -1058,11 +1129,9 @@ async function pasteCondition() {
   condResults.replaceChildren()
   condCount.hidden = true
   condOpen.disabled = false
+  updateEnabledState()
 
-  const url =
-    `https://${current.host}/${clip.table}_list.do` +
-    (clip.query ? `?sysparm_query=${encodeURIComponent(clip.query)}` : '')
-  void chrome.tabs.create({ url })
+  void chrome.tabs.create({ url: buildListFormUrl(current.host, clip.table, clip.query) })
 }
 
 /* --- Table schema (search + reference + choices + copy) --- */
@@ -3223,6 +3292,10 @@ chrome.storage.session.onChanged.addListener((changes) => {
 async function detect() {
   renderStatus('Detecting…')
   current = null
+  // A clip-vs-page warning from the previous tab becomes actively false once
+  // the page changes (e.g. "this page is `sc_task`" after switching to
+  // `incident`) — clear it rather than let a stale claim linger.
+  renderClipWarnings([])
   updateEnabledState()
 
   const tab = await getActiveTab()

@@ -9,7 +9,7 @@ describe('extractRefTokens', () => {
     ])
   })
 
-  it('handles IN lists and ^OR / ^NQ separators', () => {
+  it('handles IN lists and ^OR separators', () => {
     const q =
       'assignment_groupIN287ee6fea9fe198100ada7950d0b1b73,d625dccec0a8016700a222a0f7900d06' +
       '^ORcaller_id=5137153cc611227c000bbd1bd8cd2005'
@@ -20,8 +20,26 @@ describe('extractRefTokens', () => {
     ])
   })
 
-  it('ignores clauses with no sys_id, including ORDERBY', () => {
+  it('handles a genuine ^NQ separator', () => {
+    const q =
+      'assigned_to=6816f79cc0a8016401c5a33be04be441' +
+      '^NQcaller_id=5137153cc611227c000bbd1bd8cd2005'
+    expect(extractRefTokens(q)).toEqual([
+      { field: 'assigned_to', sysId: '6816f79cc0a8016401c5a33be04be441' },
+      { field: 'caller_id', sysId: '5137153cc611227c000bbd1bd8cd2005' },
+    ])
+  })
+
+  it('ignores clauses with no sys_id, including ORDERBY and ORDERBYDESC', () => {
     expect(extractRefTokens('active=true^priority=1^ORDERBYnumber')).toEqual([])
+    expect(extractRefTokens('active=true^ORDERBYDESCnumber')).toEqual([])
+  })
+
+  it('pairs a dot-walked field with its sys_id', () => {
+    const id = '6816f79cc0a8016401c5a33be04be441'
+    expect(extractRefTokens(`assigned_to.department=${id}`)).toEqual([
+      { field: 'assigned_to.department', sysId: id },
+    ])
   })
 
   it('does not match 32-char non-hex or a substring of a longer hex run', () => {
@@ -29,6 +47,16 @@ describe('extractRefTokens', () => {
     const long = 'u_hash=6816f79cc0a8016401c5a33be04be441aaaaaaaa'
     expect(extractRefTokens(nonHex)).toEqual([])
     expect(extractRefTokens(long)).toEqual([])
+  })
+
+  it('does not match a 32-hex run immediately preceded by more hex characters', () => {
+    const q = 'u_hash=aaaaaaaa6816f79cc0a8016401c5a33be04be441'
+    expect(extractRefTokens(q)).toEqual([])
+  })
+
+  it('does not match an uppercase-hex sys_id (ServiceNow sys_ids are lowercase)', () => {
+    const q = 'assigned_to=6816F79CC0A8016401C5A33BE04BE441'
+    expect(extractRefTokens(q)).toEqual([])
   })
 
   it('dedupes a repeated field+sys_id pair', () => {
