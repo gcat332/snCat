@@ -926,8 +926,9 @@ async function addToUpdateSet() {
     }
 
     const batches = batchSysIds(targets.sysIds)
-    let added = 0
+    let seen = 0
     let missing = 0
+    let captured = 0
     for (let i = 0; i < batches.length; i++) {
       usAdd.textContent = `Adding ${i + 1}/${batches.length}…`
       const script = buildAddToUpdateSetScript(targets.table, batches[i])
@@ -942,14 +943,28 @@ async function addToUpdateSet() {
         xmlOut.replaceChildren(elText('div', 'error', `Unexpected output: ${out.slice(0, 400)}`))
         return
       }
-      added += parsed.added
+      seen += parsed.seen
       missing += parsed.missing
+      captured += parsed.captured
     }
 
-    const lines = [`Added ${added} record${added === 1 ? '' : 's'} to ${usText}.`]
+    // Three separate numbers, deliberately not collapsed into one "added" figure.
+    // `captured` can exceed `seen` (one record pulls in related records) and can fall
+    // below it (an excluded table or scope mismatch captures nothing), so reporting a
+    // single total would be misleading in both directions.
+    const lines = [
+      `${captured} update record${captured === 1 ? '' : 's'} captured in ${usText}, from ${seen} record${seen === 1 ? '' : 's'}.`,
+    ]
+    if (captured > seen) {
+      lines.push('More were captured than selected — the utility also pulled in related records.')
+    } else if (captured < seen) {
+      lines.push(
+        'Fewer were captured than selected — some records are on tables the utility excludes, or in a different scope.',
+      )
+    }
     if (missing > 0) lines.push(`${missing} record${missing === 1 ? '' : 's'} no longer exist and were skipped.`)
     xmlOut.replaceChildren(...lines.map((l) => elText('div', 'empty', l)))
-    showToast(`Added ${added} to update set ✓`)
+    showToast(`Captured ${captured} in update set ✓`)
   } finally {
     usAdd.disabled = false
     usAdd.textContent = originalLabel
