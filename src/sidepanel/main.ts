@@ -916,18 +916,36 @@ function queryTable(): string {
  * Apply the admin gate to the whole panel. UX only — the instance's ACLs remain
  * the real authority (see admin-gate.ts). Sets a single data attribute so panel
  * visibility is CSS's job, not a per-feature check sprinkled through this file.
+ *
+ * `onServiceNow` distinguishes "no ServiceNow context at all" (wrong tab, or no
+ * tab) from "on a ServiceNow page but the role read failed" (current.user
+ * absent/null on a real instance). Only the latter is the `unknown` case that
+ * `evaluateGate` should warn about — there are no roles to read on a
+ * non-ServiceNow tab, so there is nothing to be "unverified" about. Threaded
+ * explicitly by the caller (detect() already knows via isServiceNow(tab.url))
+ * rather than guessed from `current`, since `current` is null in both cases
+ * and guessing would conflate them.
  */
-function applyGate() {
+function applyGate(opts: { onServiceNow: boolean } = { onServiceNow: true }) {
+  const clearBanner = () => {
+    delete document.body.dataset.gate
+    gateBanner.hidden = true
+    gateTitle.textContent = ''
+    gateDetail.textContent = ''
+  }
+
+  if (!opts.onServiceNow) {
+    clearBanner()
+    return
+  }
+
   const status = current?.user
     ? roleStatusFrom(current.user)
     : { state: 'unknown' as const }
   const verdict = evaluateGate(status)
 
   if (verdict.banner === 'none') {
-    delete document.body.dataset.gate
-    gateBanner.hidden = true
-    gateTitle.textContent = ''
-    gateDetail.textContent = ''
+    clearBanner()
     return
   }
 
@@ -3436,7 +3454,10 @@ async function detect() {
   if (!tab?.id || !isServiceNow(tab.url)) {
     renderStatus('Open a ServiceNow page to detect context.')
     refreshClipWarningsAfterDetect()
-    applyGate()
+    // No instance in play, so no roles to be "unverified" about — clear any
+    // gate banner left over from a previous (ServiceNow) tab instead of
+    // warning about a page that was never ServiceNow to begin with.
+    applyGate({ onServiceNow: false })
     return
   }
   void restoreLlmJobs()
