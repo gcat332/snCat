@@ -137,3 +137,35 @@ describe('composeSpec', () => {
     expect(doc.aiOverview).toBe('This module handles incidents.')
   })
 })
+
+describe('composeSpec in scope mode', () => {
+  const base = {
+    instance: 'dev1.service-now.com',
+    rootTable: 'sys_scope',
+    rootLabel: 'MFEC Onboarding',
+    rootFields: {},
+    artifacts: [],
+  }
+
+  it('titles the document after the application', () => {
+    const doc = composeSpec({ ...base, scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' } })
+    expect(doc.title).toBe('MFEC Onboarding')
+    expect(doc.subtitle).toBe('Application Design Specification')
+  })
+
+  it('reports the application and instance in meta', () => {
+    const doc = composeSpec({ ...base, scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' } })
+    expect(doc.meta).toContainEqual({ key: 'Application', value: 'MFEC Onboarding (x_mfec_onb)' })
+    expect(doc.meta).toContainEqual({ key: 'Instance', value: 'dev1.service-now.com' })
+  })
+
+  it('omits the table REST API section, which has no meaning for a scope', () => {
+    const doc = composeSpec({ ...base, scope: { label: 'MFEC Onboarding', prefix: 'x_mfec_onb' } })
+    expect(doc.sections.map((s) => s.heading)).not.toContain('REST API (Table API)')
+  })
+
+  it('keeps the REST API section when there is no scope', () => {
+    const doc = composeSpec({ ...base, rootTable: 'incident', primaryTable: 'incident' })
+    expect(doc.sections.map((s) => s.heading)).toContain('REST API (Table API)')
+  })
+})

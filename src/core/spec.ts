@@ -42,6 +42,12 @@ export interface ComposeInput {
   schema?: SpecSchemaField[]
   /** Optional AI-drafted narrative overview to pass through onto the SpecDocument. */
   aiOverview?: string
+  /**
+   * Set when the document describes a whole application rather than a record or
+   * table. Overrides the title/subtitle/meta and suppresses the table-specific
+   * REST API section.
+   */
+  scope?: { label: string; prefix: string }
 }
 
 export interface SpecSchemaField {
@@ -87,22 +93,32 @@ export function composeSpec(input: ComposeInput): SpecDocument {
   const table = primaryTable ?? rootTable
   const tableDisplay = titleCase(table)
 
-  const title = isTableSpec ? tableDisplay : rootLabel || rootKind
-  const subtitle = isTableSpec ? 'Table / Module Design Specification' : `${rootKind} · Design Specification`
+  const title = input.scope ? input.scope.label : isTableSpec ? tableDisplay : rootLabel || rootKind
+  const subtitle = input.scope
+    ? 'Application Design Specification'
+    : isTableSpec
+      ? 'Table / Module Design Specification'
+      : `${rootKind} · Design Specification`
 
-  const meta = isTableSpec
+  const meta = input.scope
     ? [
         { key: 'Instance', value: instance },
-        { key: 'Table', value: `${tableDisplay} (${table})` },
+        { key: 'Application', value: `${input.scope.label} (${input.scope.prefix})` },
         { key: 'Artifacts documented', value: String(artifacts.length) },
       ]
-    : [
-        { key: 'Instance', value: instance },
-        { key: 'Artifact type', value: rootKind },
-        { key: 'Table', value: `${titleCase(rootTable)} (${rootTable})` },
-        { key: 'sys_id', value: rootFields['sys_id'] ?? '' },
-        { key: 'Artifacts included', value: String(artifacts.length + 1) },
-      ]
+    : isTableSpec
+      ? [
+          { key: 'Instance', value: instance },
+          { key: 'Table', value: `${tableDisplay} (${table})` },
+          { key: 'Artifacts documented', value: String(artifacts.length) },
+        ]
+      : [
+          { key: 'Instance', value: instance },
+          { key: 'Artifact type', value: rootKind },
+          { key: 'Table', value: `${titleCase(rootTable)} (${rootTable})` },
+          { key: 'sys_id', value: rootFields['sys_id'] ?? '' },
+          { key: 'Artifacts included', value: String(artifacts.length + 1) },
+        ]
 
   return {
     title,
@@ -115,7 +131,9 @@ export function composeSpec(input: ComposeInput): SpecDocument {
       logicSection(rootFields, artifacts, isTableSpec ? '' : `${rootKind}: ${rootLabel || rootKind}`),
       integrationSection(artifacts),
       securitySection(artifacts),
-      apiSpecSection(instance, table, schema),
+      // The Table API section documents ONE table's endpoints; an application
+      // spans many, so it is omitted rather than emitted against a nonsense path.
+      ...(input.scope ? [] : [apiSpecSection(instance, table, schema)]),
     ],
   }
 }
