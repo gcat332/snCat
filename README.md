@@ -11,7 +11,7 @@ Three features plus an optional AI layer:
 - **F3 — XML Mover** (Inspect tab): copy a record's unload XML on one instance and paste-import it into another, with an undo log.
 - **AI Generate** (Generate tab): turn a requirement into a plan of ServiceNow artifacts and create the dev/admin-facing ones on a sub-prod. Requires an LLM endpoint (see [Configure](#configure-first-run)).
 
-**New here?** Start with the 5-minute [Onboarding guide](./docs/ONBOARDING.md) (install → configure → first use, with screenshots).
+**New here?** Start with the 5-minute [Onboarding guide](./docs/ONBOARDING.md) (install → configure → first use, in Thai). Its eight screenshot slots are **not filled in yet** — the shot list and capture instructions are in [`docs/images/README.md`](./docs/images/README.md).
 
 See [`handoff.md`](./handoff.md) for the full design, decisions, and milestones, and [`CLAUDE.md`](./CLAUDE.md) for the architecture guide.
 
@@ -53,7 +53,7 @@ Open the side panel → **Settings** tab.
 | Tab | Feature | What it does |
 |---|---|---|
 | **Inspect** | Context + F3 | Shows table/sys_id/scope; **Copy / Paste** record unload XML across instances with undo; open records/lists. |
-| **Tester** | F2 | Load a script (from a record, paste, or the on-page **javaHelp** chip), lint it (Layer 1), run it prod-guarded (Layer 2), and do a guarded real create/delete against a sub-prod (Layer 3). |
+| **Tester** | F2 | Load a script (from a record, paste, or the on-page **javaHelp** chip), lint it (Layer 1), run it prod-guarded (Layer 2), and do a guarded real create/delete against a sub-prod (Layer 3). With an LLM configured, **Java review** also returns an optimized script you can ⇄ compare against the original and 💾 save back to the record. |
 | **Generate** | AI | Requirement → plan of artifacts → create the creatable ones on a sub-prod (scope-aware). |
 | **Spec** | F1 | Discover related artifacts → include/exclude checklist → export HTML / PDF / Word. Options: include parent/child tables, or set Source to an application scope to spec a whole app instead of one record/table. |
 | **Settings** | — | LLM endpoint + prod-guard configuration. |
@@ -96,6 +96,13 @@ dialog: when a record's scope differs from the update set's, it can **create** a
 `… - Batch Parent` update set and **rename** the selected set to `… - Batch Child`.
 snJava restores the session's original update set after every run.
 
+### Script editors
+
+The script, optimized-script, tester and generated-script areas are CodeMirror 6
+editors with JS syntax highlighting (no `eval`, so they stay CSP-safe in MV3). The
+**Format** button runs Prettier, which is loaded on demand as its own chunk rather
+than shipped in the panel's initial bundle.
+
 ### javaHelp chip
 
 On a ServiceNow form with a script field, snJava injects a small **javaHelp** chip next to the field label. Clicking it opens the side panel, loads the script into the Tester tab, and sets the Script kind — so you can add the problem and run **Java review** immediately.
@@ -121,12 +128,16 @@ A Spec-tab Source option — distinct from the scope/update-set bar at the top o
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Run Vitest unit tests |
 | `npx vitest run src/core/lint.test.ts` | Run a single test file |
+| `npm run verify:dist` | Check `dist/` is a loadable MV3 build (every manifest-referenced file exists) |
+| `npm run test:smoke` | Playwright smoke test: boots the built side panel against a `chrome.*` shim |
 
 ## Status
 
-Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See `handoff.md` for the milestone log.
+Milestones **M0–M5** and **F3** are complete; the AI layer (Java review, Generate, spec narrative) is implemented and gated on configuration. See [`handoff.md` §0](./handoff.md) for the status table and §10 for the work log since M5.
 
-Unit tests cover **pure logic only**, all in `src/core/`. Live I/O can only be confirmed by loading `dist/` in Chrome against a real instance:
+Unit tests cover **pure logic only**, all in `src/core/`; `npm run test:smoke` additionally
+checks the built panel boots. Live I/O can only be confirmed by loading `dist/` in Chrome
+against a real instance:
 
 > ⚠️ **Needs a real-browser smoke test:** session/`g_ck` auth · Layer 2 bgrun round-trip (`sys.scripts.do`) · Layer 3 create/delete on a sub-prod · Generate artifact creation + `[MF-AI]` prefix · javaHelp chip injection · F1 resolver table/field names per instance version.
 
@@ -138,10 +149,21 @@ src/
 ├── background/          # service worker: opens the panel, brokers messages, runs LLM jobs per tab
 ├── content/             # index.ts (isolated world) + mainworld.ts (g_form/g_ck bridge + javaHelp chip)
 ├── core/                # pure, unit-tested modules (no chrome.* except api-client.ts):
-│                        #   context · api · sn-rest · lint · prod-guard · graph · resolvers ·
-│                        #   spec · render-html · render-docx · llm · xml · f3-import · naming · diff
-└── sidepanel/           # side panel UI (main.ts + index.html + styles.css), MFEC light theme
+│                        #   context · api · sn-rest · auth-msg · prod-guard · types
+│                        #   F1: graph · resolvers · hierarchy · scope-spec · spec · spec-runner ·
+│                        #       render-html · render-docx
+│                        #   F2: lint · script-meta · diff · format
+│                        #   F3: xml · f3-import · condition-clip
+│                        #   update sets: update-set-add · updateset-xml
+│                        #   AI: llm · naming
+└── sidepanel/           # side panel UI (main.ts + index.html + styles.css) + editor.ts (CodeMirror 6)
 public/
 ├── brand/               # MFEC logos
-└── icons/               # extension icons
+├── icons/               # extension icons
+└── vendor/              # vendored Add to Update Set Utility export (see public/vendor/README.md)
+docs/
+├── ONBOARDING.md        # 5-minute install → configure → first use, with screenshots
+└── superpowers/         # per-feature design specs + task plans
+scripts/                 # verify-dist.mjs (build check) · serve-dist.mjs (smoke-test host)
+tests/smoke/             # Playwright side-panel boot test
 ```
